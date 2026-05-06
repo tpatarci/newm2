@@ -82,7 +82,8 @@ public:
     Window root();
     Client* revertTo() { return m_revert; }
     void setRevertTo(Client *c) { m_revert = c; }
-    Client* activeClient();
+    Client* activeClient() const;
+    Display* display();
 
     // Event handlers (called from WindowManager dispatch)
     void eventButton(XButtonEvent*);
@@ -98,8 +99,7 @@ public:
     void selectOnMotion(Window w, bool select);
 
 private:
-    void fatal(const char *m) { m_windowManager->fatal(m); }
-    Display* display() { return m_windowManager->display(); }
+    void fatal(const char *m);
 
     Window m_window;
     Window m_transient;

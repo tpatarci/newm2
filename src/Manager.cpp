@@ -299,6 +299,12 @@ unsigned long WindowManager::allocateColour(const char *name, const char *desc)
 
 void WindowManager::installCursor(RootCursor c)
 {
+    installCursorOnWindow(c, m_root);
+}
+
+
+void WindowManager::installCursorOnWindow(RootCursor c, Window w)
+{
     XSetWindowAttributes attr;
 
     switch (c) {
@@ -309,7 +315,7 @@ void WindowManager::installCursor(RootCursor c)
     case RootCursor::Normal:    attr.cursor = m_cursor;    break;
     }
 
-    XChangeWindowAttributes(display(), m_root, CWCursor, &attr);
+    XChangeWindowAttributes(display(), w, CWCursor, &attr);
 }
 
 

@@ -39,7 +39,7 @@ public:
     bool isFixedSize();
 
     Display* display();
-    Window root();
+    Window root() const;
 
     void expose(XExposeEvent *e);
     void eventButton(XButtonEvent *e);

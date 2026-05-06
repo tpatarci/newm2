@@ -32,6 +32,7 @@ public:
     };
 
     void installCursor(RootCursor);
+    void installCursorOnWindow(RootCursor, Window w);
     void installColormap(Colormap cmap);
     unsigned long allocateColour(const char *name, const char *fallback);
 
