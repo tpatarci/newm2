@@ -7,11 +7,11 @@
 
 ### Build Infrastructure
 
-- [ ] **BLD-01**: WM builds with CMake 3.16+ and pkg-config for X11 dependency discovery
+- [x] **BLD-01**: WM builds with CMake 3.16+ and pkg-config for X11 dependency discovery
 - [ ] **BLD-02**: C++17 standard (std::vector, std::string, bool, structured bindings)
-- [ ] **BLD-03**: RAII wrappers for all X11 resources (Display, Window, GC, Cursor, Font, Pixmap, Colormap)
+- [x] **BLD-03**: RAII wrappers for all X11 resources (Display, Window, GC, Cursor, Font, Pixmap, Colormap)
 - [ ] **BLD-04**: Builds and runs on Ubuntu 22.04+ with standard apt packages
-- [ ] **BLD-05**: No hardcoded X11R6 paths — all library paths discovered via pkg-config
+- [x] **BLD-05**: No hardcoded X11R6 paths — all library paths discovered via pkg-config
 
 ### Event Loop
 
@@ -87,10 +87,10 @@
 
 ### Testing
 
-- [ ] **TEST-01**: Test suite runs on Xvfb without physical display
-- [ ] **TEST-02**: Catch2 test framework for unit and integration tests
+- [x] **TEST-01**: Test suite runs on Xvfb without physical display
+- [x] **TEST-02**: Catch2 test framework for unit and integration tests
 - [ ] **TEST-03**: Core WM operations tested: window map, move, resize, hide/unhide, delete
-- [ ] **TEST-04**: CI-ready (tests pass with cmake + ctest)
+- [x] **TEST-04**: CI-ready (tests pass with cmake + ctest)
 
 ## v2 Requirements
 
@@ -133,11 +133,11 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BLD-01 | Phase 1 | Pending |
+| BLD-01 | Phase 1 | Complete |
 | BLD-02 | Phase 1 | Pending |
-| BLD-03 | Phase 1 | Pending |
+| BLD-03 | Phase 1 | Complete |
 | BLD-04 | Phase 1 | Pending |
-| BLD-05 | Phase 1 | Pending |
+| BLD-05 | Phase 1 | Complete |
 | EVNT-01 | Phase 2 | Pending |
 | EVNT-02 | Phase 2 | Pending |
 | EVNT-03 | Phase 2 | Pending |
@@ -183,10 +183,10 @@
 | CGUI-03 | Phase 9 | Pending |
 | CGUI-04 | Phase 9 | Pending |
 | CGUI-05 | Phase 9 | Pending |
-| TEST-01 | Phase 1 | Pending |
-| TEST-02 | Phase 1 | Pending |
+| TEST-01 | Phase 1 | Complete |
+| TEST-02 | Phase 1 | Complete |
 | TEST-03 | Phase 3 | Pending |
-| TEST-04 | Phase 1 | Pending |
+| TEST-04 | Phase 1 | Complete |
 
 **Coverage:**
 - v1 requirements: 49 total
