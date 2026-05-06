@@ -54,9 +54,12 @@ if(BUILD_TESTS)
     list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
     include(Catch)
 
-    # RAII unit tests (no X11 display needed)
+    # RAII unit tests (X11 linked for inline deleter calls, but no display needed)
     add_executable(test_raii tests/test_raii.cpp)
-    target_link_libraries(test_raii PRIVATE Catch2::Catch2WithMain)
+    target_link_libraries(test_raii PRIVATE
+        Catch2::Catch2WithMain
+        PkgConfig::X11
+    )
     target_include_directories(test_raii PRIVATE ${CMAKE_SOURCE_DIR}/include)
     catch_discover_tests(test_raii)
 
@@ -69,7 +72,6 @@ if(BUILD_TESTS)
             PkgConfig::X11
         )
         target_include_directories(test_smoke PRIVATE ${CMAKE_SOURCE_DIR}/include)
-        catch_discover_tests(test_smoke)
 
         # Xvfb fixture: start before tests, stop after
         set(XVFB_PID_FILE "${CMAKE_BINARY_DIR}/xvfb.pid")
@@ -83,8 +85,8 @@ if(BUILD_TESTS)
         )
         set_tests_properties(stop_xvfb PROPERTIES FIXTURES_CLEANUP xvfb_display)
 
-        set_tests_properties(
-            ${test_smoke_DISCOVERED_TESTS}
+        # Discover smoke tests with fixture requirement set per-test
+        catch_discover_tests(test_smoke
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
                 FIXTURES_REQUIRED xvfb_display
