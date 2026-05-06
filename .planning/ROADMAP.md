@@ -38,7 +38,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 - [x] 01-01-PLAN.md -- Build infrastructure, RAII wrappers (x11wrap.h), test harness (Catch2 + Xvfb fixtures)
-- [ ] 01-02-PLAN.md -- Modernized WM source files (Manager, Client, Border, Events, Buttons, main) producing working binary
+- [x] 01-02-PLAN.md -- Modernized WM source files (Manager, Client, Border, Events, Buttons, main) producing working binary
 
 ### Phase 2: Event Loop Modernization
 **Goal**: The window manager's event loop uses a clean poll()-based architecture with correct signal handling, replacing the original select()+goto pattern.

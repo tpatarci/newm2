@@ -8,9 +8,9 @@
 ### Build Infrastructure
 
 - [x] **BLD-01**: WM builds with CMake 3.16+ and pkg-config for X11 dependency discovery
-- [ ] **BLD-02**: C++17 standard (std::vector, std::string, bool, structured bindings)
+- [x] **BLD-02**: C++17 standard (std::vector, std::string, bool, structured bindings)
 - [x] **BLD-03**: RAII wrappers for all X11 resources (Display, Window, GC, Cursor, Font, Pixmap, Colormap)
-- [ ] **BLD-04**: Builds and runs on Ubuntu 22.04+ with standard apt packages
+- [x] **BLD-04**: Builds and runs on Ubuntu 22.04+ with standard apt packages
 - [x] **BLD-05**: No hardcoded X11R6 paths — all library paths discovered via pkg-config
 
 ### Event Loop
@@ -134,9 +134,9 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | BLD-01 | Phase 1 | Complete |
-| BLD-02 | Phase 1 | Pending |
+| BLD-02 | Phase 1 | Complete |
 | BLD-03 | Phase 1 | Complete |
-| BLD-04 | Phase 1 | Pending |
+| BLD-04 | Phase 1 | Complete |
 | BLD-05 | Phase 1 | Complete |
 | EVNT-01 | Phase 2 | Pending |
 | EVNT-02 | Phase 2 | Pending |
