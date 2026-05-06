@@ -1,0 +1,95 @@
+cmake_minimum_required(VERSION 3.16)
+project(wm2-born-again VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# --- X11 dependencies via pkg-config (BLD-01, BLD-05) ---
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
+pkg_check_modules(XEXT REQUIRED IMPORTED_TARGET xext)
+
+# --- WM Binary (BLD-04) ---
+add_executable(${PROJECT_NAME}
+    src/main.cpp
+    src/Manager.cpp
+    src/Client.cpp
+    src/Border.cpp
+    src/Buttons.cpp
+    src/Events.cpp
+    upstream-wm2/Rotated.C
+)
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/upstream-wm2
+)
+
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    PkgConfig::X11
+    PkgConfig::XEXT
+    m
+)
+
+# Relax warnings for third-party xvertext code (Rotated.C is ~1992 era)
+set_source_files_properties(upstream-wm2/Rotated.C PROPERTIES
+    COMPILE_FLAGS "-w"
+)
+
+# --- Tests (TEST-01, TEST-02, TEST-04) ---
+option(BUILD_TESTS "Build test suite" ON)
+
+if(BUILD_TESTS)
+    include(FetchContent)
+    FetchContent_Declare(
+        Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG        v3.14.0
+    )
+    FetchContent_MakeAvailable(Catch2)
+
+    enable_testing()
+    list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
+    include(Catch)
+
+    # RAII unit tests (no X11 display needed)
+    add_executable(test_raii tests/test_raii.cpp)
+    target_link_libraries(test_raii PRIVATE Catch2::Catch2WithMain)
+    target_include_directories(test_raii PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    catch_discover_tests(test_raii)
+
+    # Smoke tests (need Xvfb display)
+    find_program(XVFB_EXECUTABLE Xvfb)
+    if(XVFB_EXECUTABLE)
+        add_executable(test_smoke tests/test_smoke.cpp)
+        target_link_libraries(test_smoke PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+        )
+        target_include_directories(test_smoke PRIVATE ${CMAKE_SOURCE_DIR}/include)
+        catch_discover_tests(test_smoke)
+
+        # Xvfb fixture: start before tests, stop after
+        set(XVFB_PID_FILE "${CMAKE_BINARY_DIR}/xvfb.pid")
+        add_test(NAME start_xvfb
+            COMMAND bash -c "Xvfb :99 -screen 0 1024x768x24 -ac +render -noreset & echo $! > ${XVFB_PID_FILE} && sleep 1"
+        )
+        set_tests_properties(start_xvfb PROPERTIES FIXTURES_SETUP xvfb_display)
+
+        add_test(NAME stop_xvfb
+            COMMAND bash -c "kill $(cat ${XVFB_PID_FILE}) 2>/dev/null || true"
+        )
+        set_tests_properties(stop_xvfb PROPERTIES FIXTURES_CLEANUP xvfb_display)
+
+        set_tests_properties(
+            ${test_smoke_DISCOVERED_TESTS}
+            PROPERTIES
+                ENVIRONMENT "DISPLAY=:99"
+                FIXTURES_REQUIRED xvfb_display
+        )
+    else()
+        message(WARNING "Xvfb not found -- smoke tests disabled")
+    endif()
+endif()
