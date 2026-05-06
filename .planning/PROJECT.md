@@ -25,9 +25,9 @@ A lightweight, visually distinctive window manager that works well on resource-c
 
 ### Active
 
-- [ ] Builds and runs on modern Linux (Ubuntu 22.04+) with modern X11 libraries
-- [ ] CMake build system with pkg-config for X11 dependency discovery
-- [ ] Modern C++ (C++17) — std::vector, std::string, bool, RAII for X11 resources
+- ✓ Builds and runs on modern Linux (Ubuntu 22.04+) with modern X11 libraries — Validated in Phase 1
+- ✓ CMake build system with pkg-config for X11 dependency discovery — Validated in Phase 1
+- ✓ Modern C++ (C++17) — std::vector, std::string, bool, RAII for X11 resources — Validated in Phase 1
 - [ ] EWMH compliance (_NET_SUPPORTED, _NET_WM_STATE, _NET_ACTIVE_WINDOW, etc.)
 - [ ] Xft/fontconfig for font rendering (replacing core X fonts + xvertext)
 - [ ] Xrandr support for display configuration
@@ -101,4 +101,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-06 after initialization*
+*Last updated: 2026-05-06 after Phase 1 completion*
