@@ -134,26 +134,26 @@ which Xvfb              # expect /usr/bin/Xvfb
 ### Recommended Project Structure
 ```
 .
-├── CMakeLists.txt              # Top-level: project definition, dependencies, targets
-├── upstream-wm2/               # Untouched reference (never compiled by new build)
-│   ├── Rotated.C               # Compiled as third-party dependency (D-10)
-│   └── Rotated.h
-├── include/                    # Public headers
-│   ├── x11wrap.h               # RAII wrappers for all X11 resources (D-07)
-│   ├── Manager.h
-│   ├── Client.h
-│   ├── Border.h
-│   └── Cursors.h               # Cursor bitmap data (usable as-is from upstream)
-├── src/                        # Implementation files
-│   ├── main.cpp                # Entry point (D-03)
-│   ├── Manager.cpp
-│   ├── Client.cpp
-│   ├── Border.cpp
-│   ├── Buttons.cpp             # Button/menu interaction handlers
-│   └── Events.cpp              # Event dispatch handlers
-└── tests/                      # Test files (D-13)
-    ├── test_raii.cpp           # RAII construct/destruct/move/release tests
-    └── test_smoke.cpp          # WM smoke test on Xvfb
++-- CMakeLists.txt              # Top-level: project definition, dependencies, targets
++-- upstream-wm2/               # Untouched reference (never compiled by new build)
+|   +-- Rotated.C               # Compiled as third-party dependency (D-10)
+|   +-- Rotated.h
++-- include/                    # Public headers
+|   +-- x11wrap.h               # RAII wrappers for all X11 resources (D-07)
+|   +-- Manager.h
+|   +-- Client.h
+|   +-- Border.h
+|   +-- Cursors.h               # Cursor bitmap data (usable as-is from upstream)
++-- src/                        # Implementation files
+|   +-- main.cpp                # Entry point (D-03)
+|   +-- Manager.cpp
+|   +-- Client.cpp
+|   +-- Border.cpp
+|   +-- Buttons.cpp             # Button/menu interaction handlers
+|   +-- Events.cpp              # Event dispatch handlers
++-- tests/                      # Test files (D-13)
+    +-- test_raii.cpp           # RAII construct/destruct/move/release tests
+    +-- test_smoke.cpp          # WM smoke test on Xvfb
 ```
 
 ### Pattern 1: RAII Wrappers via `unique_ptr` + Custom Deleters (Pointer Types)
@@ -678,22 +678,16 @@ TEST_CASE("X11 RAII wrappers work with real display", "[smoke][raii]") {
 
 **If this table is empty:** All claims in this research were verified or cited -- no user confirmation needed.
 
-## Open Questions
+## Open Questions -- RESOLVED
 
 1. **Exact pkg-config names for X11 packages on Ubuntu 22.04**
-   - What we know: The packages are `libx11-dev` and `libxext-dev` on apt, but pkg-config `.pc` file names may differ from package names.
-   - What's unclear: Whether the pkg-config names are exactly `x11` and `xext`, or something else.
-   - Recommendation: Run `pkg-config --list-all | grep -i x11` on an Ubuntu 22.04 system with dev packages installed. Very likely `x11` and `xext` are correct based on documentation. [ASSUMED]
+   - RESOLVED: Plan 01-01 Task 1 starts with `sudo apt install -y cmake pkg-config libx11-dev libxext-dev xvfb`. If `pkg_check_modules(x11 ...)` or `pkg_check_modules(xext ...)` fails at cmake configure time, the executor will run `pkg-config --list-all | grep -i x1` to discover the correct names and adjust CMakeLists.txt accordingly. This is a build-time verification, not a blocking unknown.
 
 2. **Rotated.C compilation compatibility with strict C++17**
-   - What we know: The file uses 1992-era C idioms. It compiles with GCC 2.x.
-   - What's unclear: Whether `-w` (suppress warnings) is sufficient, or if `-fpermissive` is needed for error-level issues.
-   - Recommendation: Try compilation early in Phase 1; add `-fpermissive` for that file if needed.
+   - RESOLVED: Plan 01-01 Task 3 already includes adaptive mitigation -- first try `-w`, then add `-fpermissive`, then try compiling as C. The executor handles this at build time.
 
 3. **Shape extension availability in Xvfb on Ubuntu 22.04**
-   - What we know: Xvfb typically loads all available extensions. The Shape extension is part of libXext.
-   - What's unclear: Whether it needs explicit `+extension SHAPE` flag.
-   - Recommendation: Test with plain Xvfb first; add the flag if needed.
+   - RESOLVED: Plan 01-02 Task 2 specifies graceful fallback for missing Shape extension (warn but continue with rectangular frames), and Plan 01-01 Task 3 includes adding `+extension SHAPE` to the Xvfb start command if needed. Both paths are covered.
 
 ## Environment Availability
 
