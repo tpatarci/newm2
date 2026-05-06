@@ -34,12 +34,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Code compiles with `-std=c++17` and uses std::vector, std::string, bool throughout (no char*, no custom list macros, no C-style bools)
   4. No hardcoded X11R6 paths -- all X11 library/include paths discovered via pkg-config in CMakeLists.txt
   5. `ctest` runs the test suite successfully on Xvfb without a physical display, using Catch2 framework
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
-- [ ] 01-03: TBD
+- [ ] 01-01-PLAN.md -- Build infrastructure, RAII wrappers (x11wrap.h), test harness (Catch2 + Xvfb fixtures)
+- [ ] 01-02-PLAN.md -- Modernized WM source files (Manager, Client, Border, Events, Buttons, main) producing working binary
 
 ### Phase 2: Event Loop Modernization
 **Goal**: The window manager's event loop uses a clean poll()-based architecture with correct signal handling, replacing the original select()+goto pattern.
@@ -176,7 +175,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Build Infrastructure + RAII Foundation | 0/3 | Not started | - |
+| 1. Build Infrastructure + RAII Foundation | 0/2 | Planning complete | - |
 | 2. Event Loop Modernization | 0/2 | Not started | - |
 | 3. Client Lifecycle with RAII | 0/3 | Not started | - |
 | 4. Border + Xft Font Rendering | 0/3 | Not started | - |
