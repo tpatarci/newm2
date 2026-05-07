@@ -8,6 +8,8 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <unistd.h>
+#include <sys/wait.h>
 
 // Helper: write a temp config file and return its path
 static std::string writeTempConfig(const std::string& content) {
@@ -572,4 +574,232 @@ TEST_CASE("applyKeyValue handles non-numeric int values gracefully", "[config]")
 
     cfg.applyKeyValue("auto-raise-delay", "abc");
     REQUIRE(cfg.autoRaiseDelay == 400);
+}
+
+// =============================================================================
+// CLI Tests (CONF-04): Command-line option parsing via applyCliArgs()
+// =============================================================================
+
+// Test 20: CLI --tab-foreground=red sets tabForeground to "red"
+TEST_CASE("CLI --tab-foreground sets string value", "[config][cli]") {
+    Config cfg;
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--tab-foreground=red"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.tabForeground == "red");
+}
+
+// Test 21: CLI --frame-thickness=3 sets frameThickness to 3
+TEST_CASE("CLI --frame-thickness sets integer value", "[config][cli]") {
+    Config cfg;
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--frame-thickness=3"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.frameThickness == 3);
+}
+
+// Test 22: CLI --auto-raise sets autoRaise to true
+TEST_CASE("CLI --auto-raise enables boolean", "[config][cli]") {
+    Config cfg;
+    REQUIRE(cfg.autoRaise == false);
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--auto-raise"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.autoRaise == true);
+}
+
+// Test 23: CLI --no-auto-raise sets autoRaise to false (even if config set it true)
+TEST_CASE("CLI --no-auto-raise disables boolean", "[config][cli]") {
+    Config cfg;
+    cfg.autoRaise = true;  // Simulate config file setting it
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--no-auto-raise"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.autoRaise == false);
+}
+
+// Test 24: CLI --click-to-focus sets clickToFocus to true
+TEST_CASE("CLI --click-to-focus enables boolean", "[config][cli]") {
+    Config cfg;
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--click-to-focus"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.clickToFocus == true);
+}
+
+// Test 25: CLI --no-click-to-focus sets clickToFocus to false
+TEST_CASE("CLI --no-click-to-focus disables boolean", "[config][cli]") {
+    Config cfg;
+    cfg.clickToFocus = true;
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--no-click-to-focus"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.clickToFocus == false);
+}
+
+// Test 26: Multiple CLI options on same command line all applied
+TEST_CASE("CLI multiple options all applied", "[config][cli]") {
+    Config cfg;
+    char* argv[] = {
+        const_cast<char*>("wm2"),
+        const_cast<char*>("--tab-foreground=white"),
+        const_cast<char*>("--frame-thickness=12"),
+        const_cast<char*>("--auto-raise"),
+        const_cast<char*>("--new-window-command=alacritty"),
+        nullptr
+    };
+    cfg.applyCliArgs(5, argv);
+    REQUIRE(cfg.tabForeground == "white");
+    REQUIRE(cfg.frameThickness == 12);
+    REQUIRE(cfg.autoRaise == true);
+    REQUIRE(cfg.newWindowCommand == "alacritty");
+}
+
+// Test 27: Precedence: CLI overrides config file values
+TEST_CASE("CLI overrides config file values", "[config][cli]") {
+    Config cfg;
+    // Simulate config file setting thickness=10
+    cfg.frameThickness = 10;
+    cfg.tabForeground = "blue";
+    cfg.autoRaise = true;
+
+    // CLI sets different values
+    char* argv[] = {
+        const_cast<char*>("wm2"),
+        const_cast<char*>("--frame-thickness=3"),
+        const_cast<char*>("--tab-foreground=red"),
+        const_cast<char*>("--no-auto-raise"),
+        nullptr
+    };
+    cfg.applyCliArgs(4, argv);
+
+    REQUIRE(cfg.frameThickness == 3);       // CLI wins
+    REQUIRE(cfg.tabForeground == "red");    // CLI wins
+    REQUIRE(cfg.autoRaise == false);        // CLI wins
+}
+
+// Test 28: Unknown option prints error to stderr and exits with code 2
+TEST_CASE("CLI unknown option causes exit", "[config][cli]") {
+    // Fork a child process to test exit behavior
+    int pipefd[2];
+    REQUIRE(pipe(pipefd) == 0);
+
+    pid_t pid = fork();
+    REQUIRE(pid >= 0);
+
+    if (pid == 0) {
+        // Child process
+        close(pipefd[0]);
+        // Redirect stderr to pipe
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[1]);
+
+        Config cfg;
+        char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--unknown-option"), nullptr };
+        cfg.applyCliArgs(2, argv);
+        _exit(0);  // Should not reach here
+    }
+
+    // Parent process
+    close(pipefd[1]);
+
+    // Read stderr from child
+    char buf[1024] = {};
+    ssize_t n = read(pipefd[0], buf, sizeof(buf) - 1);
+    close(pipefd[0]);
+
+    int status;
+    waitpid(pid, &status, 0);
+
+    // Verify child exited with code 2
+    REQUIRE(WIFEXITED(status));
+    REQUIRE(WEXITSTATUS(status) == 2);
+
+    // Verify error message was printed
+    std::string output(buf, n > 0 ? n : 0);
+    REQUIRE(output.find("Try") != std::string::npos);
+    REQUIRE(output.find("--help") != std::string::npos);
+}
+
+// Test 29: -- terminates option parsing (per GNU convention)
+TEST_CASE("CLI -- terminates option parsing", "[config][cli]") {
+    Config cfg;
+    char* argv[] = {
+        const_cast<char*>("wm2"),
+        const_cast<char*>("--frame-thickness=5"),
+        const_cast<char*>("--"),
+        const_cast<char*>("--tab-foreground=blue"),
+        nullptr
+    };
+    cfg.applyCliArgs(4, argv);
+
+    REQUIRE(cfg.frameThickness == 5);
+    // --tab-foreground=blue should NOT be parsed (after --)
+    REQUIRE(cfg.tabForeground == "black");  // default remains
+}
+
+// Test 30: CLI --new-window-command="alacritty" sets newWindowCommand
+TEST_CASE("CLI --new-window-command sets string value", "[config][cli]") {
+    Config cfg;
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--new-window-command=alacritty"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.newWindowCommand == "alacritty");
+}
+
+// Test 31: CLI --auto-raise-delay=200 sets autoRaiseDelay to 200
+TEST_CASE("CLI --auto-raise-delay sets integer value", "[config][cli]") {
+    Config cfg;
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--auto-raise-delay=200"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.autoRaiseDelay == 200);
+}
+
+// Test 32: CLI --exec-using-shell sets execUsingShell to true
+TEST_CASE("CLI --exec-using-shell enables boolean", "[config][cli]") {
+    Config cfg;
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--exec-using-shell"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.execUsingShell == true);
+}
+
+// Test 33: CLI --no-exec-using-shell sets execUsingShell to false
+TEST_CASE("CLI --no-exec-using-shell disables boolean", "[config][cli]") {
+    Config cfg;
+    cfg.execUsingShell = true;
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--no-exec-using-shell"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.execUsingShell == false);
+}
+
+// Test 34: Integer CLI values are clamped same as config file values
+TEST_CASE("CLI integer values are clamped to valid ranges", "[config][cli]") {
+    Config cfg;
+
+    // Thickness clamped to 1-50
+    char* argv1[] = { const_cast<char*>("wm2"), const_cast<char*>("--frame-thickness=100"), nullptr };
+    cfg.applyCliArgs(2, argv1);
+    REQUIRE(cfg.frameThickness == 50);
+
+    // Reset
+    Config cfg2;
+    char* argv2[] = { const_cast<char*>("wm2"), const_cast<char*>("--frame-thickness=-5"), nullptr };
+    cfg2.applyCliArgs(2, argv2);
+    REQUIRE(cfg2.frameThickness == 1);
+
+    // Delay clamped to 1-60000
+    Config cfg3;
+    char* argv3[] = { const_cast<char*>("wm2"), const_cast<char*>("--auto-raise-delay=70000"), nullptr };
+    cfg3.applyCliArgs(2, argv3);
+    REQUIRE(cfg3.autoRaiseDelay == 60000);
+
+    Config cfg4;
+    char* argv4[] = { const_cast<char*>("wm2"), const_cast<char*>("--auto-raise-delay=0"), nullptr };
+    cfg4.applyCliArgs(2, argv4);
+    REQUIRE(cfg4.autoRaiseDelay == 1);
+}
+
+// Test 35: No CLI args leaves config unchanged
+TEST_CASE("CLI no args leaves config unchanged", "[config][cli]") {
+    Config cfg;
+    char* argv[] = { const_cast<char*>("wm2"), nullptr };
+    cfg.applyCliArgs(1, argv);
+
+    REQUIRE(cfg.tabForeground == "black");
+    REQUIRE(cfg.frameThickness == 7);
+    REQUIRE(cfg.autoRaise == false);
+    REQUIRE(cfg.newWindowCommand == "xterm");
 }
