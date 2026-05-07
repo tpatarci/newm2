@@ -10,6 +10,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
 pkg_check_modules(XEXT REQUIRED IMPORTED_TARGET xext)
+pkg_check_modules(XFT REQUIRED IMPORTED_TARGET xft)
+pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
 
 # --- WM Binary (BLD-04) ---
 add_executable(${PROJECT_NAME}
@@ -25,11 +27,15 @@ add_executable(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/upstream-wm2
+    ${XFT_INCLUDE_DIRS}
+    ${FONTCONFIG_INCLUDE_DIRS}
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     PkgConfig::X11
     PkgConfig::XEXT
+    PkgConfig::XFT
+    PkgConfig::FONTCONFIG
     m
 )
 
@@ -123,6 +129,23 @@ if(BUILD_TESTS)
             ${CMAKE_SOURCE_DIR}/include
         )
         catch_discover_tests(test_client
+            PROPERTIES
+                ENVIRONMENT "DISPLAY=:99"
+                FIXTURES_REQUIRED xvfb_display
+        )
+
+        # Xft PoC test (need Xvfb display + Xft/fontconfig)
+        add_executable(test_xft_poc tests/test_xft_poc.cpp)
+        target_link_libraries(test_xft_poc PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+            PkgConfig::XFT
+            PkgConfig::FONTCONFIG
+        )
+        target_include_directories(test_xft_poc PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+        )
+        catch_discover_tests(test_xft_poc
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
                 FIXTURES_REQUIRED xvfb_display
