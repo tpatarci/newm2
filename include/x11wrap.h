@@ -91,7 +91,7 @@ public:
     }
 
     Cursor get() const noexcept { return m_cursor; }
-    operator Cursor() const noexcept { return m_cursor; }
+    explicit operator Cursor() const noexcept { return m_cursor; }
     explicit operator bool() const noexcept { return m_cursor != None; }
 
 private:

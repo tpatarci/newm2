@@ -334,11 +334,11 @@ void WindowManager::installCursorOnWindow(RootCursor c, Window w)
     XSetWindowAttributes attr;
 
     switch (c) {
-    case RootCursor::Delete:    attr.cursor = m_xCursor;   break;
-    case RootCursor::Down:      attr.cursor = m_vCursor;   break;
-    case RootCursor::Right:     attr.cursor = m_hCursor;   break;
-    case RootCursor::DownRight: attr.cursor = m_vhCursor;  break;
-    case RootCursor::Normal:    attr.cursor = m_cursor;    break;
+    case RootCursor::Delete:    attr.cursor = m_xCursor.get();   break;
+    case RootCursor::Down:      attr.cursor = m_vCursor.get();   break;
+    case RootCursor::Right:     attr.cursor = m_hCursor.get();   break;
+    case RootCursor::DownRight: attr.cursor = m_vhCursor.get();  break;
+    case RootCursor::Normal:    attr.cursor = m_cursor.get();    break;
     }
 
     XChangeWindowAttributes(display(), w, CWCursor, &attr);
