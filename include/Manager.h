@@ -8,6 +8,7 @@
 #include <string>
 #include <memory>
 #include <csignal>
+#include <chrono>
 #include <unistd.h>
 
 // RAII wrapper for POSIX file descriptors (not X11 resources -- those are in x11wrap.h)
@@ -141,6 +142,16 @@ private:
     Time m_focusTimestamp;
     bool m_focusPointerMoved;
     bool m_focusPointerNowStill;
+
+    // Timer deadlines for auto-raise focus tracking (D-02, D-03)
+    std::chrono::steady_clock::time_point m_pointerStoppedDeadline{};
+    std::chrono::steady_clock::time_point m_autoRaiseDeadline{};
+    bool m_pointerStoppedDeadlineActive = false;
+    bool m_autoRaiseDeadlineActive = false;
+
+    // Compute poll() timeout from active timer deadlines
+    int computePollTimeout() const;
+
     void checkDelaysForFocus();
 
     void nextEvent(XEvent *ev);

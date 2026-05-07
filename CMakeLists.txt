@@ -103,4 +103,12 @@ if(BUILD_TESTS)
     )
     target_include_directories(test_eventloop PRIVATE ${CMAKE_SOURCE_DIR}/include)
     catch_discover_tests(test_eventloop)
+
+    # Auto-raise timer unit tests (pure chrono arithmetic, no display needed)
+    add_executable(test_autoraise tests/test_autoraise.cpp)
+    target_link_libraries(test_autoraise PRIVATE
+        Catch2::Catch2WithMain
+    )
+    target_include_directories(test_autoraise PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    catch_discover_tests(test_autoraise)
 endif()
