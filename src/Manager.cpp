@@ -508,12 +508,7 @@ void WindowManager::spawn()
             close(ConnectionNumber(display()));
 
             if (displayName && displayName[0] != '\0') {
-                std::string envStr = "DISPLAY=";
-                envStr += displayName;
-                // putenv needs a mutable string that persists
-                char *envBuf = new char[envStr.size() + 1];
-                std::strcpy(envBuf, envStr.c_str());
-                putenv(envBuf);
+                setenv("DISPLAY", displayName, 1);
             }
 
             execlp("xterm", "xterm", static_cast<char*>(nullptr));
