@@ -42,7 +42,7 @@ void WindowManager::circulate(bool activeFirst)
             i = -1;
         } else {
             for (size_t idx = 0; idx < m_clients.size(); ++idx) {
-                if (m_clients[idx] == m_activeClient) {
+                if (m_clients[idx].get() == m_activeClient) {
                     i = static_cast<int>(idx);
                     break;
                 }
@@ -58,7 +58,7 @@ void WindowManager::circulate(bool activeFirst)
             if (j == i) return;
         }
 
-        c = m_clients[j];
+        c = m_clients[j].get();
     }
 
     c->activateAndWarp();
@@ -105,8 +105,8 @@ void WindowManager::menu(XButtonEvent *e)
     std::vector<Client*> clients;
     bool allowExit = false;
 
-    for (auto *hc : m_hiddenClients) {
-        clients.push_back(hc);
+    for (const auto& hc : m_hiddenClients) {
+        clients.push_back(hc.get());
     }
     int nh = static_cast<int>(clients.size()) + 1;
 

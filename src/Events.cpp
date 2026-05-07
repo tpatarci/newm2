@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <algorithm>
 #include <poll.h>
 #include <chrono>
 #include <unistd.h>
@@ -238,20 +239,35 @@ void WindowManager::eventDestroy(XDestroyWindowEvent *e)
     Client *c = windowToClient(e->window);
 
     if (c) {
+        // STEP 1: Clear focus tracking BEFORE destroying the Client (Pitfall 1)
         if (m_focusChanging && c == m_focusCandidate) {
             stopConsideringFocus();
             m_focusCandidate = nullptr;
         }
 
-        // Remove from client list
-        for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
-            if (*it == c) {
-                m_clients.erase(it);
-                break;
-            }
+        // STEP 2: Clear active client if this is it
+        if (m_activeClient == c) {
+            setActiveClient(nullptr);
         }
 
-        delete c;
+        // STEP 3: Remove from map first
+        m_windowMap.erase(c->window());
+
+        // STEP 4: Find and erase from whichever vector owns the unique_ptr
+        auto removeFrom = [c](auto& vec) -> bool {
+            auto it = std::find_if(vec.begin(), vec.end(),
+                [c](const auto& up) { return up.get() == c; });
+            if (it != vec.end()) {
+                vec.erase(it);
+                return true;
+            }
+            return false;
+        };
+
+        if (!removeFrom(m_clients)) {
+            removeFrom(m_hiddenClients);
+        }
+        // ~Client() runs here -- destructor handles unreparent, colormap cleanup
 
         ignoreBadWindowErrors = true;
         XSync(display(), false);
@@ -284,7 +300,7 @@ void WindowManager::eventColormap(XColormapEvent *e)
 
         if (c) c->eventColormap(e);
         else {
-            for (auto *client : m_clients) {
+            for (const auto& client : m_clients) {
                 client->eventColormap(e);
             }
         }
