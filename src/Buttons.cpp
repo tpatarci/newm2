@@ -36,6 +36,10 @@ void WindowManager::circulate(bool activeFirst)
     if (activeFirst) c = m_activeClient;
 
     if (!c) {
+        // CR-01/CR-03: Guard against empty client list to prevent
+        // out-of-bounds access and unsigned underflow in size()-1
+        if (m_clients.empty()) return;
+
         int i = -1, j;
 
         if (!m_activeClient) {
@@ -48,20 +52,21 @@ void WindowManager::circulate(bool activeFirst)
                 }
             }
 
-            if (static_cast<size_t>(i) >= m_clients.size() - 1) i = -1;
+            if (i < 0 || static_cast<size_t>(i) >= m_clients.size() - 1) i = -1;
         }
 
-        for (j = i + 1;
-             !m_clients[j]->isNormal() || m_clients[j]->isTransient();
-             ++j) {
-            if (static_cast<size_t>(j) >= m_clients.size() - 1) j = -1;
+        // Restructured loop: check bounds BEFORE accessing m_clients[j]
+        for (j = i + 1; ; ++j) {
+            if (static_cast<size_t>(j) >= m_clients.size()) j = 0;
             if (j == i) return;
+            if (m_clients[j]->isNormal() && !m_clients[j]->isTransient()) break;
         }
 
         c = m_clients[j].get();
     }
 
-    c->activateAndWarp();
+    // WR-05: Guard against null c (all clients transient/hidden)
+    if (c) c->activateAndWarp();
 }
 
 
