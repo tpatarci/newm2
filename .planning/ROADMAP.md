@@ -64,12 +64,12 @@ Plans:
   3. Client lookup by X11 window ID is O(1) via hash map, not linear scan
   4. A client transitions correctly through Withdrawn -> Normal -> Iconic -> Withdrawn states without leaks or dangling pointers
   5. Automated tests cover core operations: window map, move, resize, hide/unhide, delete -- all passing on Xvfb
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
-- [ ] 03-03: TBD
+- [ ] 03-01-PLAN.md -- ServerGrab RAII, ClientState enum with validation, vector colormaps, destructor-only cleanup
+- [ ] 03-02-PLAN.md -- unique_ptr ownership, O(1) hash map lookup, move-based hide/unhide, eventDestroy rewrite
+- [ ] 03-03-PLAN.md -- Client lifecycle tests (TEST-03): ServerGrab, state machine, window operations on Xvfb
 
 ### Phase 4: Border + Xft Font Rendering
 **Goal**: Window borders render with the classic wm2 sideways-tab look using Xft for antialiased UTF-8 text, with graceful fallback when the Shape extension is unavailable.
@@ -177,7 +177,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 |-------|----------------|--------|-----------|
 | 1. Build Infrastructure + RAII Foundation | 0/2 | Planning complete | - |
 | 2. Event Loop Modernization | 0/2 | Not started | - |
-| 3. Client Lifecycle with RAII | 0/3 | Not started | - |
+| 3. Client Lifecycle with RAII | 0/3 | Planning complete | - |
 | 4. Border + Xft Font Rendering | 0/3 | Not started | - |
 | 5. Configuration System | 0/2 | Not started | - |
 | 6. EWMH Compliance | 0/3 | Not started | - |
