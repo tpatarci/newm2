@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 3 context gathered
-last_updated: "2026-05-07T14:34:05.321Z"
-last_activity: 2026-05-07 -- Phase 03 planning complete
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-05-07T15:02:01.571Z"
+last_activity: 2026-05-07
 progress:
   total_phases: 9
   completed_phases: 2
   total_plans: 7
-  completed_plans: 4
-  percent: 57
+  completed_plans: 5
+  percent: 71
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** A lightweight, visually distinctive window manager that works well on resource-constrained VPS instances via remote desktop -- simple enough for non-programmers to configure, reliable enough for daily use.
-**Current focus:** Phase 02 — event-loop-modernization
+**Current focus:** Phase 03 — client-lifecycle-with-raii
 
 ## Current Position
 
-Phase: 3
-Plan: Not started
+Phase: 03 (client-lifecycle-with-raii) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-05-07 -- Phase 03 planning complete
+Last activity: 2026-05-07
 
-Progress: [██████████] 100%
+Progress: [███████░░░] 71%
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [██████████] 100%
 *Updated after each plan completion*
 | Phase 01 P01 | 14min | 3 tasks | 12 files |
 | Phase 01 P02 | 22min | 3 tasks | 9 files |
+| Phase 03 P01 | 15min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,9 @@ Recent decisions affecting current work:
 - [Phase 01 P02]: installCursorOnWindow() added to Manager for Border to set cursor on resize handle
 - [Phase 01 P02]: std::vector<XRectangle> replaces custom RectangleList macro in Border.cpp
 - [Phase 01 P02]: Shape extension missing produces warning but not fatal exit
+- [Phase ?]: ClientState enum values match X11 constants (Withdrawn=0, Normal=1, Iconic=3)
+- [Phase ?]: State transitions validated but applied anyway with warning -- matches upstream permissive behavior
+- [Phase ?]: Destructor-only cleanup replaces release() method; unreparent called in destructor for non-withdrawn clients
 
 ### Pending Todos
 
@@ -91,6 +95,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-05-07T13:43:24.336Z
-Stopped at: Phase 3 context gathered
-Resume file: .planning/phases/03-client-lifecycle-with-raii/03-CONTEXT.md
+Last session: 2026-05-07T15:02:01.544Z
+Stopped at: Completed 03-01-PLAN.md
+Resume file: None
