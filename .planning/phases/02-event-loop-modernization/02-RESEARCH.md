@@ -540,17 +540,13 @@ void Client::focusIfAppropriate(bool ifActive)
 | A4 | `volatile std::sig_atomic_t` is sufficient for `m_signalled`; no need for `std::atomic<int>` | Anti-Patterns | Low -- POSIX guarantees sig_atomic_t is safe in signal handlers |
 | A5 | The upstream's X server time comparison (`t < m_focusTimestamp || t - m_focusTimestamp > delay`) should be preserved for wrap-around safety, even though we use steady_clock for poll() timeouts | Pitfall 5 | Medium -- if `checkDelaysForFocus()` is rewritten to use steady_clock instead of X time, wrap-around handling changes. But matching upstream behavior means keeping X time comparisons. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should checkDelaysForFocus() use X server time or steady_clock?**
-   - What we know: Upstream uses `timestamp(true)` (X server time) for all timer comparisons. D-02 says use steady_clock for poll() timeout. The question is what time source to use INSIDE `checkDelaysForFocus()` for the actual elapsed-time comparison.
-   - What's unclear: Whether using steady_clock instead of X server time changes observable behavior. They should be equivalent for short durations (80ms, 400ms), but steady_clock avoids the X round-trip in `timestamp()`.
-   - Recommendation: Use steady_clock throughout. The upstream used X time because that's what was convenient. steady_clock is strictly better (no X round-trip, no wrap-around). The `t < m_focusTimestamp` wrap-around guard becomes unnecessary with steady_clock since it's monotonic. This simplifies the code.
+1. **Should checkDelaysForFocus() use X server time or steady_clock?** → RESOLVED: Use steady_clock throughout.
+   - steady_clock is strictly better (no X round-trip, no wrap-around). Plan 02-02 Task 2 implements this.
 
-2. **Should the FdGuard RAII wrapper go in x11wrap.h or Manager.h?**
-   - What we know: x11wrap.h is for X11 resource wrappers. Pipe fds are POSIX, not X11.
-   - What's unclear: Whether a generic fd RAII wrapper belongs in x11wrap.h.
-   - Recommendation: Put a minimal `FdGuard` in `include/Manager.h` or create a small `include/posixwrap.h`. It's not X11-specific. A simple struct is fine -- no need for a separate header for one 10-line type.
+2. **Should the FdGuard RAII wrapper go in x11wrap.h or Manager.h?** → RESOLVED: Put in Manager.h.
+   - It's not X11-specific. A simple struct in Manager.h is sufficient. Plan 02-01 Task 1 implements this.
 
 ## Environment Availability
 
