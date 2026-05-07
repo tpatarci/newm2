@@ -4,6 +4,7 @@
 #include <X11/Xutil.h>
 #include <string>
 #include <memory>
+#include <vector>
 
 class WindowManager;
 class Border;
@@ -12,6 +13,12 @@ class Border;
 enum class Protocol : int {
     Delete    = 1,
     TakeFocus = 2
+};
+
+enum class ClientState {
+    Withdrawn = 0,   // matches X11 WithdrawnState
+    Normal    = 1,   // matches X11 NormalState
+    Iconic    = 3    // matches X11 IconicState (NOT 2 -- X11 uses 3)
 };
 
 class Client {
@@ -24,13 +31,12 @@ public:
     Client& operator=(const Client&) = delete;
 
     // Lifecycle (replaces upstream's delete this)
-    void release();
     void manage(bool mapped);
 
     // State queries
-    bool isHidden()     const { return m_state == IconicState; }
-    bool isWithdrawn()  const { return m_state == WithdrawnState; }
-    bool isNormal()     const { return m_state == NormalState; }
+    bool isHidden()     const { return m_state == ClientState::Iconic; }
+    bool isWithdrawn()  const { return m_state == ClientState::Withdrawn; }
+    bool isNormal()     const { return m_state == ClientState::Normal; }
     bool isTransient()  const { return m_transient != None; }
     bool isFixedSize()  const { return m_fixedSize; }
     bool isActive()     const;
@@ -115,7 +121,7 @@ private:
     int m_minHeight;
     void fixResizeDimensions(int &w, int &h, int &dw, int &dh);
 
-    int m_state;
+    ClientState m_state;
     int m_protocol;
     bool m_managed;
     bool m_reparenting;
@@ -126,15 +132,15 @@ private:
     static const char* const m_defaultLabel;
 
     Colormap m_colormap;
-    int m_colormapWinCount;
-    Window *m_colormapWindows;
-    Colormap *m_windowColormaps;
+    std::vector<Window> m_colormapWindows;
+    std::vector<Colormap> m_windowColormaps;
 
     WindowManager *const m_windowManager;
 
     // Property access
     std::string getProperty(Atom atom);
     bool getState(int *state);
+    void setState(ClientState state);
     void setState(int state);
 
     // Internal setup
@@ -143,4 +149,6 @@ private:
     void getProtocols();
     void getTransient();
     void decorate(bool active);
+
+    static bool isValidTransition(ClientState from, ClientState to);
 };

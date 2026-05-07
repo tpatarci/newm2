@@ -249,4 +249,21 @@ private:
     Colormap m_colormap;
 };
 
+class ServerGrab {
+public:
+    explicit ServerGrab(Display* d) noexcept : m_display(d) {
+        if (m_display) XGrabServer(m_display);
+    }
+
+    ~ServerGrab() {
+        if (m_display) XUngrabServer(m_display);
+    }
+
+    ServerGrab(const ServerGrab&) = delete;
+    ServerGrab& operator=(const ServerGrab&) = delete;
+
+private:
+    Display* m_display;
+};
+
 } // namespace x11
