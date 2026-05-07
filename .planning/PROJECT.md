@@ -30,7 +30,7 @@ A lightweight, visually distinctive window manager that works well on resource-c
 - ✓ Modern C++ (C++17) — std::vector, std::string, bool, RAII for X11 resources — Validated in Phase 1
 - ✓ RAII client lifecycle — unique_ptr ownership, ClientState enum, ServerGrab, vector colormaps, automated tests — Validated in Phase 3
 - [ ] EWMH compliance (_NET_SUPPORTED, _NET_WM_STATE, _NET_ACTIVE_WINDOW, etc.)
-- [ ] Xft/fontconfig for font rendering (replacing core X fonts + xvertext)
+- ✓ Xft/fontconfig for font rendering (replacing core X fonts + xvertext) — Validated in Phase 4
 - [ ] Xrandr support for display configuration
 - [ ] Runtime configuration file (~/.config/wm2-born-again/config)
 - [ ] GUI configuration tool for non-programmers (GTK or similar lightweight toolkit)
@@ -77,7 +77,7 @@ A lightweight, visually distinctive window manager that works well on resource-c
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | Keep wm2's visual identity | Distinctive, minimal, and the whole point of wm2 — not just another tiling WM | — Pending |
-| Replace xvertext with Xft | Core X fonts are deprecated; Xft supports antialiasing, UTF-8, fontconfig | — Pending |
+| Replace xvertext with Xft | Core X fonts are deprecated; Xft supports antialiasing, UTF-8, fontconfig | Done — Phase 4 |
 | Add EWMH compliance | Modern apps and pagers expect _NET_* hints; without them panels/taskbars break | — Pending |
 | Config file + GUI tool | Power users edit text; non-programmers use GUI; both write same format | — Pending |
 | AI menu discovery | Scans installed binaries to auto-populate root menu — novel feature, fits AI showcase | — Pending |
