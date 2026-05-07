@@ -454,6 +454,13 @@ void Client::getColormaps()
 
     m_windowColormaps = static_cast<Colormap*>(malloc(n * sizeof(Colormap)));
 
+    if (!m_windowColormaps) {
+        m_colormapWinCount = 0;
+        XFree(m_colormapWindows);
+        m_colormapWindows = nullptr;
+        return;
+    }
+
     for (int i = 0; i < n; ++i) {
         if (cw[i] == m_window) {
             m_windowColormaps[i] = m_colormap;
