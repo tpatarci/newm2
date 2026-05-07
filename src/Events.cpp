@@ -92,8 +92,16 @@ int WindowManager::loop()
 
         case MotionNotify:
             if (m_focusChanging) {
-                if (!m_focusPointerMoved) m_focusPointerMoved = true;
-                else m_focusPointerNowStill = false;
+                if (!m_focusPointerMoved) {
+                    m_focusPointerMoved = true;
+                    // First motion event: start the 80ms pointer-stopped timer
+                    m_pointerStoppedDeadline =
+                        std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(80);
+                    m_pointerStoppedDeadlineActive = true;
+                } else {
+                    m_focusPointerNowStill = false;
+                }
             }
             break;
 
@@ -137,10 +145,7 @@ void WindowManager::nextEvent(XEvent *e)
         // Flush pending X output before blocking
         XFlush(display());
 
-        int timeout = -1;  // block indefinitely by default
-        if (m_focusChanging) {
-            timeout = 20;   // check focus delays every 20ms (matches upstream select granularity)
-        }
+        int timeout = computePollTimeout();
 
         int r = poll(fds, 2, timeout);
 

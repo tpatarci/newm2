@@ -49,6 +49,10 @@ WindowManager::WindowManager()
     , m_focusTimestamp(0)
     , m_focusPointerMoved(false)
     , m_focusPointerNowStill(false)
+    , m_pointerStoppedDeadline{}
+    , m_autoRaiseDeadline{}
+    , m_pointerStoppedDeadlineActive(false)
+    , m_autoRaiseDeadlineActive(false)
 {
     std::fprintf(stderr, "\nwm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.\n"
                  "  Parts derived from 9wm Copyright (c) 1994-96 David Hogan\n"
@@ -534,19 +538,100 @@ const char* WindowManager::menuLabel(int i)
 
 void WindowManager::considerFocusChange(Client *c, Window w, Time ts)
 {
-    // Auto-raise disabled for Phase 1 (config will come later)
-    (void)c; (void)w; (void)ts;
+    if (m_focusChanging) {
+        stopConsideringFocus();
+    }
+
+    m_focusChanging = true;
+    m_focusTimestamp = ts;
+    m_focusCandidate = c;
+    m_focusCandidateWindow = w;
+    m_focusPointerMoved = false;
+    m_focusPointerNowStill = false;
+
+    // Start the auto-raise deadline (400ms from now) per D-03
+    m_autoRaiseDeadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(400);
+    m_autoRaiseDeadlineActive = true;
+    // Pointer-stopped timer starts after first MotionNotify per D-04
+    m_pointerStoppedDeadlineActive = false;
+
+    m_focusCandidate->selectOnMotion(m_focusCandidateWindow, true);
 }
 
 
 void WindowManager::stopConsideringFocus()
 {
-    // Auto-raise disabled for Phase 1
+    // BUG FIX: upstream sets m_focusChanging=false before checking it,
+    // so selectOnMotion(false) never executes. We call selectOnMotion first.
+    if (m_focusChanging && m_focusCandidateWindow && m_focusCandidate) {
+        m_focusCandidate->selectOnMotion(m_focusCandidateWindow, false);
+    }
+
     m_focusChanging = false;
+    m_pointerStoppedDeadlineActive = false;
+    m_autoRaiseDeadlineActive = false;
 }
 
 
 void WindowManager::checkDelaysForFocus()
 {
-    // Auto-raise disabled for Phase 1
+    using namespace std::chrono;
+
+    auto now = steady_clock::now();
+
+    if (m_focusPointerMoved) {
+        // Branch 1: We've seen at least one MotionNotify.
+        // Check if pointer has been still for 80ms (pointer-stopped detection).
+        if (m_pointerStoppedDeadlineActive &&
+            now >= m_pointerStoppedDeadline) {
+
+            if (m_focusPointerNowStill) {
+                // Pointer confirmed stopped -> try to raise
+                m_focusCandidate->focusIfAppropriate(true);
+            } else {
+                // Pointer moved since last check; mark as "still until
+                // proven otherwise". Next MotionNotify will set
+                // m_focusPointerNowStill back to false.
+                m_focusPointerNowStill = true;
+                // Reset pointer-stopped deadline for next check
+                m_pointerStoppedDeadline = now + milliseconds(80);
+            }
+        }
+    } else {
+        // Branch 2: No MotionNotify at all (window doesn't generate motion).
+        // Check auto-raise deadline directly (400ms).
+        if (m_autoRaiseDeadlineActive &&
+            now >= m_autoRaiseDeadline) {
+
+            m_focusCandidate->focusIfAppropriate(true);
+        }
+    }
+}
+
+
+int WindowManager::computePollTimeout() const
+{
+    using namespace std::chrono;
+
+    if (!m_pointerStoppedDeadlineActive && !m_autoRaiseDeadlineActive) {
+        return -1;  // no active timers, block indefinitely
+    }
+
+    auto now = steady_clock::now();
+    steady_clock::time_point earliest = steady_clock::time_point::max();
+
+    if (m_pointerStoppedDeadlineActive) {
+        earliest = std::min(earliest, m_pointerStoppedDeadline);
+    }
+    if (m_autoRaiseDeadlineActive) {
+        earliest = std::min(earliest, m_autoRaiseDeadline);
+    }
+
+    if (earliest == steady_clock::time_point::max()) {
+        return -1;
+    }
+
+    auto ms = duration_cast<milliseconds>(earliest - now).count();
+    return (ms > 0) ? static_cast<int>(ms) : 0;
 }
