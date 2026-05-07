@@ -142,6 +142,63 @@ void Border::allocateXftColors()
 }
 
 
+bool Border::shapeAvailable()
+{
+    return windowManager()->hasShapeExtension();
+}
+
+
+void Border::shapeParentRectangular(int w, int h)
+{
+    // Simple rectangular frame: full width/height, no fancy shaping
+    XRectangle frame;
+    frame.x = 0;
+    frame.y = 0;
+    frame.width = w + m_tabWidth + FRAME_WIDTH + 1;
+    frame.height = h + FRAME_WIDTH + 1;
+    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
+        0, 0, &frame, 1, ShapeSet, YXBanded);
+
+    frame.x++; frame.y++; frame.width -= 2; frame.height -= 2;
+    XShapeCombineRectangles(display(), m_parent, ShapeClip,
+        0, 0, &frame, 1, ShapeSet, YXBanded);
+}
+
+
+void Border::shapeTabRectangular(int w, int h)
+{
+    // Plain rectangular tab: no diagonal, no button cutouts
+    XRectangle tabBounding;
+    tabBounding.x = 0;
+    tabBounding.y = 0;
+    tabBounding.width = m_tabWidth + 2;
+    tabBounding.height = m_tabHeight + m_tabWidth + 2;
+    XShapeCombineRectangles(display(), m_tab, ShapeBounding,
+        0, 0, &tabBounding, 1, ShapeSet, YXBanded);
+
+    XRectangle tabClip;
+    tabClip.x = 1;
+    tabClip.y = 1;
+    tabClip.width = m_tabWidth;
+    tabClip.height = m_tabHeight + m_tabWidth;
+    XShapeCombineRectangles(display(), m_tab, ShapeClip,
+        0, 0, &tabClip, 1, ShapeSet, YXBanded);
+}
+
+
+void Border::setFrameVisibilityRectangular(bool visible, int w, int h)
+{
+    // Simple frame visibility: just show/hide resize handle
+    if (!visible) return;  // In rectangular mode, frame is always visible
+
+    if (!isFixedSize()) {
+        XMapRaised(display(), m_resize);
+    } else {
+        XUnmapWindow(display(), m_resize);
+    }
+}
+
+
 void Border::fatal(const char *s)
 {
     windowManager()->fatal(s);
@@ -335,6 +392,11 @@ void Border::setTransientFrameVisibility(bool visible, int w, int h)
 
 void Border::shapeParent(int w, int h)
 {
+    if (!shapeAvailable()) {
+        shapeParentRectangular(w, h);
+        return;
+    }
+
     if (isTransient()) {
         shapeTransientParent(w, h);
         return;
@@ -384,8 +446,13 @@ void Border::shapeParent(int w, int h)
 }
 
 
-void Border::shapeTab(int w, int)
+void Border::shapeTab(int w, int h)
 {
+    if (!shapeAvailable()) {
+        shapeTabRectangular(w, h);
+        return;
+    }
+
     if (isTransient()) return;
 
     std::vector<XRectangle> rects;
@@ -436,6 +503,8 @@ void Border::shapeTab(int w, int)
 
 void Border::resizeTab(int h)
 {
+    if (!shapeAvailable()) return;  // No incremental resize shaping in rectangular mode
+
     if (isTransient()) return;
 
     int prevTabHeight = m_tabHeight;
@@ -562,6 +631,11 @@ void Border::shapeResize()
 
 void Border::setFrameVisibility(bool visible, int w, int h)
 {
+    if (!shapeAvailable()) {
+        setFrameVisibilityRectangular(visible, w, h);
+        return;
+    }
+
     std::vector<XRectangle> rects;
 
     auto appendRect = [&](int x, int y, int rw, int rh) {
