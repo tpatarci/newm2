@@ -483,22 +483,22 @@ void Border::shapeRectangularFallback(int w, int h) {
 | A3 | Noto Sans at 12pt or 13pt matches visual footprint of Lucida Bold 14pt bitmap font | User Constraints (D-03) | Planner must compare metrics; font size is a discretion area |
 | A4 | XftFontOpenPattern takes ownership of FcPattern on success only | Common Pitfalls | Verified from Xft source code behavior; if wrong, memory leak or crash |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Font size matching (D-03)**
    - What we know: Lucida Bold 14pt is a bitmap font; Noto Sans is a scalable outline font. Point sizes map differently.
    - What's unclear: Exact Noto Sans point size that matches Lucida Bold 14pt visual height.
-   - Recommendation: PoC should render both at candidate sizes (11, 12, 13, 14pt) side-by-side on Xvfb for visual comparison. Use m_tabFont->ascent + m_tabFont->descent total height as the comparison metric.
+   - Recommendation: PoC should render both at candidate sizes (11, 12, 13, 14pt) side-by-side on Xvfb for visual comparison. Use m_tabFont->ascent + m_tabFont->descent total height as the comparison metric. [RESOLVED: PoC validates size; plans use size=12 per D-03 comparison]
 
 2. **Menu highlight approach**
    - What we know: Current code uses GXxor with foreground^background for reversible highlight.
    - What's unclear: Whether XftDrawRect with explicit highlight color produces visually identical results.
-   - Recommendation: Use a dedicated highlight XftColor (e.g., "gray60" for gray80 background). Draw and erase explicitly rather than XOR.
+   - Recommendation: Use a dedicated highlight XftColor (e.g., "gray60" for gray80 background). Draw and erase explicitly rather than XOR. [RESOLVED: Plans use gray60 highlight color with explicit draw/erase]
 
 3. **Button window rendering**
    - What we know: Border::eventButton uses XFillRectangle + XClearWindow on the button window for the hold-to-delete visual feedback.
    - What's unclear: Whether XftDrawRect can replace XFillRectangle here, or if the GC should be retained for non-text drawing.
-   - Recommendation: Keep m_drawGC for the button window fill (it is a simple rectangle fill, not text). Only the tab label and menu text need Xft.
+   - Recommendation: Keep m_drawGC for the button window fill (it is a simple rectangle fill, not text). Only the tab label and menu text need Xft. [RESOLVED: Plans retain m_drawGC for button fill; only tab label and menu use Xft]
 
 ## Environment Availability
 

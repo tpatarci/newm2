@@ -48,7 +48,7 @@ Plans:
   1. The WM processes X11 events via poll() -- no select() or goto statements in the event loop
   2. Windows auto-raise after 400ms hover and pointer-stopped detection works at 80ms granularity, matching original wm2 behavior
   3. Sending SIGTERM or SIGINT to the WM process results in a clean shutdown (windows reparented, X11 connections closed, no resource leaks)
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [x] 02-01: TBD
@@ -80,12 +80,17 @@ Plans:
   2. Tab labels render with antialiased Xft fonts using fontconfig patterns (e.g., "Sans-12") -- no core X fonts or XLFD strings anywhere
   3. Window titles containing non-ASCII characters (accented letters, CJK, etc.) display correctly in tab labels
   4. On displays without the Shape extension, windows fall back to rectangular frames without crashes or rendering artifacts
-**Plans**: TBD
+**Plans**: 3 plans
+
 
 Plans:
-- [ ] 04-01: TBD
-- [ ] 04-02: TBD
-- [ ] 04-03: TBD
+**Wave 1**
+- [ ] 04-01-PLAN.md -- Install Xft/fontconfig, RAII wrappers (XftFontPtr, XftDrawPtr, XftColorWrap), PoC test validating Xft in shaped windows
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 04-02-PLAN.md -- Border tab Xft rendering: replace xvertext with FcMatrix rotation, rectangular Shape fallback (VISL-01, VISL-03, VISL-05)
+- [ ] 04-03-PLAN.md -- Menu Xft rendering: replace core X fonts, remove Rotated.C, explicit highlight (VISL-02, VISL-04)
+
 
 ### Phase 5: Configuration System
 **Goal**: Users can configure the WM at runtime via a config file with sensible defaults, overriding settings from the command line without recompiling.
@@ -96,7 +101,7 @@ Plans:
   2. Running the WM without any config file works perfectly with built-in defaults (no errors, no missing settings)
   3. Command-line options override config file values (e.g., `wm2-born-again --focus=click` overrides config file focus policy)
   4. Changing the config file and restarting the WM picks up the new settings
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [ ] 05-01: TBD
@@ -112,7 +117,7 @@ Plans:
   3. Applications requesting fullscreen via _NET_WM_STATE_FULLSCREEN get a fullscreen window; maximized hints work similarly
   4. Dock windows (_NET_WM_WINDOW_TYPE_DOCK) are not decorated with frames; notification windows and dialogs are handled appropriately
   5. The WM reports single-desktop atoms (_NET_NUMBER_OF_DESKTOPS=1, _NET_CURRENT_DESKTOP=0, _NET_WORKAREA) so panels display correctly
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [ ] 06-01: TBD
@@ -128,7 +133,7 @@ Plans:
   2. The AI scanner finds GUI applications in /usr/bin that lack .desktop files and adds them to the menu
   3. Scan results are cached at ~/.config/wm2-born-again/appcache.json so subsequent startups are fast
   4. User can manually add or remove menu entries via the config file, and those entries appear in the root menu
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [ ] 07-01: TBD
@@ -145,7 +150,7 @@ Plans:
   3. Focus stealing prevention works -- new windows do not grab focus unless the user interacted with the launching application within a reasonable time window
   4. Users can set focus policy to click-to-focus, focus-follows-pointer, or auto-raise via the config file
   5. Window rules in the config file can match windows by WM_CLASS or WM_NAME and apply actions like no-decorate, specific position/size, or skip-taskbar
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [ ] 08-01: TBD
@@ -161,7 +166,7 @@ Plans:
   2. The config GUI communicates with the running WM via a Unix domain socket using JSON messages -- changes apply immediately without restart where possible
   3. The WM runs perfectly without GTK3 installed -- the config GUI is an optional separate package
   4. Changes made in the config GUI are persisted to the config file so they survive WM restarts
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [ ] 09-01: TBD
