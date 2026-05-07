@@ -239,7 +239,8 @@ void WindowManager::eventDestroy(XDestroyWindowEvent *e)
 
     if (c) {
         if (m_focusChanging && c == m_focusCandidate) {
-            m_focusChanging = false;
+            stopConsideringFocus();
+            m_focusCandidate = nullptr;
         }
 
         // Remove from client list

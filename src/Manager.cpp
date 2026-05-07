@@ -576,6 +576,8 @@ void WindowManager::stopConsideringFocus()
 
 void WindowManager::checkDelaysForFocus()
 {
+    if (!m_focusCandidate || !m_focusChanging) return;
+
     using namespace std::chrono;
 
     auto now = steady_clock::now();
