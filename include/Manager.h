@@ -1,6 +1,7 @@
 #pragma once
 
 #include "x11wrap.h"
+#include "Config.h"
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <X11/Xft/Xft.h>
@@ -33,8 +34,10 @@ class Client;
 
 class WindowManager {
 public:
-    WindowManager();
+    WindowManager(const Config& config);
     ~WindowManager();
+
+    const Config& config() const { return m_config; }
 
     void fatal(const char *message);
 
@@ -87,6 +90,8 @@ private:
     void release();
     void initialiseScreen();
     void scanInitialWindows();
+
+    Config m_config;
 
     // RAII-managed X11 resources (D-05)
     // IMPORTANT: m_display declared first so it is destroyed last (D-05, Pitfall 2)

@@ -8,6 +8,7 @@
 #include <vector>
 
 // Static member definitions (degenerate initializations -- don't change)
+int FRAME_WIDTH = 7;  // Default, overwritten in constructor from config
 int Border::m_tabWidth = -1;
 XftFont *Border::m_tabFont = nullptr;
 x11::GCPtr Border::m_drawGC;

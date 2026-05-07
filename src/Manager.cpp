@@ -30,8 +30,9 @@ bool ignoreBadWindowErrors = false;
 const char *const WindowManager::m_menuCreateLabel = "New";
 
 
-WindowManager::WindowManager()
-    : m_screenNumber(0)
+WindowManager::WindowManager(const Config& config)
+    : m_config(config)
+    , m_screenNumber(0)
     , m_root(None)
     , m_defaultColormap(None)
     , m_activeClient(nullptr)
@@ -281,7 +282,7 @@ void WindowManager::initialiseScreen()
     XChangeWindowAttributes(display(), m_root, CWCursor | CWEventMask, &attr);
     XSync(display(), false);
 
-    m_menuBorderPixel     = allocateColour("black", "menu border");
+    m_menuBorderPixel     = allocateColour(m_config.menuBorders.c_str(), "menu border");
 
     m_menuWindow = XCreateSimpleWindow(display(), m_root, 0, 0, 1, 1, 1,
                                        m_menuBorderPixel, 0);
@@ -307,9 +308,9 @@ void WindowManager::initialiseScreen()
     Visual* visual = DefaultVisual(display(), m_screenNumber);
     Colormap cmap = DefaultColormap(display(), m_screenNumber);
 
-    m_menuFgColor = x11::XftColorWrap(display(), visual, cmap, "black");
-    m_menuBgColor = x11::XftColorWrap(display(), visual, cmap, "gray80");
-    m_menuHlColor = x11::XftColorWrap(display(), visual, cmap, "gray60");
+    m_menuFgColor = x11::XftColorWrap(display(), visual, cmap, m_config.menuForeground.c_str());
+    m_menuBgColor = x11::XftColorWrap(display(), visual, cmap, m_config.menuBackground.c_str());
+    m_menuHlColor = x11::XftColorWrap(display(), visual, cmap, m_config.menuHighlight.c_str());
 
     if (!m_menuFgColor || !m_menuBgColor || !m_menuHlColor) {
         fatal("couldn't allocate menu colors");
@@ -546,8 +547,15 @@ void WindowManager::spawn()
                 setenv("DISPLAY", displayName, 1);
             }
 
-            execlp("xterm", "xterm", static_cast<char*>(nullptr));
-            std::fprintf(stderr, "wm2: exec xterm failed");
+            if (m_config.execUsingShell) {
+                execl("/bin/sh", "sh", "-c", m_config.newWindowCommand.c_str(),
+                      static_cast<char*>(nullptr));
+            } else {
+                execlp(m_config.newWindowCommand.c_str(),
+                       m_config.newWindowCommand.c_str(),
+                       static_cast<char*>(nullptr));
+            }
+            std::fprintf(stderr, "wm2: exec %s failed", m_config.newWindowCommand.c_str());
             perror(" ");
             std::exit(1);
         }
@@ -579,9 +587,9 @@ void WindowManager::considerFocusChange(Client *c, Window w, Time ts)
     m_focusPointerMoved = false;
     m_focusPointerNowStill = false;
 
-    // Start the auto-raise deadline (400ms from now) per D-03
+    // Start the auto-raise deadline per D-03
     m_autoRaiseDeadline = std::chrono::steady_clock::now() +
-        std::chrono::milliseconds(400);
+        std::chrono::milliseconds(m_config.autoRaiseDelay);
     m_autoRaiseDeadlineActive = true;
     // Pointer-stopped timer starts after first MotionNotify per D-04
     m_pointerStoppedDeadlineActive = false;
@@ -627,7 +635,7 @@ void WindowManager::checkDelaysForFocus()
                 // m_focusPointerNowStill back to false.
                 m_focusPointerNowStill = true;
                 // Reset pointer-stopped deadline for next check
-                m_pointerStoppedDeadline = now + milliseconds(80);
+                m_pointerStoppedDeadline = now + milliseconds(m_config.pointerStoppedDelay);
             }
         }
     } else {

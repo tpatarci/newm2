@@ -9,7 +9,7 @@ class WindowManager;
 
 // Frame dimensions (from upstream Config.h and Border.h)
 constexpr int TAB_TOP_HEIGHT = 2;
-constexpr int FRAME_WIDTH = 7;          // CONFIG_FRAME_THICKNESS
+extern int FRAME_WIDTH;                 // CONFIG_FRAME_THICKNESS (runtime from Config)
 constexpr int TRANSIENT_FRAME_WIDTH = 4;
 
 class Border {
