@@ -66,7 +66,10 @@ if(BUILD_TESTS)
         Catch2::Catch2WithMain
         PkgConfig::X11
     )
-    target_include_directories(test_raii PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_include_directories(test_raii PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${XFT_INCLUDE_DIRS}
+    )
     catch_discover_tests(test_raii)
 
     # Smoke tests (need Xvfb display)
@@ -77,7 +80,10 @@ if(BUILD_TESTS)
             Catch2::Catch2WithMain
             PkgConfig::X11
         )
-        target_include_directories(test_smoke PRIVATE ${CMAKE_SOURCE_DIR}/include)
+        target_include_directories(test_smoke PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${XFT_INCLUDE_DIRS}
+        )
 
         # Xvfb fixture: start before tests, stop after
         set(XVFB_PID_FILE "${CMAKE_BINARY_DIR}/xvfb.pid")
@@ -107,7 +113,10 @@ if(BUILD_TESTS)
         Catch2::Catch2WithMain
         PkgConfig::X11
     )
-    target_include_directories(test_eventloop PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_include_directories(test_eventloop PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${XFT_INCLUDE_DIRS}
+    )
     catch_discover_tests(test_eventloop)
 
     # Auto-raise timer unit tests (pure chrono arithmetic, no display needed)
@@ -115,7 +124,10 @@ if(BUILD_TESTS)
     target_link_libraries(test_autoraise PRIVATE
         Catch2::Catch2WithMain
     )
-    target_include_directories(test_autoraise PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_include_directories(test_autoraise PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${XFT_INCLUDE_DIRS}
+    )
     catch_discover_tests(test_autoraise)
 
     # Client lifecycle tests (need Xvfb display, TEST-03)
@@ -127,6 +139,7 @@ if(BUILD_TESTS)
         )
         target_include_directories(test_client PRIVATE
             ${CMAKE_SOURCE_DIR}/include
+            ${XFT_INCLUDE_DIRS}
         )
         catch_discover_tests(test_client
             PROPERTIES
@@ -144,6 +157,7 @@ if(BUILD_TESTS)
         )
         target_include_directories(test_xft_poc PRIVATE
             ${CMAKE_SOURCE_DIR}/include
+            ${XFT_INCLUDE_DIRS}
         )
         catch_discover_tests(test_xft_poc
             PROPERTIES

@@ -1,7 +1,10 @@
 #pragma once
 
 #include <X11/Xlib.h>
+#include <X11/Xft/Xft.h>
+#include <fontconfig/fontconfig.h>
 #include <memory>
+#include <cstring>
 
 namespace x11 {
 
@@ -264,6 +267,140 @@ public:
 
 private:
     Display* m_display;
+};
+
+// ============================================================
+// Xft resources: RAII wrappers for font rendering
+// ============================================================
+
+// XftFontPtr -- unique_ptr + custom deleter (follows GCPtr pattern)
+struct XftFontDeleter {
+    Display* display = nullptr;
+    void operator()(XftFont* font) const noexcept {
+        if (display && font) XftFontClose(display, font);
+    }
+};
+using XftFontPtr = std::unique_ptr<XftFont, XftFontDeleter>;
+
+// Load font by fontconfig name pattern (e.g., "Noto Sans:bold:size=12")
+// Used for non-rotated text (menu labels)
+inline XftFontPtr make_xft_font_name(Display* d, const char* name) {
+    XftFont* f = XftFontOpenName(d, DefaultScreen(d), name);
+    XftFontPtr p{f};
+    if (p) p.get_deleter().display = d;
+    return p;
+}
+
+// Load font with 90-degree clockwise rotation via FcMatrix (D-04)
+// Used for rotated text (border tab labels)
+inline XftFontPtr make_xft_font_rotated(Display* d, const char* pattern) {
+    FcPattern* pat = FcNameParse(reinterpret_cast<const FcChar8*>(pattern));
+    if (!pat) return XftFontPtr{nullptr};
+
+    FcConfigSubstitute(nullptr, pat, FcMatchPattern);
+    XftDefaultSubstitute(d, DefaultScreen(d), pat);
+
+    // Apply 90-degree clockwise rotation: cos(90)=0, sin(90)=1 (D-04, Pitfall 6)
+    FcMatrix mat;
+    FcMatrixInit(&mat);
+    FcMatrixRotate(&mat, 0.0, 1.0);
+    FcPatternAddMatrix(pat, FC_MATRIX, &mat);
+
+    FcResult result;
+    FcPattern* match = FcFontMatch(nullptr, pat, &result);
+    FcPatternDestroy(pat);
+    if (!match) return XftFontPtr{nullptr};
+
+    XftFont* font = XftFontOpenPattern(d, match);
+    // Pitfall 3: XftFontOpenPattern takes ownership of match on success only
+    if (!font) {
+        FcPatternDestroy(match);
+        return XftFontPtr{nullptr};
+    }
+
+    XftFontPtr p{font};
+    p.get_deleter().display = d;
+    return p;
+}
+
+// XftDrawPtr -- thin move-only class (follows UniqueCursor pattern)
+class XftDrawPtr {
+public:
+    XftDrawPtr() noexcept : m_draw(nullptr) {}
+    explicit XftDrawPtr(XftDraw* d) noexcept : m_draw(d) {}
+
+    XftDrawPtr(XftDrawPtr&& o) noexcept : m_draw(o.m_draw) { o.m_draw = nullptr; }
+    XftDrawPtr& operator=(XftDrawPtr&& o) noexcept {
+        if (this != &o) { reset(); m_draw = o.m_draw; o.m_draw = nullptr; }
+        return *this;
+    }
+
+    XftDrawPtr(const XftDrawPtr&) = delete;
+    XftDrawPtr& operator=(const XftDrawPtr&) = delete;
+
+    ~XftDrawPtr() { reset(); }
+
+    void reset() noexcept {
+        if (m_draw) XftDrawDestroy(m_draw);
+        m_draw = nullptr;
+    }
+
+    XftDraw* get() const noexcept { return m_draw; }
+    explicit operator bool() const noexcept { return m_draw != nullptr; }
+
+private:
+    XftDraw* m_draw;
+};
+
+// XftColorWrap -- stores Display*/Visual*/Colormap for cleanup per Pitfall 4
+class XftColorWrap {
+public:
+    XftColorWrap() noexcept : m_display(nullptr), m_visual(nullptr), m_cmap(None) {
+        std::memset(&m_color, 0, sizeof(m_color));
+    }
+
+    XftColorWrap(Display* d, Visual* v, Colormap c, const char* name) noexcept
+        : m_display(d), m_visual(v), m_cmap(c) {
+        if (!XftColorAllocName(d, v, c, name, &m_color)) {
+            m_display = nullptr; // mark as invalid
+        }
+    }
+
+    XftColorWrap(XftColorWrap&& o) noexcept
+        : m_display(o.m_display), m_visual(o.m_visual), m_cmap(o.m_cmap), m_color(o.m_color) {
+        o.m_display = nullptr;
+    }
+    XftColorWrap& operator=(XftColorWrap&& o) noexcept {
+        if (this != &o) {
+            reset();
+            m_display = o.m_display; m_visual = o.m_visual;
+            m_cmap = o.m_cmap; m_color = o.m_color; o.m_display = nullptr;
+        }
+        return *this;
+    }
+
+    XftColorWrap(const XftColorWrap&) = delete;
+    XftColorWrap& operator=(const XftColorWrap&) = delete;
+
+    ~XftColorWrap() { reset(); }
+
+    void reset() noexcept {
+        if (m_display && m_visual && m_cmap != None) {
+            XftColorFree(m_display, m_visual, m_cmap, &m_color);
+        }
+        m_display = nullptr; m_visual = nullptr; m_cmap = None;
+    }
+
+    XftColor* operator->() noexcept { return &m_color; }
+    XftColor* get() noexcept { return &m_color; }
+    const XftColor* get() const noexcept { return &m_color; }
+    explicit operator bool() const noexcept { return m_display != nullptr; }
+
+private:
+    Display* m_display;
+    Visual* m_visual;
+    Colormap m_cmap;
+    XftColor m_color;
 };
 
 } // namespace x11

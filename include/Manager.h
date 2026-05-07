@@ -46,6 +46,7 @@ public:
     Display* display() { return m_display.get(); }
     Window root() { return m_root; }
     int screen() { return m_screenNumber; }
+    bool hasShapeExtension() const { return m_shapeEvent >= 0; }
 
     enum class RootCursor {
         Normal, Delete, Down, Right, DownRight
