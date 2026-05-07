@@ -22,9 +22,9 @@
 ### Client Lifecycle
 
 - [x] **CLNT-01**: ICCCM-compliant reparenting using XGrabServer/XUngrabServer
-- [ ] **CLNT-02**: Replace `delete this` with proper lifecycle management via WindowManager
+- [x] **CLNT-02**: Replace `delete this` with proper lifecycle management via WindowManager
 - [x] **CLNT-03**: Replace custom listmacro2.h with std::vector<Client*>
-- [ ] **CLNT-04**: O(1) client lookup by window ID (hash map instead of linear scan)
+- [x] **CLNT-04**: O(1) client lookup by window ID (hash map instead of linear scan)
 - [x] **CLNT-05**: Client state transitions are correct (Withdrawn → Normal → Iconic → Withdrawn)
 
 ### Visual Identity
@@ -142,9 +142,9 @@
 | EVNT-02 | Phase 2 | Pending |
 | EVNT-03 | Phase 2 | Pending |
 | CLNT-01 | Phase 3 | Complete |
-| CLNT-02 | Phase 3 | Pending |
+| CLNT-02 | Phase 3 | Complete |
 | CLNT-03 | Phase 3 | Complete |
-| CLNT-04 | Phase 3 | Pending |
+| CLNT-04 | Phase 3 | Complete |
 | CLNT-05 | Phase 3 | Complete |
 | VISL-01 | Phase 4 | Pending |
 | VISL-02 | Phase 4 | Pending |
