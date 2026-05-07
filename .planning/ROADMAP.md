@@ -103,9 +103,14 @@ Plans:
   4. Changing the config file and restarting the WM picks up the new settings
 **Plans**: 3 plans
 
-Plans:
-- [ ] 05-01: TBD
-- [ ] 05-02: TBD
+**Wave 1**
+- [ ] 05-01-PLAN.md -- Config struct, XDG paths, key=value file parser, unit tests (CONF-01, CONF-02, CONF-03)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 05-02-PLAN.md -- getopt_long CLI parsing, boolean --no-xxx flags, CLI override tests (CONF-04)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 05-03-PLAN.md -- Wire config into WindowManager, Border, Buttons, Events; FRAME_WIDTH runtime (all CONF)
 
 ### Phase 6: EWMH Compliance
 **Goal**: The WM speaks EWMH so modern applications, panels, and taskbars interact with it correctly on a single-desktop setup.
