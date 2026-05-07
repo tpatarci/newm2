@@ -688,6 +688,9 @@ TEST_CASE("CLI unknown option causes exit", "[config][cli]") {
         dup2(pipefd[1], STDERR_FILENO);
         close(pipefd[1]);
 
+        // Ensure stderr is unbuffered so output appears immediately
+        setvbuf(stderr, nullptr, _IONBF, 0);
+
         Config cfg;
         char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--unknown-option"), nullptr };
         cfg.applyCliArgs(2, argv);
@@ -697,13 +700,14 @@ TEST_CASE("CLI unknown option causes exit", "[config][cli]") {
     // Parent process
     close(pipefd[1]);
 
-    // Read stderr from child
+    // Wait for child to exit first, then read stderr
+    int status;
+    waitpid(pid, &status, 0);
+
+    // Now read stderr from child (child has exited, pipe has all data)
     char buf[1024] = {};
     ssize_t n = read(pipefd[0], buf, sizeof(buf) - 1);
     close(pipefd[0]);
-
-    int status;
-    waitpid(pid, &status, 0);
 
     // Verify child exited with code 2
     REQUIRE(WIFEXITED(status));
