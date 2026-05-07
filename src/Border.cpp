@@ -128,10 +128,12 @@ void Border::drawLabel()
 {
     if (!m_label.empty()) {
         XClearWindow(display(), m_tab);
+        // WR-04: Copy label to mutable buffer for xvertext API (takes non-const char*)
+        std::vector<char> buf(m_label.begin(), m_label.end());
+        buf.push_back('\0');
         XRotDrawString(display(), m_tabFont, m_tab, m_drawGC.get(),
                        2 + m_tabFont->max_ascent, m_tabHeight - 1,
-                       const_cast<char*>(m_label.c_str()),
-                       static_cast<int>(m_label.size()));
+                       buf.data(), static_cast<int>(m_label.size()));
     }
 }
 
@@ -170,7 +172,9 @@ void Border::fixTabHeight(int maxHeight)
     m_label = m_client->label();
 
     if (!m_label.empty()) {
-        m_tabHeight = XRotTextWidth(m_tabFont, const_cast<char*>(m_label.c_str()),
+        std::vector<char> buf(m_label.begin(), m_label.end());
+        buf.push_back('\0');
+        m_tabHeight = XRotTextWidth(m_tabFont, buf.data(),
                                     static_cast<int>(m_label.size())) + 6 + m_tabWidth;
     }
 
@@ -179,14 +183,19 @@ void Border::fixTabHeight(int maxHeight)
     m_label = m_client->iconName().empty() ? std::string("incognito") : m_client->iconName();
 
     int len = static_cast<int>(m_label.size());
-    m_tabHeight = XRotTextWidth(m_tabFont, const_cast<char*>(m_label.c_str()),
-                                len) + 6 + m_tabWidth;
+    {
+        std::vector<char> buf(m_label.begin(), m_label.end());
+        buf.push_back('\0');
+        m_tabHeight = XRotTextWidth(m_tabFont, buf.data(), len) + 6 + m_tabWidth;
+    }
     if (m_tabHeight <= maxHeight) return;
 
     std::string newLabel = m_label;
     do {
         newLabel = newLabel.substr(0, len - 1) + "...";
-        m_tabHeight = XRotTextWidth(m_tabFont, const_cast<char*>(newLabel.c_str()),
+        std::vector<char> buf(newLabel.begin(), newLabel.end());
+        buf.push_back('\0');
+        m_tabHeight = XRotTextWidth(m_tabFont, buf.data(),
                                     static_cast<int>(newLabel.size())) + 6 + m_tabWidth;
         --len;
     } while (m_tabHeight > maxHeight && len > 2);
