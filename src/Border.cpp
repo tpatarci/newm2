@@ -713,6 +713,7 @@ void Border::decorate(bool active, int w, int h)
 
 void Border::reparent()
 {
+    x11::ServerGrab grab(display());
     XReparentWindow(display(), m_child, m_parent, xIndent(), yIndent());
 }
 

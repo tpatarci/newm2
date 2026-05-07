@@ -28,14 +28,11 @@ Client::Client(WindowManager *wm, Window w)
     , m_fixedSize(false)
     , m_minWidth(50)
     , m_minHeight(50)
-    , m_state(WithdrawnState)
+    , m_state(ClientState::Withdrawn)
     , m_protocol(0)
     , m_managed(false)
     , m_reparenting(false)
     , m_colormap(None)
-    , m_colormapWinCount(0)
-    , m_colormapWindows(nullptr)
-    , m_windowColormaps(nullptr)
     , m_windowManager(wm)
 {
     XWindowAttributes attr;
@@ -57,36 +54,19 @@ Client::Client(WindowManager *wm, Window w)
 
 Client::~Client()
 {
-    if (m_window != None) {
-        release();  // safety net if caller forgot
-    }
-}
-
-
-void Client::release()
-{
-    // Guard against double-release
     if (m_window == None) return;
 
-    windowManager()->skipInRevert(this, m_revert);
+    if (!isWithdrawn()) {
+        unreparent();
+    }
 
-    if (isHidden()) unhide(false);
-
-    // Border auto-destroyed by unique_ptr
     m_border.reset();
-    m_window = None;
 
-    if (isActive()) {
+    if (activeClient() == this) {
         windowManager()->setActiveClient(nullptr);
     }
 
-    if (m_colormapWinCount > 0) {
-        XFree(m_colormapWindows);
-        free(m_windowColormaps);
-        m_colormapWinCount = 0;
-        m_colormapWindows = nullptr;
-        m_windowColormaps = nullptr;
-    }
+    m_window = None;
 }
 
 
@@ -207,7 +187,7 @@ void Client::manage(bool mapped)
     } else {
         XMapWindow(d, m_window);
         m_border->map();
-        setState(NormalState);
+        setState(ClientState::Normal);
 
         // Focus follows pointer -- don't auto-activate on manage
         deactivate();
@@ -339,8 +319,27 @@ std::string Client::getProperty(Atom a)
 }
 
 
-void Client::setState(int state)
+bool Client::isValidTransition(ClientState from, ClientState to)
 {
+    if (from == to) return true;  // redundant but accepted
+    switch (from) {
+    case ClientState::Withdrawn: return to == ClientState::Normal;
+    case ClientState::Normal:    return to == ClientState::Iconic ||
+                                         to == ClientState::Withdrawn;
+    case ClientState::Iconic:    return to == ClientState::Normal ||
+                                         to == ClientState::Withdrawn;
+    }
+    return false;
+}
+
+
+void Client::setState(ClientState state)
+{
+    if (!isValidTransition(m_state, state)) {
+        std::fprintf(stderr, "wm2: warning: invalid state transition %d->%d "
+                     "for window 0x%lx\n",
+                     static_cast<int>(m_state), static_cast<int>(state), m_window);
+    }
     m_state = state;
 
     long data[2];
@@ -349,6 +348,11 @@ void Client::setState(int state)
 
     XChangeProperty(display(), m_window, Atoms::wm_state, Atoms::wm_state,
                     32, PropModeReplace, reinterpret_cast<unsigned char*>(data), 2);
+}
+
+void Client::setState(int state)
+{
+    setState(static_cast<ClientState>(state));
 }
 
 
@@ -428,7 +432,6 @@ bool Client::setLabel()
 
 void Client::getColormaps()
 {
-    int n;
     Window *cw;
     XWindowAttributes attr;
 
@@ -437,37 +440,26 @@ void Client::getColormaps()
         m_colormap = attr.colormap;
     }
 
-    n = getProperty_aux(display(), m_window, Atoms::wm_colormaps, XA_WINDOW,
-                        100L, reinterpret_cast<unsigned char**>(&cw));
-
-    if (m_colormapWinCount != 0) {
-        XFree(m_colormapWindows);
-        free(m_windowColormaps);
-    }
+    int n = getProperty_aux(display(), m_window, Atoms::wm_colormaps, XA_WINDOW,
+                            100L, reinterpret_cast<unsigned char**>(&cw));
 
     if (n <= 0) {
-        m_colormapWinCount = 0;
+        m_colormapWindows.clear();
+        m_windowColormaps.clear();
         return;
     }
 
-    m_colormapWinCount = n;
-    m_colormapWindows = cw;
+    // Copy from X11-allocated memory into vector, then XFree (per D-13 and Pitfall 4)
+    m_colormapWindows.assign(cw, cw + n);
+    XFree(cw);
 
-    m_windowColormaps = static_cast<Colormap*>(malloc(n * sizeof(Colormap)));
-
-    if (!m_windowColormaps) {
-        m_colormapWinCount = 0;
-        XFree(m_colormapWindows);
-        m_colormapWindows = nullptr;
-        return;
-    }
-
+    m_windowColormaps.resize(n);
     for (int i = 0; i < n; ++i) {
-        if (cw[i] == m_window) {
+        if (m_colormapWindows[i] == m_window) {
             m_windowColormaps[i] = m_colormap;
         } else {
-            XSelectInput(display(), cw[i], ColormapChangeMask);
-            XGetWindowAttributes(display(), cw[i], &attr);
+            XSelectInput(display(), m_colormapWindows[i], ColormapChangeMask);
+            XGetWindowAttributes(display(), m_colormapWindows[i], &attr);
             m_windowColormaps[i] = attr.colormap;
         }
     }
@@ -478,9 +470,9 @@ void Client::installColormap()
 {
     Client *cc = nullptr;
 
-    if (m_colormapWinCount != 0) {
+    if (!m_colormapWindows.empty()) {
         int found = 0;
-        for (int i = m_colormapWinCount - 1; i >= 0; --i) {
+        for (int i = static_cast<int>(m_colormapWindows.size()) - 1; i >= 0; --i) {
             windowManager()->installColormap(m_windowColormaps[i]);
             if (m_colormapWindows[i] == m_window) ++found;
         }
@@ -560,7 +552,7 @@ void Client::withdraw(bool changeState)
 
     if (changeState) {
         XRemoveFromSaveSet(display(), m_window);
-        setState(WithdrawnState);
+        setState(ClientState::Withdrawn);
     }
 
     ignoreBadWindowErrors = true;
@@ -581,7 +573,7 @@ void Client::hide()
 
     if (isActive()) windowManager()->clearFocus();
 
-    setState(IconicState);
+    setState(ClientState::Iconic);
     windowManager()->addToHiddenList(this);
 }
 
@@ -596,7 +588,7 @@ void Client::unhide(bool map)
     windowManager()->removeFromHiddenList(this);
 
     if (map) {
-        setState(NormalState);
+        setState(ClientState::Normal);
         XMapWindow(display(), m_window);
         mapRaised();
     }
@@ -965,7 +957,7 @@ void Client::fixResizeDimensions(int &w, int &h, int &dw, int &dh)
 void Client::eventMapRequest(XMapRequestEvent *)
 {
     switch (m_state) {
-    case WithdrawnState:
+    case ClientState::Withdrawn:
         if (parent() == root()) {
             manage(false);
             return;
@@ -974,15 +966,15 @@ void Client::eventMapRequest(XMapRequestEvent *)
         XAddToSaveSet(display(), m_window);
         XMapWindow(display(), m_window);
         mapRaised();
-        setState(NormalState);
+        setState(ClientState::Normal);
         break;
 
-    case NormalState:
+    case ClientState::Normal:
         XMapWindow(display(), m_window);
         mapRaised();
         break;
 
-    case IconicState:
+    case ClientState::Iconic:
         unhide(true);
         break;
     }
@@ -1042,14 +1034,14 @@ void Client::eventConfigureRequest(XConfigureRequestEvent *e)
 void Client::eventUnmap(XUnmapEvent *e)
 {
     switch (m_state) {
-    case IconicState:
+    case ClientState::Iconic:
         if (e->send_event) {
             unhide(false);
             withdraw();
         }
         break;
 
-    case NormalState:
+    case ClientState::Normal:
         if (isActive()) windowManager()->clearFocus();
         if (!m_reparenting) withdraw();
         break;
@@ -1065,7 +1057,7 @@ void Client::eventColormap(XColormapEvent *e)
         m_colormap = e->colormap;
         if (isActive()) installColormap();
     } else {
-        for (int i = 0; i < m_colormapWinCount; ++i) {
+        for (size_t i = 0; i < m_colormapWindows.size(); ++i) {
             if (m_colormapWindows[i] == e->window) {
                 m_windowColormaps[i] = e->colormap;
                 if (isActive()) installColormap();

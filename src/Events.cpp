@@ -251,7 +251,7 @@ void WindowManager::eventDestroy(XDestroyWindowEvent *e)
             }
         }
 
-        c->release();
+        delete c;
 
         ignoreBadWindowErrors = true;
         XSync(display(), false);

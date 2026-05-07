@@ -153,7 +153,7 @@ void WindowManager::release()
 
     for (auto *c : unparentList) {
         c->unreparent();
-        c->release();
+        delete c;
     }
 
     XSetInputFocus(display(), PointerRoot, RevertToPointerRoot, timestamp(false));
