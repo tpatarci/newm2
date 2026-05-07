@@ -21,6 +21,7 @@ add_executable(${PROJECT_NAME}
     src/Border.cpp
     src/Buttons.cpp
     src/Events.cpp
+    src/Config.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -159,4 +160,14 @@ if(BUILD_TESTS)
                 FIXTURES_REQUIRED xvfb_display
         )
     endif()
+
+    # Config parsing unit tests (pure data transformation, no X11 needed)
+    add_executable(test_config tests/test_config.cpp src/Config.cpp)
+    target_link_libraries(test_config PRIVATE
+        Catch2::Catch2WithMain
+    )
+    target_include_directories(test_config PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    catch_discover_tests(test_config)
 endif()
