@@ -111,4 +111,21 @@ if(BUILD_TESTS)
     )
     target_include_directories(test_autoraise PRIVATE ${CMAKE_SOURCE_DIR}/include)
     catch_discover_tests(test_autoraise)
+
+    # Client lifecycle tests (need Xvfb display, TEST-03)
+    if(XVFB_EXECUTABLE)
+        add_executable(test_client tests/test_client.cpp)
+        target_link_libraries(test_client PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+        )
+        target_include_directories(test_client PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+        )
+        catch_discover_tests(test_client
+            PROPERTIES
+                ENVIRONMENT "DISPLAY=:99"
+                FIXTURES_REQUIRED xvfb_display
+        )
+    endif()
 endif()
