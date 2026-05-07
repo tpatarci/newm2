@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <poll.h>
 
 const char *const Client::m_defaultLabel = "incognito";
 
@@ -714,7 +715,6 @@ void Client::move(XButtonEvent *e)
     XEvent event;
     bool found;
     bool doSomething = false;
-    struct timeval sleepval;
 
     while (!done) {
 
@@ -728,9 +728,7 @@ void Client::move(XButtonEvent *e)
         }
 
         if (!found) {
-            sleepval.tv_sec = 0;
-            sleepval.tv_usec = 50000;
-            select(0, nullptr, nullptr, nullptr, &sleepval);
+            poll(nullptr, 0, 50);
             continue;
         }
 
@@ -819,7 +817,6 @@ void Client::resize(XButtonEvent *e, bool horizontal, bool vertical)
     bool found;
     bool doSomething = false;
     bool done = false;
-    struct timeval sleepval;
 
     while (!done) {
 
@@ -831,9 +828,7 @@ void Client::resize(XButtonEvent *e, bool horizontal, bool vertical)
         }
 
         if (!found) {
-            sleepval.tv_sec = 0;
-            sleepval.tv_usec = 50000;
-            select(0, nullptr, nullptr, nullptr, &sleepval);
+            poll(nullptr, 0, 50);
             continue;
         }
 
