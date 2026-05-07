@@ -152,6 +152,7 @@ if(BUILD_TESTS)
         target_link_libraries(test_xft_poc PRIVATE
             Catch2::Catch2WithMain
             PkgConfig::X11
+            PkgConfig::XEXT
             PkgConfig::XFT
             PkgConfig::FONTCONFIG
         )
