@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <unordered_map>
 #include <csignal>
 #include <chrono>
 #include <unistd.h>
@@ -100,9 +101,10 @@ private:
     x11::UniqueCursor m_hCursor;
     x11::UniqueCursor m_vhCursor;
 
-    // Client list (D-08: std::vector replaces listmacro2.h)
-    std::vector<Client*> m_clients;
-    std::vector<Client*> m_hiddenClients;
+    // Client list (D-01: unique_ptr ownership)
+    std::vector<std::unique_ptr<Client>> m_clients;
+    std::vector<std::unique_ptr<Client>> m_hiddenClients;
+    std::unordered_map<Window, Client*> m_windowMap;  // D-05: O(1) lookup
     Client *m_activeClient;
 
     int m_shapeEvent;

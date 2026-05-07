@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <X11/Xproto.h>
+#include <algorithm>
 #include "Cursors.h"
 #include "Rotated.h"
 
@@ -136,25 +137,26 @@ void WindowManager::release()
 {
     if (m_returnCode != 0) return;
 
-    // Separate normal and iconic clients, unparent all
-    std::vector<Client*> normalList;
+    // Unreparent all clients (both visible and hidden) then let vectors destroy them
     std::vector<Client*> unparentList;
 
-    for (auto *c : m_clients) {
-        if (c->isNormal()) normalList.push_back(c);
-        else unparentList.push_back(c);
+    for (const auto& c : m_clients) {
+        unparentList.push_back(c.get());
+    }
+    for (const auto& c : m_hiddenClients) {
+        unparentList.push_back(c.get());
     }
 
-    for (auto *c : normalList) {
-        unparentList.push_back(c);
-    }
+    m_windowMap.clear();
 
-    m_clients.clear();
-
+    // Unparent all clients first (while they still exist)
     for (auto *c : unparentList) {
         c->unreparent();
-        delete c;
     }
+
+    // Clear vectors -- unique_ptr destructors trigger ~Client() for each
+    m_clients.clear();
+    m_hiddenClients.clear();
 
     XSetInputFocus(display(), PointerRoot, RevertToPointerRoot, timestamp(false));
     installColormap(None);
@@ -387,15 +389,28 @@ Client *WindowManager::windowToClient(Window w, bool create)
 {
     if (w == 0) return nullptr;
 
-    for (auto *c : m_clients) {
-        if (c->hasWindow(w)) return c;
-    }
+    // O(1) lookup via hash map (client window IDs)
+    auto it = m_windowMap.find(w);
+    if (it != m_windowMap.end()) return it->second;
 
-    if (!create) return nullptr;
+    // Fallback: linear scan for border windows (rare, per D-05)
+    auto checkVector = [&](const auto& vec) -> Client* {
+        for (const auto& c : vec) {
+            if (c->hasWindow(w)) return c.get();
+        }
+        return nullptr;
+    };
 
-    Client *newC = new Client(this, w);
-    m_clients.push_back(newC);
-    return newC;
+    Client* found = checkVector(m_clients);
+    if (!found) found = checkVector(m_hiddenClients);
+    if (found || !create) return found;
+
+    // Create new client with unique_ptr ownership
+    auto newClient = std::make_unique<Client>(this, w);
+    Client* raw = newClient.get();
+    m_clients.push_back(std::move(newClient));
+    m_windowMap[raw->window()] = raw;
+    return raw;
 }
 
 
@@ -447,8 +462,14 @@ void WindowManager::clearFocus()
 
 void WindowManager::skipInRevert(Client *c, Client *myRevert)
 {
-    for (auto *client : m_clients) {
-        if (client != c && client->revertTo() == c) {
+    for (const auto& client : m_clients) {
+        if (client.get() != c && client->revertTo() == c) {
+            client->setRevertTo(myRevert);
+        }
+    }
+    // Also check hidden clients for revert chains
+    for (const auto& client : m_hiddenClients) {
+        if (client.get() != c && client->revertTo() == c) {
             client->setRevertTo(myRevert);
         }
     }
@@ -457,21 +478,27 @@ void WindowManager::skipInRevert(Client *c, Client *myRevert)
 
 void WindowManager::addToHiddenList(Client *c)
 {
-    for (auto *hc : m_hiddenClients) {
-        if (hc == c) return;
+    // Move unique_ptr from m_clients to m_hiddenClients
+    auto it = std::find_if(m_clients.begin(), m_clients.end(),
+        [c](const auto& up) { return up.get() == c; });
+    if (it != m_clients.end()) {
+        m_hiddenClients.push_back(std::move(*it));
+        m_clients.erase(it);
     }
-    m_hiddenClients.push_back(c);
+    // Note: map entry NOT updated -- raw Client* value unchanged per D-06, Pitfall 3
 }
 
 
 void WindowManager::removeFromHiddenList(Client *c)
 {
-    for (size_t i = 0; i < m_hiddenClients.size(); ++i) {
-        if (m_hiddenClients[i] == c) {
-            m_hiddenClients.erase(m_hiddenClients.begin() + static_cast<ptrdiff_t>(i));
-            return;
-        }
+    // Move unique_ptr from m_hiddenClients to m_clients
+    auto it = std::find_if(m_hiddenClients.begin(), m_hiddenClients.end(),
+        [c](const auto& up) { return up.get() == c; });
+    if (it != m_hiddenClients.end()) {
+        m_clients.push_back(std::move(*it));
+        m_hiddenClients.erase(it);
     }
+    // Note: map entry NOT updated -- raw Client* value unchanged per D-06, Pitfall 3
 }
 
 
@@ -481,10 +508,10 @@ bool WindowManager::raiseTransients(Client *c)
 
     if (!c->isNormal()) return false;
 
-    for (auto *client : m_clients) {
+    for (const auto& client : m_clients) {
         if (client->isNormal() && client->isTransient()) {
             if (c->hasWindow(client->transientFor())) {
-                if (!first) first = client;
+                if (!first) first = client.get();
                 else client->mapRaised();
             }
         }
