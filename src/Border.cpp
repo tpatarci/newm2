@@ -1,7 +1,7 @@
 #include "Border.h"
 #include "Client.h"
 #include "Manager.h"
-#include "Rotated.h"
+#include <X11/Xft/Xft.h>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -9,14 +9,15 @@
 
 // Static member definitions (degenerate initializations -- don't change)
 int Border::m_tabWidth = -1;
-XRotFontStruct *Border::m_tabFont = nullptr;
+XftFont *Border::m_tabFont = nullptr;
 x11::GCPtr Border::m_drawGC;
-unsigned long Border::m_foregroundPixel = 0;
-unsigned long Border::m_backgroundPixel = 0;
 unsigned long Border::m_frameBackgroundPixel = 0;
 unsigned long Border::m_buttonBackgroundPixel = 0;
 unsigned long Border::m_borderPixel = 0;
 int Border::m_borderCount = 0;
+XftColor Border::m_xftForeground = {};
+XftColor Border::m_xftBackground = {};
+bool Border::m_xftColorsAllocated = false;
 
 
 Border::Border(Client *client, Window child)
@@ -31,26 +32,45 @@ Border::Border(Client *client, Window child)
     , m_tabHeight(-1)
 {
     if (m_tabFont == nullptr) {
-        if (!(m_tabFont = XRotLoadFont(display(),
-                "-*-lucida-bold-r-*-*-14-*-75-75-*-*-*-*", 90.0)) &&
-            !(m_tabFont = XRotLoadFont(display(), "fixed", 90.0))) {
+        // Load rotated tab font via FcMatrix (D-04) with fallback chain (D-02)
+        x11::XftFontPtr rotatedFont = x11::make_xft_font_rotated(
+            display(), "Noto Sans,DejaVu Sans,Sans:bold:size=12");
+
+        if (!rotatedFont) {
+            // Fallback to generic sans-serif
+            rotatedFont = x11::make_xft_font_rotated(
+                display(), "sans-serif:bold:size=12");
+        }
+        if (!rotatedFont) {
             windowManager()->fatal("couldn't load default rotated font, bailing out");
         }
 
-        m_tabWidth = m_tabFont->height + 4;
+        // Transfer ownership from RAII to raw static pointer
+        // (managed via m_borderCount refcount in destructor)
+        m_tabFont = rotatedFont.release();
+
+        // Rotated Xft fonts have zero height (Plan 01 finding).
+        // Use XftTextExtentsUtf8 to measure the actual glyph extent.
+        XGlyphInfo extents;
+        const char* sample = "M";
+        XftTextExtentsUtf8(display(), m_tabFont,
+            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
+        m_tabWidth = extents.height + 4;
         if (m_tabWidth < TAB_TOP_HEIGHT * 2 + 8) {
             m_tabWidth = TAB_TOP_HEIGHT * 2 + 8;
         }
 
-        m_foregroundPixel = windowManager()->allocateColour("black", "tab foreground");
-        m_backgroundPixel = windowManager()->allocateColour("gray80", "tab background");
         m_frameBackgroundPixel = windowManager()->allocateColour("gray95", "frame background");
         m_buttonBackgroundPixel = windowManager()->allocateColour("gray95", "button background");
         m_borderPixel = windowManager()->allocateColour("black", "border");
 
+        // Allocate Xft colors for tab label rendering
+        allocateXftColors();
+
+        // Retain m_drawGC for button fill rectangle (not text)
         XGCValues values;
-        values.foreground = m_foregroundPixel;
-        values.background = m_backgroundPixel;
+        values.foreground = windowManager()->allocateColour("black", "tab foreground");
+        values.background = windowManager()->allocateColour("gray80", "tab background");
         values.function = GXcopy;
         values.line_width = 0;
         values.subwindow_mode = IncludeInferiors;
@@ -81,15 +101,44 @@ Border::~Border()
         }
     }
 
+    m_tabDraw.reset();  // destroy per-instance XftDraw (Pitfall 2)
+
     if (--m_borderCount == 0) {
-        // RAII handles m_drawGC cleanup automatically
         m_drawGC.reset();
 
         if (m_tabFont) {
-            XRotUnloadFont(display(), m_tabFont);
+            XftFontClose(display(), m_tabFont);
             m_tabFont = nullptr;
         }
+
+        if (m_xftColorsAllocated) {
+            Display* d = display();
+            Visual* visual = DefaultVisual(d, DefaultScreen(d));
+            Colormap cmap = DefaultColormap(d, DefaultScreen(d));
+            XftColorFree(d, visual, cmap, &m_xftForeground);
+            XftColorFree(d, visual, cmap, &m_xftBackground);
+            m_xftColorsAllocated = false;
+        }
     }
+}
+
+
+void Border::allocateXftColors()
+{
+    if (m_xftColorsAllocated) return;
+
+    Display* d = display();
+    Visual* visual = DefaultVisual(d, DefaultScreen(d));
+    Colormap cmap = DefaultColormap(d, DefaultScreen(d));
+
+    if (!XftColorAllocName(d, visual, cmap, "black", &m_xftForeground)) {
+        windowManager()->fatal("couldn't allocate Xft foreground color");
+    }
+    if (!XftColorAllocName(d, visual, cmap, "gray80", &m_xftBackground)) {
+        XftColorFree(d, visual, cmap, &m_xftForeground);
+        windowManager()->fatal("couldn't allocate Xft background color");
+    }
+    m_xftColorsAllocated = true;
 }
 
 
@@ -126,15 +175,33 @@ void Border::expose(XExposeEvent *e)
 
 void Border::drawLabel()
 {
-    if (!m_label.empty()) {
-        XClearWindow(display(), m_tab);
-        // WR-04: Copy label to mutable buffer for xvertext API (takes non-const char*)
-        std::vector<char> buf(m_label.begin(), m_label.end());
-        buf.push_back('\0');
-        XRotDrawString(display(), m_tabFont, m_tab, m_drawGC.get(),
-                       2 + m_tabFont->max_ascent, m_tabHeight - 1,
-                       buf.data(), static_cast<int>(m_label.size()));
+    if (m_label.empty()) return;
+
+    // Create XftDraw lazily on first use, bound to this tab window (Pitfall 2)
+    if (!m_tabDraw) {
+        m_tabDraw = x11::XftDrawPtr(XftDrawCreate(
+            display(), m_tab,
+            DefaultVisual(display(), DefaultScreen(display())),
+            DefaultColormap(display(), DefaultScreen(display()))));
     }
+    if (!m_tabDraw) return;
+
+    // Clear tab background using XftDrawRect (replaces XClearWindow)
+    XftDrawRect(m_tabDraw.get(), &m_xftBackground, 0, 0,
+                m_tabWidth, m_tabHeight + m_tabWidth);
+
+    // Rotated fonts have zero ascent -- use extent-based measurement for x offset
+    XGlyphInfo extents;
+    XftTextExtentsUtf8(display(), m_tabFont,
+        reinterpret_cast<const FcChar8*>(m_label.c_str()),
+        static_cast<int>(m_label.size()), &extents);
+
+    // Draw rotated label text (UTF-8 natively via XftDrawStringUtf8)
+    XftDrawStringUtf8(m_tabDraw.get(), &m_xftForeground,
+                       m_tabFont,
+                       2 + extents.height, m_tabHeight - 1,
+                       reinterpret_cast<const FcChar8*>(m_label.c_str()),
+                       static_cast<int>(m_label.size()));
 }
 
 
@@ -172,10 +239,11 @@ void Border::fixTabHeight(int maxHeight)
     m_label = m_client->label();
 
     if (!m_label.empty()) {
-        std::vector<char> buf(m_label.begin(), m_label.end());
-        buf.push_back('\0');
-        m_tabHeight = XRotTextWidth(m_tabFont, buf.data(),
-                                    static_cast<int>(m_label.size())) + 6 + m_tabWidth;
+        XGlyphInfo extents;
+        XftTextExtentsUtf8(display(), m_tabFont,
+            reinterpret_cast<const FcChar8*>(m_label.c_str()),
+            static_cast<int>(m_label.size()), &extents);
+        m_tabHeight = extents.width + 6 + m_tabWidth;
     }
 
     if (m_tabHeight <= maxHeight) return;
@@ -184,19 +252,21 @@ void Border::fixTabHeight(int maxHeight)
 
     int len = static_cast<int>(m_label.size());
     {
-        std::vector<char> buf(m_label.begin(), m_label.end());
-        buf.push_back('\0');
-        m_tabHeight = XRotTextWidth(m_tabFont, buf.data(), len) + 6 + m_tabWidth;
+        XGlyphInfo extents;
+        XftTextExtentsUtf8(display(), m_tabFont,
+            reinterpret_cast<const FcChar8*>(m_label.c_str()), len, &extents);
+        m_tabHeight = extents.width + 6 + m_tabWidth;
     }
     if (m_tabHeight <= maxHeight) return;
 
     std::string newLabel = m_label;
     do {
         newLabel = newLabel.substr(0, len - 1) + "...";
-        std::vector<char> buf(newLabel.begin(), newLabel.end());
-        buf.push_back('\0');
-        m_tabHeight = XRotTextWidth(m_tabFont, buf.data(),
-                                    static_cast<int>(newLabel.size())) + 6 + m_tabWidth;
+        XGlyphInfo extents;
+        XftTextExtentsUtf8(display(), m_tabFont,
+            reinterpret_cast<const FcChar8*>(newLabel.c_str()),
+            static_cast<int>(newLabel.size()), &extents);
+        m_tabHeight = extents.width + 6 + m_tabWidth;
         --len;
     } while (m_tabHeight > maxHeight && len > 2);
 
@@ -572,7 +642,7 @@ void Border::configure(int x, int y, int w, int h,
                                        m_borderPixel, m_frameBackgroundPixel);
 
         m_tab = XCreateSimpleWindow(display(), m_parent, 1, 1, 1, 1, 0,
-                                    m_borderPixel, m_backgroundPixel);
+                                    m_borderPixel, m_xftBackground.pixel);
 
         m_button = XCreateSimpleWindow(display(), m_parent, 1, 1, 1, 1, 0,
                                        m_borderPixel, m_buttonBackgroundPixel);
