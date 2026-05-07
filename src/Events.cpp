@@ -253,6 +253,11 @@ void WindowManager::eventDestroy(XDestroyWindowEvent *e)
         // STEP 3: Remove from map first
         m_windowMap.erase(c->window());
 
+        // CR-02: Suppress BadWindow errors BEFORE the erase triggers ~Client(),
+        // which calls unreparent() -> XReparentWindow/XConfigureWindow on the
+        // already-destroyed X11 window
+        ignoreBadWindowErrors = true;
+
         // STEP 4: Find and erase from whichever vector owns the unique_ptr
         auto removeFrom = [c](auto& vec) -> bool {
             auto it = std::find_if(vec.begin(), vec.end(),
@@ -268,8 +273,8 @@ void WindowManager::eventDestroy(XDestroyWindowEvent *e)
             removeFrom(m_hiddenClients);
         }
         // ~Client() runs here -- destructor handles unreparent, colormap cleanup
+        // (BadWindow errors are now suppressed)
 
-        ignoreBadWindowErrors = true;
         XSync(display(), false);
         ignoreBadWindowErrors = false;
     }
