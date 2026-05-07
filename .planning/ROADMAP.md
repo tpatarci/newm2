@@ -85,11 +85,11 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 04-01-PLAN.md -- Install Xft/fontconfig, RAII wrappers (XftFontPtr, XftDrawPtr, XftColorWrap), PoC test validating Xft in shaped windows
+- [x] 04-01-PLAN.md -- Install Xft/fontconfig, RAII wrappers (XftFontPtr, XftDrawPtr, XftColorWrap), PoC test validating Xft in shaped windows
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 04-02-PLAN.md -- Border tab Xft rendering: replace xvertext with FcMatrix rotation, rectangular Shape fallback (VISL-01, VISL-03, VISL-05)
-- [ ] 04-03-PLAN.md -- Menu Xft rendering: replace core X fonts, remove Rotated.C, explicit highlight (VISL-02, VISL-04)
+- [x] 04-02-PLAN.md -- Border tab Xft rendering: replace xvertext with FcMatrix rotation, rectangular Shape fallback (VISL-01, VISL-03, VISL-05)
+- [x] 04-03-PLAN.md -- Menu Xft rendering: replace core X fonts, remove Rotated.C, explicit highlight (VISL-02, VISL-04)
 
 
 ### Phase 5: Configuration System
@@ -183,7 +183,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 1. Build Infrastructure + RAII Foundation | 0/2 | Planning complete | - |
 | 2. Event Loop Modernization | 0/2 | Not started | - |
 | 3. Client Lifecycle with RAII | 0/3 | Planning complete | - |
-| 4. Border + Xft Font Rendering | 0/3 | Not started | - |
+| 4. Border + Xft Font Rendering | 3/3 | Complete | 2026-05-07 |
 | 5. Configuration System | 0/2 | Not started | - |
 | 6. EWMH Compliance | 0/3 | Not started | - |
 | 7. Root Menu + Application Discovery | 0/3 | Not started | - |
