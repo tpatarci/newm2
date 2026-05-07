@@ -3,7 +3,9 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
-#include <sys/select.h>
+#include <poll.h>
+#include <chrono>
+#include <unistd.h>
 
 
 int WindowManager::loop()
@@ -118,58 +120,63 @@ int WindowManager::loop()
 
 void WindowManager::nextEvent(XEvent *e)
 {
-    int fd;
-    fd_set rfds;
-    struct timeval t;
-    int r;
+    struct pollfd fds[2];
+    fds[0].fd = ConnectionNumber(display());
+    fds[0].events = POLLIN;
+    fds[1].fd = m_pipeRead.get();
+    fds[1].events = POLLIN;
 
-    if (!m_signalled) {
+    while (m_looping) {
 
-    waiting:
-
+        // Check Xlib's internal queue first (Xlib may have buffered events)
         if (QLength(display()) > 0) {
             XNextEvent(display(), e);
             return;
         }
 
-        fd = ConnectionNumber(display());
-        FD_ZERO(&rfds);
-        FD_SET(fd, &rfds);
-        t.tv_sec = 0;
-        t.tv_usec = 0;
-
-        if (select(fd + 1, &rfds, nullptr, nullptr, &t) == 1) {
-            XNextEvent(display(), e);
-            return;
-        }
-
+        // Flush pending X output before blocking
         XFlush(display());
-        FD_ZERO(&rfds);
-        FD_SET(fd, &rfds);
-        t.tv_sec = 0;
-        t.tv_usec = 20000;
 
-        if ((r = select(fd + 1, &rfds, nullptr, nullptr,
-                        (m_focusChanging) ? &t : nullptr)) == 1) {
-            XNextEvent(display(), e);
+        int timeout = -1;  // block indefinitely by default
+        if (m_focusChanging) {
+            timeout = 20;   // check focus delays every 20ms (matches upstream select granularity)
+        }
+
+        int r = poll(fds, 2, timeout);
+
+        if (r < 0) {
+            if (errno == EINTR) continue;  // signal interrupted, re-check m_looping
+            std::perror("wm2: poll failed");
+            m_looping = false;
+            m_returnCode = 1;
             return;
         }
 
-        if (m_focusChanging) {
-            checkDelaysForFocus();
+        // Signal pipe readable? (signal handler wrote a byte)
+        if (fds[1].revents & POLLIN) {
+            // Drain pipe (handler may have written multiple bytes)
+            char buf[32];
+            while (read(m_pipeRead.get(), buf, sizeof(buf)) > 0) { /* drain */ }
+            std::fprintf(stderr, "wm2: signal caught, exiting\n");
+            m_looping = false;
+            m_returnCode = 0;
+            return;
         }
 
-        if (r == 0) goto waiting;
+        // Timer expired (r == 0 means timeout, no fd ready)
+        if (r == 0) {
+            if (m_focusChanging) {
+                checkDelaysForFocus();
+            }
+            continue;  // re-check X11 queue, then poll again
+        }
 
-        if (errno != EINTR || !m_signalled) {
-            perror("wm2: select failed");
-            m_looping = false;
+        // X11 fd readable
+        if (fds[0].revents & POLLIN) {
+            XNextEvent(display(), e);
+            return;
         }
     }
-
-    std::fprintf(stderr, "wm2: signal caught, exiting\n");
-    m_looping = false;
-    m_returnCode = 0;
 }
 
 
