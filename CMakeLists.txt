@@ -21,12 +21,10 @@ add_executable(${PROJECT_NAME}
     src/Border.cpp
     src/Buttons.cpp
     src/Events.cpp
-    upstream-wm2/Rotated.C
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/upstream-wm2
     ${XFT_INCLUDE_DIRS}
     ${FONTCONFIG_INCLUDE_DIRS}
 )
@@ -37,11 +35,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     PkgConfig::XFT
     PkgConfig::FONTCONFIG
     m
-)
-
-# Relax warnings for third-party xvertext code (Rotated.C is ~1992 era)
-set_source_files_properties(upstream-wm2/Rotated.C PROPERTIES
-    COMPILE_FLAGS "-w"
 )
 
 # --- Tests (TEST-01, TEST-02, TEST-04) ---
