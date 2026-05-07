@@ -137,26 +137,16 @@ void WindowManager::release()
 {
     if (m_returnCode != 0) return;
 
-    // Unreparent all clients (both visible and hidden) then let vectors destroy them
-    std::vector<Client*> unparentList;
-
-    for (const auto& c : m_clients) {
-        unparentList.push_back(c.get());
-    }
-    for (const auto& c : m_hiddenClients) {
-        unparentList.push_back(c.get());
-    }
-
     m_windowMap.clear();
 
-    // Unparent all clients first (while they still exist)
-    for (auto *c : unparentList) {
-        c->unreparent();
-    }
-
-    // Clear vectors -- unique_ptr destructors trigger ~Client() for each
+    // WR-02: Rely solely on ~Client() for unreparenting. Previously release()
+    // called unreparent() explicitly AND ~Client() also called it (since
+    // unreparent() does not change m_state to Withdrawn), causing redundant
+    // XReparentWindow calls and XSync on every client during shutdown.
+    ignoreBadWindowErrors = true;
     m_clients.clear();
     m_hiddenClients.clear();
+    ignoreBadWindowErrors = false;
 
     XSetInputFocus(display(), PointerRoot, RevertToPointerRoot, timestamp(false));
     installColormap(None);
