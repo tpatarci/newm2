@@ -630,5 +630,6 @@ int WindowManager::computePollTimeout() const
     }
 
     auto ms = duration_cast<milliseconds>(earliest - now).count();
-    return (ms > 0) ? static_cast<int>(ms) : 0;
+    if (ms <= 0) return 0;
+    return static_cast<int>(std::min(ms, static_cast<decltype(ms)>(30000)));
 }
