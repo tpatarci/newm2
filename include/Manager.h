@@ -3,6 +3,7 @@
 #include "x11wrap.h"
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
+#include <X11/Xft/Xft.h>
 #include <X11/extensions/shape.h>
 #include <vector>
 #include <string>
@@ -125,12 +126,13 @@ private:
     static volatile std::sig_atomic_t m_signalled;
 
     // Menu resources (RAII-managed)
-    x11::GCPtr m_menuGC;
     Window m_menuWindow;
-    x11::FontStructPtr m_menuFont;
-    unsigned long m_menuForegroundPixel;
-    unsigned long m_menuBackgroundPixel;
-    unsigned long m_menuBorderPixel;
+    XftFont* m_menuFont;                  // raw pointer, freed in release()
+    x11::XftDrawPtr m_menuDraw;           // XftDraw bound to m_menuWindow
+    x11::XftColorWrap m_menuFgColor;      // "black" foreground
+    x11::XftColorWrap m_menuBgColor;      // "gray80" background
+    x11::XftColorWrap m_menuHlColor;      // "gray60" highlight (replaces XOR)
+    unsigned long m_menuBorderPixel;      // for XCreateSimpleWindow border
 
     static const char* const m_menuCreateLabel;
     const char* menuLabel(int);

@@ -12,7 +12,6 @@
 #include <X11/Xproto.h>
 #include <algorithm>
 #include "Cursors.h"
-#include "Rotated.h"
 
 // Static member definitions
 Atom Atoms::wm_state = None;
@@ -41,8 +40,7 @@ WindowManager::WindowManager()
     , m_looping(false)
     , m_returnCode(0)
     , m_menuWindow(None)
-    , m_menuForegroundPixel(0)
-    , m_menuBackgroundPixel(0)
+    , m_menuFont(nullptr)
     , m_menuBorderPixel(0)
     , m_focusChanging(false)
     , m_focusCandidate(nullptr)
@@ -57,8 +55,7 @@ WindowManager::WindowManager()
 {
     std::fprintf(stderr, "\nwm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.\n"
                  "  Parts derived from 9wm Copyright (c) 1994-96 David Hogan\n"
-                 "  %s\n  Copying and redistribution encouraged.  No warranty.\n\n",
-                 XV_COPYRIGHT);
+                 "  Copying and redistribution encouraged.  No warranty.\n\n");
 
     std::fprintf(stderr, "  Focus follows pointer.  Hidden clients only on menu.\n\n");
 
@@ -151,13 +148,22 @@ void WindowManager::release()
     XSetInputFocus(display(), PointerRoot, RevertToPointerRoot, timestamp(false));
     installColormap(None);
 
+    // Clean up Xft menu resources
+    m_menuDraw.reset();
+    // m_menuFgColor, m_menuBgColor, m_menuHlColor auto-freed by RAII
+
+    if (m_menuFont) {
+        XftFontClose(display(), m_menuFont);
+        m_menuFont = nullptr;
+    }
+
     // WR-01: Destroy menu window (raw Window XID, not RAII-wrapped)
     if (m_menuWindow != None) {
         XDestroyWindow(display(), m_menuWindow);
         m_menuWindow = None;
     }
 
-    // RAII handles: cursors (m_cursor, m_xCursor, etc.), m_menuGC, m_menuFont, m_display
+    // RAII handles: cursors (m_cursor, m_xCursor, etc.), m_display
 }
 
 
@@ -275,12 +281,10 @@ void WindowManager::initialiseScreen()
     XChangeWindowAttributes(display(), m_root, CWCursor | CWEventMask, &attr);
     XSync(display(), false);
 
-    m_menuForegroundPixel = allocateColour("black", "menu foreground");
-    m_menuBackgroundPixel = allocateColour("gray80", "menu background");
     m_menuBorderPixel     = allocateColour("black", "menu border");
 
     m_menuWindow = XCreateSimpleWindow(display(), m_root, 0, 0, 1, 1, 1,
-                                       m_menuBorderPixel, m_menuBackgroundPixel);
+                                       m_menuBorderPixel, 0);
 
     if (DoesSaveUnders(ScreenOfDisplay(display(), m_screenNumber))) {
         XSetWindowAttributes suAttr;
@@ -288,23 +292,31 @@ void WindowManager::initialiseScreen()
         XChangeWindowAttributes(display(), m_menuWindow, CWSaveUnder, &suAttr);
     }
 
-    // Load menu font via RAII
-    m_menuFont = x11::make_font_struct(display(), "-*-lucida-medium-r-*-*-14-*-75-75-*-*-*-*");
-    if (!m_menuFont) m_menuFont = x11::make_font_struct(display(), "fixed");
-    if (!m_menuFont) fatal("couldn't load default menu font");
+    // Load menu font via Xft with fontconfig fallback chain (D-02)
+    // Font size 12 matches Lucida Bold 14pt visual footprint (D-03)
+    x11::XftFontPtr menuFont = x11::make_xft_font_name(display(),
+        "Noto Sans,DejaVu Sans,Sans:size=12");
+    if (!menuFont) {
+        menuFont = x11::make_xft_font_name(display(), "sans-serif:size=12");
+    }
+    if (!menuFont) fatal("couldn't load default menu font");
+    m_menuFont = menuFont.release();
+    // m_menuFont is a raw pointer freed in release().
 
-    // Create menu GC via RAII
-    XGCValues values;
-    values.background = m_menuBackgroundPixel;
-    values.foreground = m_menuForegroundPixel ^ m_menuBackgroundPixel;
-    values.function = GXxor;
-    values.line_width = 0;
-    values.subwindow_mode = IncludeInferiors;
-    values.font = m_menuFont->fid;
+    // Allocate Xft colors for menu rendering
+    Visual* visual = DefaultVisual(display(), m_screenNumber);
+    Colormap cmap = DefaultColormap(display(), m_screenNumber);
 
-    m_menuGC = x11::make_gc(display(), m_root,
-        GCForeground | GCBackground | GCFunction | GCLineWidth | GCSubwindowMode | GCFont,
-        &values);
+    m_menuFgColor = x11::XftColorWrap(display(), visual, cmap, "black");
+    m_menuBgColor = x11::XftColorWrap(display(), visual, cmap, "gray80");
+    m_menuHlColor = x11::XftColorWrap(display(), visual, cmap, "gray60");
+
+    if (!m_menuFgColor || !m_menuBgColor || !m_menuHlColor) {
+        fatal("couldn't allocate menu colors");
+    }
+
+    // m_menuWindow background needs to match Xft background color pixel
+    XSetWindowBackground(display(), m_menuWindow, m_menuBgColor->pixel);
 }
 
 

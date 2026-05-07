@@ -131,8 +131,12 @@ void WindowManager::menu(XButtonEvent *e)
 
     int width, maxWidth = 10;
     for (int i = 0; i < n; ++i) {
-        width = XTextWidth(m_menuFont.get(), menuLabelFn(i),
-                           static_cast<int>(std::strlen(menuLabelFn(i))));
+        const char* label = menuLabelFn(i);
+        int len = static_cast<int>(std::strlen(label));
+        XGlyphInfo extents;
+        XftTextExtentsUtf8(display(), m_menuFont,
+            reinterpret_cast<const FcChar8*>(label), len, &extents);
+        width = extents.width;
         if (width > maxWidth) maxWidth = width;
     }
     maxWidth += 32;
@@ -162,6 +166,15 @@ void WindowManager::menu(XButtonEvent *e)
     XMoveResizeWindow(display(), m_menuWindow, x, y, maxWidth, totalHeight);
     XSelectInput(display(), m_menuWindow, MenuMask);
     XMapRaised(display(), m_menuWindow);
+
+    // Create or rebind XftDraw for menu window
+    if (!m_menuDraw) {
+        m_menuDraw = x11::XftDrawPtr(XftDrawCreate(display(), m_menuWindow,
+            DefaultVisual(display(), m_screenNumber),
+            DefaultColormap(display(), m_screenNumber)));
+    } else {
+        XftDrawChange(m_menuDraw.get(), m_menuWindow);
+    }
 
     if (attemptGrab(m_menuWindow, None, MenuGrabMask, e->time) != GrabSuccess) {
         XUnmapWindow(display(), m_menuWindow);
@@ -224,45 +237,61 @@ void WindowManager::menu(XButtonEvent *e)
             if (selecting == prev) break;
 
             if (prev >= 0 && prev < n) {
-                XFillRectangle(display(), m_menuWindow, m_menuGC.get(),
-                               4, prev * entryHeight + 9,
-                               maxWidth - 8, entryHeight);
+                // Unhighlight previous: fill with background color
+                XftDrawRect(m_menuDraw.get(), m_menuBgColor.get(),
+                            4, prev * entryHeight + 9,
+                            maxWidth - 8, entryHeight);
             }
 
             if (selecting >= 0 && selecting < n) {
-                XFillRectangle(display(), m_menuWindow, m_menuGC.get(),
-                               4, selecting * entryHeight + 9,
-                               maxWidth - 8, entryHeight);
+                // Highlight new selection: fill with highlight color
+                XftDrawRect(m_menuDraw.get(), m_menuHlColor.get(),
+                            4, selecting * entryHeight + 9,
+                            maxWidth - 8, entryHeight);
             }
             break;
 
         case Expose:
-            XClearWindow(display(), m_menuWindow);
+            // Clear menu background
+            XftDrawRect(m_menuDraw.get(), m_menuBgColor.get(), 0, 0,
+                        maxWidth, totalHeight);
 
-            XDrawRectangle(display(), m_menuWindow, m_menuGC.get(), 2, 7,
-                           maxWidth - 5, totalHeight - 10);
+            // Draw border outline (4 sides, 1px each)
+            XftDrawRect(m_menuDraw.get(), m_menuFgColor.get(), 2, 7,
+                        maxWidth - 5, 1);         // top
+            XftDrawRect(m_menuDraw.get(), m_menuFgColor.get(), 2,
+                        totalHeight - 4, maxWidth - 5, 1);  // bottom
+            XftDrawRect(m_menuDraw.get(), m_menuFgColor.get(), 2, 7,
+                        1, totalHeight - 10);      // left
+            XftDrawRect(m_menuDraw.get(), m_menuFgColor.get(),
+                        maxWidth - 3, 7, 1, totalHeight - 10);  // right
 
             for (int i = 0; i < n; ++i) {
-                int dx = XTextWidth(m_menuFont.get(), menuLabelFn(i),
-                                    static_cast<int>(std::strlen(menuLabelFn(i))));
+                const char* label = menuLabelFn(i);
+                int len = static_cast<int>(std::strlen(label));
+                XGlyphInfo extents;
+                XftTextExtentsUtf8(display(), m_menuFont,
+                    reinterpret_cast<const FcChar8*>(label), len, &extents);
+                int dx = extents.width;
                 int dy = i * entryHeight + m_menuFont->ascent + 10;
 
                 if (i >= nh) {
-                    XDrawString(display(), m_menuWindow, m_menuGC.get(),
-                                maxWidth - 8 - dx, dy,
-                                menuLabelFn(i),
-                                static_cast<int>(std::strlen(menuLabelFn(i))));
+                    // Right-aligned items (exit option)
+                    XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
+                        m_menuFont, maxWidth - 8 - dx, dy,
+                        reinterpret_cast<const FcChar8*>(label), len);
                 } else {
-                    XDrawString(display(), m_menuWindow, m_menuGC.get(), 8, dy,
-                                menuLabelFn(i),
-                                static_cast<int>(std::strlen(menuLabelFn(i))));
+                    // Left-aligned items
+                    XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
+                        m_menuFont, 8, dy,
+                        reinterpret_cast<const FcChar8*>(label), len);
                 }
             }
 
             if (selecting >= 0 && selecting < n) {
-                XFillRectangle(display(), m_menuWindow, m_menuGC.get(),
-                               4, selecting * entryHeight + 9,
-                               maxWidth - 8, entryHeight);
+                XftDrawRect(m_menuDraw.get(), m_menuHlColor.get(),
+                            4, selecting * entryHeight + 9,
+                            maxWidth - 8, entryHeight);
             }
 
             drawn = true;
@@ -291,20 +320,35 @@ void WindowManager::showGeometry(int x, int y)
 {
     char string[20];
     std::sprintf(string, "%d %d\n", x, y);
-    int width = XTextWidth(m_menuFont.get(), string,
-                           static_cast<int>(std::strlen(string))) + 8;
+    int len = static_cast<int>(std::strlen(string));
+
+    XGlyphInfo extents;
+    XftTextExtentsUtf8(display(), m_menuFont,
+        reinterpret_cast<const FcChar8*>(string), len, &extents);
+    int width = extents.width + 8;
     int height = m_menuFont->ascent + m_menuFont->descent + 8;
     int mx = DisplayWidth(display(), m_screenNumber) - 1;
     int my = DisplayHeight(display(), m_screenNumber) - 1;
 
     XMoveResizeWindow(display(), m_menuWindow,
                       (mx - width) / 2, (my - height) / 2, width, height);
-    XClearWindow(display(), m_menuWindow);
+
+    // Create or rebind XftDraw for menu window
+    if (!m_menuDraw) {
+        m_menuDraw = x11::XftDrawPtr(XftDrawCreate(display(), m_menuWindow,
+            DefaultVisual(display(), m_screenNumber),
+            DefaultColormap(display(), m_screenNumber)));
+    } else {
+        XftDrawChange(m_menuDraw.get(), m_menuWindow);
+    }
+
+    // Clear background and draw text
+    XftDrawRect(m_menuDraw.get(), m_menuBgColor.get(), 0, 0, width, height);
     XMapRaised(display(), m_menuWindow);
 
-    XDrawString(display(), m_menuWindow, m_menuGC.get(), 4,
-                4 + m_menuFont->ascent, string,
-                static_cast<int>(std::strlen(string)));
+    XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
+        m_menuFont, 4, 4 + m_menuFont->ascent,
+        reinterpret_cast<const FcChar8*>(string), len);
 }
 
 
