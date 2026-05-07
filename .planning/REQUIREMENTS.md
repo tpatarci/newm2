@@ -89,7 +89,7 @@
 
 - [x] **TEST-01**: Test suite runs on Xvfb without physical display
 - [x] **TEST-02**: Catch2 test framework for unit and integration tests
-- [ ] **TEST-03**: Core WM operations tested: window map, move, resize, hide/unhide, delete
+- [x] **TEST-03**: Core WM operations tested: window map, move, resize, hide/unhide, delete
 - [x] **TEST-04**: CI-ready (tests pass with cmake + ctest)
 
 ## v2 Requirements
@@ -185,7 +185,7 @@
 | CGUI-05 | Phase 9 | Pending |
 | TEST-01 | Phase 1 | Complete |
 | TEST-02 | Phase 1 | Complete |
-| TEST-03 | Phase 3 | Pending |
+| TEST-03 | Phase 3 | Complete |
 | TEST-04 | Phase 1 | Complete |
 
 **Coverage:**

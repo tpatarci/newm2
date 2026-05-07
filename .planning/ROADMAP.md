@@ -69,7 +69,7 @@ Plans:
 Plans:
 - [x] 03-01-PLAN.md -- ServerGrab RAII, ClientState enum with validation, vector colormaps, destructor-only cleanup
 - [x] 03-02-PLAN.md -- unique_ptr ownership, O(1) hash map lookup, move-based hide/unhide, eventDestroy rewrite
-- [ ] 03-03-PLAN.md -- Client lifecycle tests (TEST-03): ServerGrab, state machine, window operations on Xvfb
+- [x] 03-03-PLAN.md -- Client lifecycle tests (TEST-03): ServerGrab, state machine, window operations on Xvfb
 
 ### Phase 4: Border + Xft Font Rendering
 **Goal**: Window borders render with the classic wm2 sideways-tab look using Xft for antialiased UTF-8 text, with graceful fallback when the Shape extension is unavailable.
