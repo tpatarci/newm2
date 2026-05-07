@@ -95,10 +95,10 @@ int WindowManager::loop()
             if (m_focusChanging) {
                 if (!m_focusPointerMoved) {
                     m_focusPointerMoved = true;
-                    // First motion event: start the 80ms pointer-stopped timer
+                    // First motion event: start the pointer-stopped timer
                     m_pointerStoppedDeadline =
                         std::chrono::steady_clock::now() +
-                        std::chrono::milliseconds(80);
+                        std::chrono::milliseconds(m_config.pointerStoppedDelay);
                     m_pointerStoppedDeadlineActive = true;
                 } else {
                     m_focusPointerNowStill = false;

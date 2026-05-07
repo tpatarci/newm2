@@ -33,6 +33,9 @@ Border::Border(Client *client, Window child)
     , m_tabHeight(-1)
 {
     if (m_tabFont == nullptr) {
+        // Initialize FRAME_WIDTH from config (runtime, replaces constexpr)
+        FRAME_WIDTH = windowManager()->config().frameThickness;
+
         // Load rotated tab font via FcMatrix (D-04) with fallback chain (D-02)
         x11::XftFontPtr rotatedFont = x11::make_xft_font_rotated(
             display(), "Noto Sans,DejaVu Sans,Sans:bold:size=12");
@@ -61,17 +64,17 @@ Border::Border(Client *client, Window child)
             m_tabWidth = TAB_TOP_HEIGHT * 2 + 8;
         }
 
-        m_frameBackgroundPixel = windowManager()->allocateColour("gray95", "frame background");
-        m_buttonBackgroundPixel = windowManager()->allocateColour("gray95", "button background");
-        m_borderPixel = windowManager()->allocateColour("black", "border");
+        m_frameBackgroundPixel = windowManager()->allocateColour(windowManager()->config().frameBackground.c_str(), "frame background");
+        m_buttonBackgroundPixel = windowManager()->allocateColour(windowManager()->config().buttonBackground.c_str(), "button background");
+        m_borderPixel = windowManager()->allocateColour(windowManager()->config().borders.c_str(), "border");
 
         // Allocate Xft colors for tab label rendering
         allocateXftColors();
 
         // Retain m_drawGC for button fill rectangle (not text)
         XGCValues values;
-        values.foreground = windowManager()->allocateColour("black", "tab foreground");
-        values.background = windowManager()->allocateColour("gray80", "tab background");
+        values.foreground = windowManager()->allocateColour(windowManager()->config().tabForeground.c_str(), "tab foreground");
+        values.background = windowManager()->allocateColour(windowManager()->config().tabBackground.c_str(), "tab background");
         values.function = GXcopy;
         values.line_width = 0;
         values.subwindow_mode = IncludeInferiors;
@@ -132,10 +135,10 @@ void Border::allocateXftColors()
     Visual* visual = DefaultVisual(d, DefaultScreen(d));
     Colormap cmap = DefaultColormap(d, DefaultScreen(d));
 
-    if (!XftColorAllocName(d, visual, cmap, "black", &m_xftForeground)) {
+    if (!XftColorAllocName(d, visual, cmap, windowManager()->config().tabForeground.c_str(), &m_xftForeground)) {
         windowManager()->fatal("couldn't allocate Xft foreground color");
     }
-    if (!XftColorAllocName(d, visual, cmap, "gray80", &m_xftBackground)) {
+    if (!XftColorAllocName(d, visual, cmap, windowManager()->config().tabBackground.c_str(), &m_xftBackground)) {
         XftColorFree(d, visual, cmap, &m_xftForeground);
         windowManager()->fatal("couldn't allocate Xft background color");
     }
@@ -922,7 +925,7 @@ void Border::eventButton(XButtonEvent *e)
 
         found = false;
 
-        if (tdiff > 1500L && action == 1) {
+        if (tdiff > static_cast<unsigned long>(windowManager()->config().destroyWindowDelay) && action == 1) {
             windowManager()->installCursor(WindowManager::RootCursor::Delete);
             action = 2;
         }
