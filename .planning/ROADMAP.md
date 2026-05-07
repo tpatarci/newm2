@@ -128,10 +128,14 @@ Plans:
   5. The WM reports single-desktop atoms (_NET_NUMBER_OF_DESKTOPS=1, _NET_CURRENT_DESKTOP=0, _NET_WORKAREA) so panels display correctly
 **Plans**: 3 plans
 
-Plans:
-- [ ] 06-01: TBD
-- [ ] 06-02: TBD
-- [ ] 06-03: TBD
+**Wave 1**
+- [ ] 06-01-PLAN.md -- EWMH atoms, WM check window, root properties, _NET_CLIENT_LIST, _NET_ACTIVE_WINDOW, single-desktop atoms, test scaffold (EWMH-01, EWMH-02, EWMH-03, EWMH-07, EWMH-08)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 06-02-PLAN.md -- Window type handling, fullscreen/maximize state, _NET_WM_STATE dispatch, dock struts, border strip/restore (EWMH-04, EWMH-05, EWMH-06, EWMH-09)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 06-03-PLAN.md -- Circular right-button gesture for fullscreen, Button2 maximize on tab, EWMH state machine tests (EWMH-06)
 
 ### Phase 7: Root Menu + Application Discovery
 **Goal**: The root menu shows all installed GUI applications organized by category, combining XDG .desktop entries with AI-powered binary discovery and user customizations.
@@ -194,7 +198,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 3. Client Lifecycle with RAII | 0/3 | Planning complete | - |
 | 4. Border + Xft Font Rendering | 3/3 | Complete | 2026-05-07 |
 | 5. Configuration System | 0/3 | Planned | - |
-| 6. EWMH Compliance | 0/3 | Not started | - |
+| 6. EWMH Compliance | 0/3 | Planned | - |
 | 7. Root Menu + Application Discovery | 0/3 | Not started | - |
 | 8. Xrandr + VNC + Focus/Rules | 0/3 | Not started | - |
 | 9. Config GUI + IPC | 0/3 | Not started | - |
