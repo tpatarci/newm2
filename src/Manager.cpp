@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <X11/Xproto.h>
@@ -62,6 +64,21 @@ WindowManager::WindowManager()
     m_initialising = true;
     XSetErrorHandler(errorHandler);
     ignoreBadWindowErrors = false;
+
+    // Self-pipe for signal-safe wakeup (D-01)
+    int pipefd[2];
+    if (pipe(pipefd) != 0) fatal("can't create signal pipe");
+
+    // Set both ends non-blocking (Pitfall 1: prevents write() blocking in handler)
+    for (int i = 0; i < 2; ++i) {
+        int flags = fcntl(pipefd[i], F_GETFL, 0);
+        if (flags < 0 || fcntl(pipefd[i], F_SETFL, flags | O_NONBLOCK) < 0) {
+            fatal("can't set pipe non-blocking");
+        }
+    }
+    m_pipeRead = FdGuard(pipefd[0]);
+    m_pipeWrite = FdGuard(pipefd[1]);
+    s_pipeWriteFd = m_pipeWrite.get();
 
     // Signal handlers -- call sigaction directly (not upstream's signal() macro)
     struct sigaction sa;
@@ -182,6 +199,12 @@ int WindowManager::errorHandler(Display *d, XErrorEvent *e)
 void WindowManager::sigHandler(int)
 {
     m_signalled = 1;
+    // write() is async-signal-safe per POSIX. Using static fd avoids
+    // dereferencing object pointer (not guaranteed safe in signal handler).
+    if (s_pipeWriteFd >= 0) {
+        char c = 'x';
+        (void)write(s_pipeWriteFd, &c, 1);
+    }
 }
 
 
