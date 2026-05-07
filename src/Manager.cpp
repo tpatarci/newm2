@@ -20,7 +20,8 @@ Atom Atoms::wm_takeFocus = None;
 Atom Atoms::wm_colormaps = None;
 Atom Atoms::wm2_running = None;
 
-int  WindowManager::m_signalled = 0;
+volatile std::sig_atomic_t WindowManager::m_signalled = 0;
+int  WindowManager::s_pipeWriteFd = -1;
 bool WindowManager::m_initialising = false;
 bool ignoreBadWindowErrors = false;
 

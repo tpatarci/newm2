@@ -7,6 +7,24 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <csignal>
+#include <unistd.h>
+
+// RAII wrapper for POSIX file descriptors (not X11 resources -- those are in x11wrap.h)
+struct FdGuard {
+    int fd = -1;
+    FdGuard() = default;
+    explicit FdGuard(int f) : fd(f) {}
+    ~FdGuard() { if (fd >= 0) ::close(fd); }
+    FdGuard(const FdGuard&) = delete;
+    FdGuard& operator=(const FdGuard&) = delete;
+    FdGuard(FdGuard&& o) noexcept : fd(o.fd) { o.fd = -1; }
+    FdGuard& operator=(FdGuard&& o) noexcept {
+        if (this != &o) { if (fd >= 0) ::close(fd); fd = o.fd; o.fd = -1; }
+        return *this;
+    }
+    int get() const { return fd; }
+};
 
 class Client;
 
@@ -92,10 +110,15 @@ private:
     bool m_looping;
     int m_returnCode;
 
+    // Self-pipe for signal-safe poll() wakeup (D-01)
+    FdGuard m_pipeRead{-1};
+    FdGuard m_pipeWrite{-1};
+    static int s_pipeWriteFd;  // accessed from signal handler (static for async-signal-safety)
+
     static bool m_initialising;
     static int errorHandler(Display*, XErrorEvent*);
     static void sigHandler(int);
-    static int m_signalled;
+    static volatile std::sig_atomic_t m_signalled;
 
     // Menu resources (RAII-managed)
     x11::GCPtr m_menuGC;

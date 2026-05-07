@@ -94,4 +94,13 @@ if(BUILD_TESTS)
     else()
         message(WARNING "Xvfb not found -- smoke tests disabled")
     endif()
+
+    # Event loop unit tests (need X11 headers but no display)
+    add_executable(test_eventloop tests/test_eventloop.cpp)
+    target_link_libraries(test_eventloop PRIVATE
+        Catch2::Catch2WithMain
+        PkgConfig::X11
+    )
+    target_include_directories(test_eventloop PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    catch_discover_tests(test_eventloop)
 endif()
