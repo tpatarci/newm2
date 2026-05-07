@@ -104,13 +104,17 @@ Plans:
 **Plans**: 3 plans
 
 **Wave 1**
-- [ ] 05-01-PLAN.md -- Config struct, XDG paths, key=value file parser, unit tests (CONF-01, CONF-02, CONF-03)
+- [x] 05-01-PLAN.md -- Config struct, XDG paths, key=value file parser, unit tests (CONF-01, CONF-02, CONF-03)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 05-02-PLAN.md -- getopt_long CLI parsing, boolean --no-xxx flags, CLI override tests (CONF-04)
+- [x] 05-02-PLAN.md -- getopt_long CLI parsing, boolean --no-xxx flags, CLI override tests (CONF-04)
 
-**Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 05-03-PLAN.md -- Wire config into WindowManager, Border, Buttons, Events; FRAME_WIDTH runtime (all CONF)
+**Wave 3** *(blocked on Waves 1+2 completion)*
+- [x] 05-03-PLAN.md -- Wire config into WindowManager, Border, Events; FRAME_WIDTH runtime (all CONF)
+
+**Cross-cutting constraints:**
+- Config passed as `const Config&` to WindowManager (no singleton/global)
+- Color validation deferred to `initialiseScreen()` after X11 display opens
 
 ### Phase 6: EWMH Compliance
 **Goal**: The WM speaks EWMH so modern applications, panels, and taskbars interact with it correctly on a single-desktop setup.
@@ -189,7 +193,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 2. Event Loop Modernization | 0/2 | Not started | - |
 | 3. Client Lifecycle with RAII | 0/3 | Planning complete | - |
 | 4. Border + Xft Font Rendering | 3/3 | Complete | 2026-05-07 |
-| 5. Configuration System | 0/2 | Not started | - |
+| 5. Configuration System | 0/3 | Planned | - |
 | 6. EWMH Compliance | 0/3 | Not started | - |
 | 7. Root Menu + Application Discovery | 0/3 | Not started | - |
 | 8. Xrandr + VNC + Focus/Rules | 0/3 | Not started | - |
