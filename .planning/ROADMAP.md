@@ -51,8 +51,8 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
+- [x] 02-01: TBD
+- [x] 02-02: TBD
 
 ### Phase 3: Client Lifecycle with RAII
 **Goal**: Window client management uses proper RAII lifecycle control with ICCCM-compliant reparenting and O(1) lookups, replacing `delete this` and custom list macros.
