@@ -62,9 +62,9 @@ Client::~Client()
 
     m_border.reset();
 
-    if (activeClient() == this) {
-        windowManager()->setActiveClient(nullptr);
-    }
+    // WR-03: Active client cleanup is handled by eventDestroy() before the
+    // unique_ptr is erased. The destructor does not need to clear activeClient
+    // because the caller (eventDestroy) already did so.
 
     m_window = None;
 }
