@@ -56,20 +56,16 @@ Client::Client(WindowManager *wm, Window w)
 
 Client::~Client()
 {
-    // Cleanup colormap data if present
-    if (m_colormapWinCount > 0) {
-        XFree(m_colormapWindows);
-        free(m_windowColormaps);
+    if (m_window != None) {
+        release();  // safety net if caller forgot
     }
 }
 
 
 void Client::release()
 {
-    // The caller (WindowManager) removes this Client from m_clients
-    if (m_window == None) {
-        std::fprintf(stderr, "wm2: invalid parent in Client::release (released twice?)\n");
-    }
+    // Guard against double-release
+    if (m_window == None) return;
 
     windowManager()->skipInRevert(this, m_revert);
 
