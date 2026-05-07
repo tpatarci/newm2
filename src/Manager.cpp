@@ -161,6 +161,12 @@ void WindowManager::release()
     XSetInputFocus(display(), PointerRoot, RevertToPointerRoot, timestamp(false));
     installColormap(None);
 
+    // WR-01: Destroy menu window (raw Window XID, not RAII-wrapped)
+    if (m_menuWindow != None) {
+        XDestroyWindow(display(), m_menuWindow);
+        m_menuWindow = None;
+    }
+
     // RAII handles: cursors (m_cursor, m_xCursor, etc.), m_menuGC, m_menuFont, m_display
 }
 
