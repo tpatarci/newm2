@@ -667,8 +667,20 @@ void Client::selectOnMotion(Window w, bool select)
 
 void Client::focusIfAppropriate(bool ifActive)
 {
-    // Auto-raise disabled for Phase 1
-    (void)ifActive;
+    if (!m_managed || !isNormal()) return;
+    if (!ifActive && isActive()) return;
+
+    Window rw, cw;
+    int rx, ry, cx, cy;
+    unsigned int k;
+
+    XQueryPointer(display(), root(), &rw, &cw, &rx, &ry, &cx, &cy, &k);
+
+    if (hasWindow(cw)) {
+        activate();
+        mapRaised();
+        m_windowManager->stopConsideringFocus();
+    }
 }
 
 
@@ -1100,10 +1112,9 @@ void Client::eventEnter(XCrossingEvent *e)
 {
     if (e->type != EnterNotify) return;
 
-    // Focus follows pointer
-    if (!isActive()) {
-        activate();
-    }
+    // Start auto-raise focus tracking (replaces immediate activate for
+    // focus-follows-pointer; the auto-raise timer will activate after delay)
+    windowManager()->considerFocusChange(this, m_window, e->time);
 }
 
 
