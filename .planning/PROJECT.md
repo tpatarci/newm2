@@ -29,7 +29,7 @@ A lightweight, visually distinctive window manager that works well on resource-c
 - ✓ CMake build system with pkg-config for X11 dependency discovery — Validated in Phase 1
 - ✓ Modern C++ (C++17) — std::vector, std::string, bool, RAII for X11 resources — Validated in Phase 1
 - ✓ RAII client lifecycle — unique_ptr ownership, ClientState enum, ServerGrab, vector colormaps, automated tests — Validated in Phase 3
-- [ ] EWMH compliance (_NET_SUPPORTED, _NET_WM_STATE, _NET_ACTIVE_WINDOW, etc.)
+- [x] EWMH compliance (_NET_SUPPORTED, _NET_WM_STATE, _NET_ACTIVE_WINDOW, etc.) — Validated in Phase 6
 - ✓ Xft/fontconfig for font rendering (replacing core X fonts + xvertext) — Validated in Phase 4
 - [ ] Xrandr support for display configuration
 - [ ] Runtime configuration file (~/.config/wm2-born-again/config)
@@ -78,7 +78,7 @@ A lightweight, visually distinctive window manager that works well on resource-c
 |----------|-----------|---------|
 | Keep wm2's visual identity | Distinctive, minimal, and the whole point of wm2 — not just another tiling WM | — Pending |
 | Replace xvertext with Xft | Core X fonts are deprecated; Xft supports antialiasing, UTF-8, fontconfig | Done — Phase 4 |
-| Add EWMH compliance | Modern apps and pagers expect _NET_* hints; without them panels/taskbars break | — Pending |
+| Add EWMH compliance | Modern apps and pagers expect _NET_* hints; without them panels/taskbars break | Done — Phase 6 |
 | Config file + GUI tool | Power users edit text; non-programmers use GUI; both write same format | — Pending |
 | AI menu discovery | Scans installed binaries to auto-populate root menu — novel feature, fits AI showcase | — Pending |
 | Xlib not XCB | XCB is lower-level but more complex; wm2's Xlib code works well and is well-understood. Can revisit later. | — Pending |
@@ -102,4 +102,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-06 after Phase 1 completion*
+*Last updated: 2026-05-08 after Phase 6 completion*

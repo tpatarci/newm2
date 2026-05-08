@@ -559,17 +559,11 @@ void Config::applyCliArgs(int argc, char** argv) {
 | A4 | `destroy-window-delay` (1500ms) in Border.cpp:924 is the only consumer of CONFIG_DESTROY_WINDOW_DELAY | Setting Inventory | Low -- grep found only one usage |
 | A5 | Border.h `FRAME_WIDTH` constexpr can be safely changed to a runtime int without breaking shape calculations | Pitfall 1 | Medium -- shape math is complex; need to verify all usages are in function bodies |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **How should Border access Config values?**
-   - What we know: Border uses static members for colors (allocated once in constructor) and `FRAME_WIDTH` from Border.h constexpr.
-   - What's unclear: Whether to pass Config to Border constructor, or have Border query WindowManager->config().
-   - Recommendation: Pass color strings to Border constructor (or have Border call `windowManager()->config().tabForeground` etc). For FRAME_WIDTH, make it a member of WindowManager that Border reads through its `windowManager()` accessor.
+1. **How should Border access Config values?** RESOLVED: Border accesses config via `windowManager()->config()` accessor. Plan 05-03 Task 2 implements this pattern (`windowManager()->config().tabForeground.c_str()`). For FRAME_WIDTH, it's a runtime `extern int` initialized from config in the first Border constructor.
 
-2. **Should execUsingShell default to true or false?**
-   - What we know: Upstream default is False. Modern practice would use shell for multi-word commands.
-   - What's unclear: Whether "xterm -e bash" style commands should work out of the box.
-   - Recommendation: Default to `false` (matching upstream), but document that `exec-using-shell = true` enables multi-word commands.
+2. **Should execUsingShell default to true or false?** RESOLVED: Default to `false` (matching upstream). Plan 05-01 Task 1 sets `bool execUsingShell = false` in the Config struct. Document that `exec-using-shell = true` enables multi-word commands.
 
 ## Environment Availability
 

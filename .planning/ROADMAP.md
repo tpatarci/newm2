@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 3: Client Lifecycle with RAII** - ICCCM-compliant reparenting, proper lifecycle management, O(1) client lookup, client state tests
 - [ ] **Phase 4: Border + Xft Font Rendering** - Preserve sideways-tab visual identity, replace xvertext with Xft, UTF-8 labels, shaped window fallback
 - [ ] **Phase 5: Configuration System** - Runtime config file with key=value format, sensible defaults, CLI option overrides
-- [ ] **Phase 6: EWMH Compliance** - All required EWMH atoms, single-desktop mode, panel/taskbar compatibility
+- [x] **Phase 6: EWMH Compliance** - All required EWMH atoms, single-desktop mode, panel/taskbar compatibility
 - [ ] **Phase 7: Root Menu + Application Discovery** - XDG .desktop parsing, AI-powered binary scan, cached results, category-organized root menu
 - [ ] **Phase 8: Xrandr + VNC Compatibility + Focus/Rules** - Display config, extension fallbacks, VNC compatibility, focus stealing prevention, window rules
 - [ ] **Phase 9: Config GUI + IPC** - GTK3 config tool, Unix domain socket IPC, live configuration changes, optional dependency
@@ -129,13 +129,13 @@ Plans:
 **Plans**: 3 plans
 
 **Wave 1**
-- [ ] 06-01-PLAN.md -- EWMH atoms, WM check window, root properties, _NET_CLIENT_LIST, _NET_ACTIVE_WINDOW, single-desktop atoms, test scaffold (EWMH-01, EWMH-02, EWMH-03, EWMH-07, EWMH-08)
+- [x] 06-01-PLAN.md -- EWMH atoms, WM check window, root properties, _NET_CLIENT_LIST, _NET_ACTIVE_WINDOW, single-desktop atoms, test scaffold (EWMH-01, EWMH-02, EWMH-03, EWMH-07, EWMH-08)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 06-02-PLAN.md -- Window type handling, fullscreen/maximize state, _NET_WM_STATE dispatch, dock struts, border strip/restore (EWMH-04, EWMH-05, EWMH-06, EWMH-09)
+- [x] 06-02-PLAN.md -- Window type handling, fullscreen/maximize state, _NET_WM_STATE dispatch, dock struts, border strip/restore (EWMH-04, EWMH-05, EWMH-06, EWMH-09)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 06-03-PLAN.md -- Circular right-button gesture for fullscreen, Button2 maximize on tab, EWMH state machine tests (EWMH-06)
+- [x] 06-03-PLAN.md -- Circular right-button gesture for fullscreen, Button2 maximize on tab, EWMH state machine tests (EWMH-06)
 
 ### Phase 7: Root Menu + Application Discovery
 **Goal**: The root menu shows all installed GUI applications organized by category, combining XDG .desktop entries with AI-powered binary discovery and user customizations.

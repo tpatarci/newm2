@@ -37,15 +37,15 @@
 
 ### EWMH Compliance
 
-- [ ] **EWMH-01**: Set _NET_SUPPORTED listing all supported EWMH atoms
-- [ ] **EWMH-02**: Set _NET_SUPPORTING_WM_CHECK for WM identification
-- [ ] **EWMH-03**: Maintain _NET_CLIENT_LIST (updated on map/unmap/destroy)
-- [ ] **EWMH-04**: Handle _NET_ACTIVE_WINDOW (respond to client activation requests)
-- [ ] **EWMH-05**: Handle _NET_WM_WINDOW_TYPE (DOCK, DIALOG, NOTIFICATION, NORMAL)
-- [ ] **EWMH-06**: Handle _NET_WM_STATE (_NET_WM_STATE_FULLSCREEN, _NET_WM_STATE_MAXIMIZED_*)
-- [ ] **EWMH-07**: Set _NET_WM_NAME with UTF-8 encoding for WM name
-- [ ] **EWMH-08**: Set single-desktop atoms (_NET_NUMBER_OF_DESKTOPS=1, _NET_CURRENT_DESKTOP=0)
-- [ ] **EWMH-09**: Set _NET_WORKAREA for panel/taskbar compatibility
+- [x] **EWMH-01**: Set _NET_SUPPORTED listing all supported EWMH atoms
+- [x] **EWMH-02**: Set _NET_SUPPORTING_WM_CHECK for WM identification
+- [x] **EWMH-03**: Maintain _NET_CLIENT_LIST (updated on map/unmap/destroy)
+- [x] **EWMH-04**: Handle _NET_ACTIVE_WINDOW (respond to client activation requests)
+- [x] **EWMH-05**: Handle _NET_WM_WINDOW_TYPE (DOCK, DIALOG, NOTIFICATION, NORMAL)
+- [x] **EWMH-06**: Handle _NET_WM_STATE (_NET_WM_STATE_FULLSCREEN, _NET_WM_STATE_MAXIMIZED_*)
+- [x] **EWMH-07**: Set _NET_WM_NAME with UTF-8 encoding for WM name
+- [x] **EWMH-08**: Set single-desktop atoms (_NET_NUMBER_OF_DESKTOPS=1, _NET_CURRENT_DESKTOP=0)
+- [x] **EWMH-09**: Set _NET_WORKAREA for panel/taskbar compatibility
 
 ### Xrandr & VNC
 
@@ -155,15 +155,15 @@
 | CONF-02 | Phase 5 | Pending |
 | CONF-03 | Phase 5 | Pending |
 | CONF-04 | Phase 5 | Pending |
-| EWMH-01 | Phase 6 | Pending |
-| EWMH-02 | Phase 6 | Pending |
-| EWMH-03 | Phase 6 | Pending |
-| EWMH-04 | Phase 6 | Pending |
-| EWMH-05 | Phase 6 | Pending |
-| EWMH-06 | Phase 6 | Pending |
-| EWMH-07 | Phase 6 | Pending |
-| EWMH-08 | Phase 6 | Pending |
-| EWMH-09 | Phase 6 | Pending |
+| EWMH-01 | Phase 6 | Complete |
+| EWMH-02 | Phase 6 | Complete |
+| EWMH-03 | Phase 6 | Complete |
+| EWMH-04 | Phase 6 | Complete |
+| EWMH-05 | Phase 6 | Complete |
+| EWMH-06 | Phase 6 | Complete |
+| EWMH-07 | Phase 6 | Complete |
+| EWMH-08 | Phase 6 | Complete |
+| EWMH-09 | Phase 6 | Complete |
 | APPS-01 | Phase 7 | Pending |
 | APPS-02 | Phase 7 | Pending |
 | APPS-03 | Phase 7 | Pending |
