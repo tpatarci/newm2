@@ -27,6 +27,10 @@ public:
                    bool force = false);
     void moveTo(int x, int y);
 
+    // Fullscreen support
+    void stripForFullscreen();
+    void restoreFromFullscreen(int x, int y, int w, int h);
+
     // Accessors
     Window parent() const { return m_parent; }
     bool hasWindow(Window w) const;

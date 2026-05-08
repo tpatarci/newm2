@@ -159,6 +159,22 @@ if(BUILD_TESTS)
                 ENVIRONMENT "DISPLAY=:99"
                 FIXTURES_REQUIRED xvfb_display
         )
+
+        # EWMH compliance tests (need Xvfb display)
+        add_executable(test_ewmh tests/test_ewmh.cpp)
+        target_link_libraries(test_ewmh PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+        )
+        target_include_directories(test_ewmh PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${XFT_INCLUDE_DIRS}
+        )
+        catch_discover_tests(test_ewmh
+            PROPERTIES
+                ENVIRONMENT "DISPLAY=:99"
+                FIXTURES_REQUIRED xvfb_display
+        )
     endif()
 
     # Config parsing unit tests (pure data transformation, no X11 needed)

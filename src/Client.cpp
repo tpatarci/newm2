@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <memory>
 #include <poll.h>
 
@@ -111,6 +112,20 @@ void Client::manage(bool mapped)
     getColormaps();
     getProtocols();
     getTransient();
+    getWindowType();
+
+    // D-01/D-02: DOCK and NOTIFICATION windows get no frame decoration
+    if (m_windowType == WindowType::Dock || m_windowType == WindowType::Notification) {
+        XMapWindow(display(), m_window);
+        setState(ClientState::Normal);
+        windowManager()->updateClientList();
+
+        // D-09: Dock windows affect workarea
+        if (m_windowType == WindowType::Dock) {
+            windowManager()->updateWorkarea();
+        }
+        return;
+    }
 
     XWMHints *hints = XGetWMHints(d, m_window);
 
@@ -231,6 +246,7 @@ void Client::activate()
     while (m_revert && !m_revert->isNormal()) m_revert = m_revert->revertTo();
 
     windowManager()->setActiveClient(this);
+    windowManager()->updateActiveWindow(m_window);
     decorate(true);
     installColormap();
 }
@@ -248,6 +264,172 @@ void Client::deactivate()
                 GrabModeAsync, GrabModeSync, None, None);
 
     decorate(false);
+}
+
+
+void Client::setFullscreen(bool fullscreen)
+{
+    if (m_isFullscreen == fullscreen) return;
+
+    if (fullscreen) {
+        // Save pre-fullscreen geometry
+        m_preFullscreenX = m_x;
+        m_preFullscreenY = m_y;
+        m_preFullscreenW = m_w;
+        m_preFullscreenH = m_h;
+
+        m_isFullscreen = true;
+
+        // Per D-05: strip border, cover full screen geometry INCLUDING dock areas
+        m_border->stripForFullscreen();
+        int sw = DisplayWidth(display(), 0);
+        int sh = DisplayHeight(display(), 0);
+        XMoveResizeWindow(display(), m_window, 0, 0, sw, sh);
+        XRaiseWindow(display(), m_window);
+    } else {
+        m_isFullscreen = false;
+
+        // Restore border and saved geometry
+        m_border->restoreFromFullscreen(m_preFullscreenX, m_preFullscreenY,
+                                         m_preFullscreenW, m_preFullscreenH);
+        m_x = m_preFullscreenX;
+        m_y = m_preFullscreenY;
+        m_w = m_preFullscreenW;
+        m_h = m_preFullscreenH;
+    }
+
+    updateNetWmState();
+}
+
+
+void Client::toggleFullscreen()
+{
+    setFullscreen(!m_isFullscreen);
+}
+
+
+void Client::setMaximized(bool vert, bool horz)
+{
+    bool newVert = vert;
+    bool newHorz = horz;
+
+    if (newVert == m_isMaximizedVert && newHorz == m_isMaximizedHorz) return;
+
+    if (newVert && newHorz && !m_isMaximizedVert && !m_isMaximizedHorz) {
+        // Going from normal to maximized -- save geometry
+        m_preMaximizedX = m_x;
+        m_preMaximizedY = m_y;
+        m_preMaximizedW = m_w;
+        m_preMaximizedH = m_h;
+    }
+
+    m_isMaximizedVert = newVert;
+    m_isMaximizedHorz = newHorz;
+
+    if (newVert || newHorz) {
+        // Per D-07: expand to fill workarea, keep tab+border
+        Atom actualType;
+        int actualFormat;
+        unsigned long nItems, bytesAfter;
+        long *workarea = nullptr;
+        if (XGetWindowProperty(display(), root(), Atoms::net_workarea, 0, 4,
+                false, XA_CARDINAL, &actualType, &actualFormat,
+                &nItems, &bytesAfter,
+                reinterpret_cast<unsigned char**>(&workarea)) == Success && workarea && nItems >= 4) {
+            int wx = workarea[0], wy = workarea[1];
+            int ww = workarea[2], wh = workarea[3];
+            XFree(workarea);
+
+            int newX = newHorz ? wx : (m_isMaximizedHorz ? m_preMaximizedX : m_x);
+            int newY = newVert ? wy : (m_isMaximizedVert ? m_preMaximizedY : m_y);
+            int newW = newHorz ? ww : (m_isMaximizedHorz ? m_preMaximizedW : m_w);
+            int newH = newVert ? wh : (m_isMaximizedVert ? m_preMaximizedH : m_h);
+
+            m_border->configure(newX, newY, newW, newH, CWX | CWY | CWWidth | CWHeight, Above);
+            XMoveResizeWindow(display(), m_window, 0, 0, newW, newH);
+            m_x = newX; m_y = newY; m_w = newW; m_h = newH;
+        }
+    } else {
+        // Restore from maximized
+        m_border->configure(m_preMaximizedX, m_preMaximizedY,
+                            m_preMaximizedW, m_preMaximizedH,
+                            CWX | CWY | CWWidth | CWHeight, Above);
+        XMoveResizeWindow(display(), m_window, 0, 0,
+                          m_preMaximizedW, m_preMaximizedH);
+        m_x = m_preMaximizedX; m_y = m_preMaximizedY;
+        m_w = m_preMaximizedW; m_h = m_preMaximizedH;
+    }
+
+    updateNetWmState();
+}
+
+
+void Client::toggleMaximized()
+{
+    if (m_isMaximizedVert && m_isMaximizedHorz) {
+        setMaximized(false, false);
+    } else {
+        setMaximized(true, true);
+    }
+}
+
+
+void Client::updateNetWmState()
+{
+    std::vector<Atom> states;
+    if (m_isFullscreen) states.push_back(Atoms::net_wmStateFullscreen);
+    if (m_isMaximizedVert) states.push_back(Atoms::net_wmStateMaximizedVert);
+    if (m_isMaximizedHorz) states.push_back(Atoms::net_wmStateMaximizedHorz);
+    if (isHidden()) states.push_back(Atoms::net_wmStateHidden);
+
+    if (states.empty()) {
+        XChangeProperty(display(), m_window, Atoms::net_wmState,
+                        XA_ATOM, 32, PropModeReplace, nullptr, 0);
+    } else {
+        XChangeProperty(display(), m_window, Atoms::net_wmState,
+                        XA_ATOM, 32, PropModeReplace,
+                        reinterpret_cast<unsigned char*>(states.data()),
+                        static_cast<int>(states.size()));
+    }
+}
+
+
+void Client::applyWmState(int action, Atom prop1, Atom prop2)
+{
+    // action: 0=_NET_WM_STATE_REMOVE, 1=_NET_WM_STATE_ADD, 2=_NET_WM_STATE_TOGGLE
+    auto applyProp = [action](bool current) -> bool {
+        if (action == 0) return false;  // remove
+        if (action == 1) return true;   // add
+        return !current;                // toggle
+    };
+
+    // Check both prop1 and prop2 for simultaneous state changes
+    bool fullscreen = m_isFullscreen;
+    bool maxVert = m_isMaximizedVert;
+    bool maxHorz = m_isMaximizedHorz;
+
+    for (int i = 0; i < 2; ++i) {
+        Atom prop = (i == 0) ? prop1 : prop2;
+        if (prop == None) continue;
+
+        if (prop == Atoms::net_wmStateFullscreen) {
+            fullscreen = applyProp(fullscreen);
+        } else if (prop == Atoms::net_wmStateMaximizedVert) {
+            maxVert = applyProp(maxVert);
+        } else if (prop == Atoms::net_wmStateMaximizedHorz) {
+            maxHorz = applyProp(maxHorz);
+        }
+    }
+
+    // Apply fullscreen first (it strips border)
+    if (fullscreen != m_isFullscreen) {
+        setFullscreen(fullscreen);
+    }
+
+    // Then apply maximize (if not fullscreen -- fullscreen takes priority)
+    if (!fullscreen) {
+        setMaximized(maxVert, maxHorz);
+    }
 }
 
 
@@ -391,6 +573,35 @@ void Client::getProtocols()
     }
 
     XFree(p);
+}
+
+
+void Client::getWindowType()
+{
+    long n;
+    Atom *data = nullptr;
+
+    m_windowType = WindowType::Normal;  // default
+
+    n = getProperty_aux(display(), m_window, Atoms::net_wmWindowType, XA_ATOM,
+                        1024L, reinterpret_cast<unsigned char**>(&data));
+    if (n <= 0) return;
+
+    for (int i = 0; i < n; ++i) {
+        if (data[i] == Atoms::net_wmWindowTypeDock) {
+            m_windowType = WindowType::Dock;
+            break;
+        } else if (data[i] == Atoms::net_wmWindowTypeDialog) {
+            m_windowType = WindowType::Dialog;
+            break;
+        } else if (data[i] == Atoms::net_wmWindowTypeNotification) {
+            m_windowType = WindowType::Notification;
+            break;
+        }
+        // D-04: UTILITY, SPLASH, TOOLBAR treated as NORMAL (no break, default remains)
+    }
+
+    XFree(data);
 }
 
 
@@ -575,6 +786,7 @@ void Client::hide()
 
     setState(ClientState::Iconic);
     windowManager()->addToHiddenList(this);
+    updateNetWmState();
 }
 
 
@@ -591,6 +803,7 @@ void Client::unhide(bool map)
         setState(ClientState::Normal);
         XMapWindow(display(), m_window);
         mapRaised();
+        updateNetWmState();
     }
 }
 
@@ -626,6 +839,9 @@ void Client::lower()
 
 void Client::ensureVisible()
 {
+    // Fullscreen and maximized windows should not be repositioned
+    if (m_isFullscreen || (m_isMaximizedVert && m_isMaximizedHorz)) return;
+
     int mx = DisplayWidth(display(), 0) - 1;
     int my = DisplayHeight(display(), 0) - 1;
     int px = m_x;
@@ -1095,6 +1311,18 @@ void Client::eventProperty(XPropertyEvent *e)
         getColormaps();
         if (isActive()) installColormap();
     }
+
+    // EWMH: Watch for window type changes
+    if (a == Atoms::net_wmWindowType) {
+        getWindowType();
+        return;
+    }
+
+    // EWMH: Watch for dock strut changes
+    if (a == Atoms::net_wmStrut || a == Atoms::net_wmStrutPartial) {
+        windowManager()->updateWorkarea();
+        return;
+    }
 }
 
 
@@ -1135,8 +1363,118 @@ void Client::eventButton(XButtonEvent *e)
         if (m_border->hasWindow(e->window)) {
             m_border->eventButton(e);
         }
+    } else if (e->button == Button2) {
+        // D-08: Middle click on tab -> maximize toggle (dispatched to border for window check)
+        if (m_border->hasWindow(e->window)) {
+            m_border->eventButton(e);
+        }
+    } else if (e->button == Button3) {
+        // D-06: Right-click drag on client -> fullscreen gesture
+        detectFullscreenGesture(e);
+        return;  // gesture handles activation
     }
 
     if (!isNormal() || isActive() || e->send_event) return;
     activate();
+}
+
+
+void Client::detectFullscreenGesture(XButtonEvent *e)
+{
+    // D-06: Circular right-button gesture for fullscreen toggle
+    // Only detect on client frame windows, not root (root Button3 is circulate)
+    constexpr int MIN_RADIUS = 20;          // pixels
+    constexpr double MIN_SWEEP = 4.71;      // ~270 degrees in radians
+    constexpr unsigned long MAX_GESTURE_TIME = 2000;  // 2 seconds
+
+    int grabMask = ButtonPressMask | ButtonReleaseMask | ButtonMotionMask;
+    if (windowManager()->attemptGrab(e->window, None, grabMask, e->time) != GrabSuccess) {
+        return;
+    }
+
+    // Accumulate motion positions
+    struct Point { int x, y; };
+    std::vector<Point> points;
+    points.push_back({e->x_root, e->y_root});
+
+    XEvent event;
+    bool done = false;
+
+    while (!done) {
+        XMaskEvent(display(), ButtonPressMask | ButtonReleaseMask |
+                   ButtonMotionMask, &event);
+
+        switch (event.type) {
+        case MotionNotify:
+            points.push_back({event.xmotion.x_root, event.xmotion.y_root});
+            // Suppress intermediate motion events
+            while (XCheckMaskEvent(display(), ButtonMotionMask, &event))
+                points.push_back({event.xmotion.x_root, event.xmotion.y_root});
+            break;
+
+        case ButtonRelease:
+            done = true;
+            break;
+
+        case ButtonPress:
+            // Extra button press (another button) -- cancel gesture
+            done = true;
+            break;
+        }
+    }
+
+    // For releaseGrab, we need a XButtonEvent pointer
+    XButtonEvent releaseEv;
+    std::memset(&releaseEv, 0, sizeof(releaseEv));
+    releaseEv.type = ButtonRelease;
+    releaseEv.button = Button3;
+    releaseEv.time = event.xbutton.time;
+    releaseEv.state = Button3Mask;
+    windowManager()->releaseGrab(&releaseEv);
+
+    // Check timing
+    if (event.type == ButtonRelease) {
+        unsigned long elapsed = event.xbutton.time - e->time;
+        if (elapsed > MAX_GESTURE_TIME) return;
+    }
+
+    // Need at least a few points to detect a circle
+    if (points.size() < 8) return;
+
+    // Compute centroid
+    double cx = 0.0, cy = 0.0;
+    for (const auto& p : points) {
+        cx += p.x;
+        cy += p.y;
+    }
+    cx /= points.size();
+    cy /= points.size();
+
+    // Check minimum radius: average distance from centroid
+    double avgDist = 0.0;
+    for (const auto& p : points) {
+        double dx = p.x - cx;
+        double dy = p.y - cy;
+        avgDist += std::sqrt(dx * dx + dy * dy);
+    }
+    avgDist /= points.size();
+
+    if (avgDist < MIN_RADIUS) return;
+
+    // Compute angular sweep using atan2 of successive vectors from centroid
+    double totalSweep = 0.0;
+    for (size_t i = 1; i < points.size(); ++i) {
+        double a1 = std::atan2(points[i-1].y - cy, points[i-1].x - cx);
+        double a2 = std::atan2(points[i].y - cy, points[i].x - cx);
+        double da = a2 - a1;
+        // Normalize to [-pi, pi]
+        if (da > M_PI) da -= 2 * M_PI;
+        if (da < -M_PI) da += 2 * M_PI;
+        totalSweep += da;
+    }
+
+    // Check if total angular sweep exceeds threshold (in absolute value)
+    if (std::abs(totalSweep) >= MIN_SWEEP) {
+        toggleFullscreen();
+    }
 }

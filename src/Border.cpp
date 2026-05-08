@@ -875,6 +875,44 @@ void Border::reparent()
 }
 
 
+void Border::stripForFullscreen()
+{
+    // Unmap all frame components
+    XUnmapWindow(display(), m_parent);
+    if (!isTransient()) {
+        XUnmapWindow(display(), m_tab);
+        XUnmapWindow(display(), m_button);
+        if (!isFixedSize()) XUnmapWindow(display(), m_resize);
+    }
+
+    // Reparent child directly to root (per D-05: covers full screen including docks)
+    x11::ServerGrab grab(display());
+    XReparentWindow(display(), m_child, root(), 0, 0);
+}
+
+
+void Border::restoreFromFullscreen(int x, int y, int w, int h)
+{
+    // Reparent child back into frame
+    x11::ServerGrab grab(display());
+    XReparentWindow(display(), m_child, m_parent, xIndent(), yIndent());
+
+    // Configure frame at saved position
+    XWindowChanges wc;
+    wc.x = x - xIndent();
+    wc.y = y - yIndent();
+    wc.width = w + xIndent() + 1;
+    wc.height = h + yIndent() + 1;
+    XConfigureWindow(display(), m_parent, CWX | CWY | CWWidth | CWHeight, &wc);
+
+    // Resize child to saved size
+    XMoveResizeWindow(display(), m_child, 0, 0, w, h);
+
+    // Map all frame components
+    map();
+}
+
+
 void Border::eventButton(XButtonEvent *e)
 {
     if (e->window == m_parent) {
@@ -891,6 +929,11 @@ void Border::eventButton(XButtonEvent *e)
         return;
 
     } else if (e->window == m_tab) {
+        if (e->button == Button2) {
+            // D-08: Middle-click on tab toggles maximize
+            m_client->toggleMaximized();
+            return;
+        }
         m_client->move(e);
         return;
     }

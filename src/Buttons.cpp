@@ -15,16 +15,14 @@
 
 void WindowManager::eventButton(XButtonEvent *e)
 {
-    if (e->button == Button3) {
-        circulate(e->window == e->root);
+    if (e->window == e->root) {
+        if (e->button == Button1) menu(e);
+        else if (e->button == Button3) circulate(true);  // root right-click: circulate active first
         return;
     }
 
     Client *c = windowToClient(e->window);
-
-    if (e->window == e->root) {
-        if (e->button == Button1) menu(e);
-    } else if (c) {
+    if (c) {
         c->eventButton(e);
     }
 }

@@ -21,6 +21,13 @@ enum class ClientState {
     Iconic    = 3    // matches X11 IconicState (NOT 2 -- X11 uses 3)
 };
 
+enum class WindowType {
+    Normal,
+    Dock,
+    Dialog,
+    Notification
+};
+
 class Client {
 public:
     Client(WindowManager *wm, Window w);
@@ -40,6 +47,11 @@ public:
     bool isTransient()  const { return m_transient != None; }
     bool isFixedSize()  const { return m_fixedSize; }
     bool isActive()     const;
+    bool isFullscreen() const { return m_isFullscreen; }
+    bool isMaximized()  const { return m_isMaximizedVert && m_isMaximizedHorz; }
+    bool isDock()       const { return m_windowType == WindowType::Dock; }
+    bool isNotification() const { return m_windowType == WindowType::Notification; }
+    WindowType windowType() const { return m_windowType; }
 
     // Window identity
     Window window()     const { return m_window; }
@@ -74,6 +86,14 @@ public:
     void move(XButtonEvent *e);
     void resize(XButtonEvent *e, bool horizontal, bool vertical);
     void moveOrResize(XButtonEvent *e);
+
+    // EWMH state management
+    void setFullscreen(bool fullscreen);
+    void toggleFullscreen();
+    void setMaximized(bool vert, bool horz);
+    void toggleMaximized();
+    void applyWmState(int action, Atom prop1, Atom prop2);
+    void updateNetWmState();
 
     // Client messages
     void sendMessage(Atom a, long data);
@@ -126,6 +146,16 @@ private:
     bool m_managed;
     bool m_reparenting;
 
+    // EWMH state
+    WindowType m_windowType{WindowType::Normal};
+    bool m_isFullscreen{false};
+    bool m_isMaximizedVert{false};
+    bool m_isMaximizedHorz{false};
+    int m_preFullscreenX{0}, m_preFullscreenY{0};
+    int m_preFullscreenW{0}, m_preFullscreenH{0};
+    int m_preMaximizedX{0}, m_preMaximizedY{0};
+    int m_preMaximizedW{0}, m_preMaximizedH{0};
+
     std::string m_name;
     std::string m_iconName;
     std::string m_label;
@@ -148,7 +178,11 @@ private:
     void getColormaps();
     void getProtocols();
     void getTransient();
+    void getWindowType();
     void decorate(bool active);
+
+    // Gesture detection
+    void detectFullscreenGesture(XButtonEvent *e);
 
     static bool isValidTransition(ClientState from, ClientState to);
 };

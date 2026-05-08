@@ -22,6 +22,32 @@ Atom Atoms::wm_takeFocus = None;
 Atom Atoms::wm_colormaps = None;
 Atom Atoms::wm2_running = None;
 
+// EWMH atom static members
+Atom Atoms::net_supported = None;
+Atom Atoms::net_supportingWmCheck = None;
+Atom Atoms::net_clientList = None;
+Atom Atoms::net_activeWindow = None;
+Atom Atoms::net_wmWindowType = None;
+Atom Atoms::net_wmState = None;
+Atom Atoms::net_wmName = None;
+Atom Atoms::net_wmStateFullscreen = None;
+Atom Atoms::net_wmStateMaximizedVert = None;
+Atom Atoms::net_wmStateMaximizedHorz = None;
+Atom Atoms::net_wmStateHidden = None;
+Atom Atoms::net_wmWindowTypeDock = None;
+Atom Atoms::net_wmWindowTypeDialog = None;
+Atom Atoms::net_wmWindowTypeNotification = None;
+Atom Atoms::net_wmWindowTypeNormal = None;
+Atom Atoms::net_wmWindowTypeUtility = None;
+Atom Atoms::net_wmWindowTypeSplash = None;
+Atom Atoms::net_wmWindowTypeToolbar = None;
+Atom Atoms::net_wmStrut = None;
+Atom Atoms::net_wmStrutPartial = None;
+Atom Atoms::net_numberOfDesktops = None;
+Atom Atoms::net_currentDesktop = None;
+Atom Atoms::net_workarea = None;
+Atom Atoms::utf8_string = None;
+
 volatile std::sig_atomic_t WindowManager::m_signalled = 0;
 int  WindowManager::s_pipeWriteFd = -1;
 bool WindowManager::m_initialising = false;
@@ -43,6 +69,7 @@ WindowManager::WindowManager(const Config& config)
     , m_menuWindow(None)
     , m_menuFont(nullptr)
     , m_menuBorderPixel(0)
+    , m_wmCheckWindow(None)
     , m_focusChanging(false)
     , m_focusCandidate(nullptr)
     , m_focusCandidateWindow(None)
@@ -101,6 +128,32 @@ WindowManager::WindowManager(const Config& config)
     Atoms::wm_takeFocus   = XInternAtom(display(), "WM_TAKE_FOCUS",       false);
     Atoms::wm_colormaps   = XInternAtom(display(), "WM_COLORMAP_WINDOWS", false);
     Atoms::wm2_running    = XInternAtom(display(), "_WM2_RUNNING",        false);
+
+    // EWMH atoms
+    Atoms::net_supported          = XInternAtom(display(), "_NET_SUPPORTED", false);
+    Atoms::net_supportingWmCheck  = XInternAtom(display(), "_NET_SUPPORTING_WM_CHECK", false);
+    Atoms::net_clientList         = XInternAtom(display(), "_NET_CLIENT_LIST", false);
+    Atoms::net_activeWindow       = XInternAtom(display(), "_NET_ACTIVE_WINDOW", false);
+    Atoms::net_wmWindowType       = XInternAtom(display(), "_NET_WM_WINDOW_TYPE", false);
+    Atoms::net_wmState            = XInternAtom(display(), "_NET_WM_STATE", false);
+    Atoms::net_wmName             = XInternAtom(display(), "_NET_WM_NAME", false);
+    Atoms::net_wmStateFullscreen  = XInternAtom(display(), "_NET_WM_STATE_FULLSCREEN", false);
+    Atoms::net_wmStateMaximizedVert = XInternAtom(display(), "_NET_WM_STATE_MAXIMIZED_VERT", false);
+    Atoms::net_wmStateMaximizedHorz = XInternAtom(display(), "_NET_WM_STATE_MAXIMIZED_HORZ", false);
+    Atoms::net_wmStateHidden      = XInternAtom(display(), "_NET_WM_STATE_HIDDEN", false);
+    Atoms::net_wmWindowTypeDock   = XInternAtom(display(), "_NET_WM_WINDOW_TYPE_DOCK", false);
+    Atoms::net_wmWindowTypeDialog = XInternAtom(display(), "_NET_WM_WINDOW_TYPE_DIALOG", false);
+    Atoms::net_wmWindowTypeNotification = XInternAtom(display(), "_NET_WM_WINDOW_TYPE_NOTIFICATION", false);
+    Atoms::net_wmWindowTypeNormal = XInternAtom(display(), "_NET_WM_WINDOW_TYPE_NORMAL", false);
+    Atoms::net_wmWindowTypeUtility = XInternAtom(display(), "_NET_WM_WINDOW_TYPE_UTILITY", false);
+    Atoms::net_wmWindowTypeSplash = XInternAtom(display(), "_NET_WM_WINDOW_TYPE_SPLASH", false);
+    Atoms::net_wmWindowTypeToolbar = XInternAtom(display(), "_NET_WM_WINDOW_TYPE_TOOLBAR", false);
+    Atoms::net_wmStrut            = XInternAtom(display(), "_NET_WM_STRUT", false);
+    Atoms::net_wmStrutPartial     = XInternAtom(display(), "_NET_WM_STRUT_PARTIAL", false);
+    Atoms::net_numberOfDesktops   = XInternAtom(display(), "_NET_NUMBER_OF_DESKTOPS", false);
+    Atoms::net_currentDesktop     = XInternAtom(display(), "_NET_CURRENT_DESKTOP", false);
+    Atoms::net_workarea           = XInternAtom(display(), "_NET_WORKAREA", false);
+    Atoms::utf8_string            = XInternAtom(display(), "UTF8_STRING", false);
 
     // Check Shape extension -- warn but continue if missing (graceful fallback)
     int dummy;
@@ -162,6 +215,12 @@ void WindowManager::release()
     if (m_menuWindow != None) {
         XDestroyWindow(display(), m_menuWindow);
         m_menuWindow = None;
+    }
+
+    // Destroy EWMH WM check window
+    if (m_wmCheckWindow != None) {
+        XDestroyWindow(display(), m_wmCheckWindow);
+        m_wmCheckWindow = None;
     }
 
     // RAII handles: cursors (m_cursor, m_xCursor, etc.), m_display
@@ -318,6 +377,9 @@ void WindowManager::initialiseScreen()
 
     // m_menuWindow background needs to match Xft background color pixel
     XSetWindowBackground(display(), m_menuWindow, m_menuBgColor->pixel);
+
+    // Set up EWMH root window properties (per EWMH spec)
+    setupEwmhProperties();
 }
 
 
@@ -333,6 +395,78 @@ unsigned long WindowManager::allocateColour(const char *name, const char *desc)
     }
 
     return nearest.pixel;
+}
+
+
+void WindowManager::setupEwmhProperties()
+{
+    // Create WM check child window (per EWMH spec)
+    m_wmCheckWindow = XCreateSimpleWindow(display(), m_root, -1, -1, 1, 1, 0, 0, 0);
+
+    // Set _NET_SUPPORTING_WM_CHECK on root pointing to check window
+    XChangeProperty(display(), m_root, Atoms::net_supportingWmCheck,
+                    XA_WINDOW, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&m_wmCheckWindow), 1);
+
+    // Set _NET_SUPPORTING_WM_CHECK on check window pointing to ITSELF (Pitfall 1)
+    XChangeProperty(display(), m_wmCheckWindow, Atoms::net_supportingWmCheck,
+                    XA_WINDOW, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&m_wmCheckWindow), 1);
+
+    // Set _NET_WM_NAME on check window with UTF8_STRING encoding (Pitfall 2)
+    const char *wmName = "wm2-born-again";
+    XChangeProperty(display(), m_wmCheckWindow, Atoms::net_wmName,
+                    Atoms::utf8_string, 8, PropModeReplace,
+                    reinterpret_cast<const unsigned char*>(wmName), 13);
+
+    // Set _NET_SUPPORTED atom array on root window
+    Atom supported[] = {
+        Atoms::net_supported, Atoms::net_supportingWmCheck,
+        Atoms::net_clientList, Atoms::net_activeWindow,
+        Atoms::net_wmWindowType, Atoms::net_wmState,
+        Atoms::net_wmName,
+        Atoms::net_wmWindowTypeDock, Atoms::net_wmWindowTypeDialog,
+        Atoms::net_wmWindowTypeNotification, Atoms::net_wmWindowTypeNormal,
+        Atoms::net_wmWindowTypeUtility, Atoms::net_wmWindowTypeSplash,
+        Atoms::net_wmWindowTypeToolbar,
+        Atoms::net_wmStateFullscreen, Atoms::net_wmStateMaximizedVert,
+        Atoms::net_wmStateMaximizedHorz, Atoms::net_wmStateHidden,
+        Atoms::net_wmStrut, Atoms::net_wmStrutPartial,
+        Atoms::net_numberOfDesktops, Atoms::net_currentDesktop,
+        Atoms::net_workarea,
+    };
+    XChangeProperty(display(), m_root, Atoms::net_supported,
+                    XA_ATOM, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(supported),
+                    sizeof(supported) / sizeof(Atom));
+
+    // Set single-desktop atoms (per D-11, EWMH-08)
+    long ndesktops = 1;
+    XChangeProperty(display(), m_root, Atoms::net_numberOfDesktops,
+                    XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&ndesktops), 1);
+    long currentDesktop = 0;
+    XChangeProperty(display(), m_root, Atoms::net_currentDesktop,
+                    XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&currentDesktop), 1);
+
+    // Set _NET_WORKAREA to full screen geometry initially (docks not yet known)
+    long workarea[4] = { 0, 0,
+        static_cast<long>(DisplayWidth(display(), m_screenNumber)),
+        static_cast<long>(DisplayHeight(display(), m_screenNumber)) };
+    XChangeProperty(display(), m_root, Atoms::net_workarea,
+                    XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(workarea), 4);
+
+    // Set _NET_ACTIVE_WINDOW to None initially
+    Window noneWindow = None;
+    XChangeProperty(display(), m_root, Atoms::net_activeWindow,
+                    XA_WINDOW, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&noneWindow), 1);
+
+    // Set _NET_CLIENT_LIST to empty array initially
+    XChangeProperty(display(), m_root, Atoms::net_clientList,
+                    XA_WINDOW, 32, PropModeReplace, nullptr, 0);
 }
 
 
@@ -419,6 +553,7 @@ Client *WindowManager::windowToClient(Window w, bool create)
     Client* raw = newClient.get();
     m_clients.push_back(std::move(newClient));
     m_windowMap[raw->window()] = raw;
+    updateClientList();
     return raw;
 }
 
@@ -433,6 +568,101 @@ void WindowManager::installColormap(Colormap cmap)
 }
 
 
+void WindowManager::updateClientList()
+{
+    std::vector<Window> windows;
+    windows.reserve(m_clients.size() + m_hiddenClients.size());
+    for (const auto& c : m_clients) {
+        windows.push_back(c->window());
+    }
+    for (const auto& c : m_hiddenClients) {
+        windows.push_back(c->window());
+    }
+    XChangeProperty(display(), m_root, Atoms::net_clientList,
+                    XA_WINDOW, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(windows.data()),
+                    static_cast<int>(windows.size()));
+}
+
+
+void WindowManager::updateActiveWindow(Window w)
+{
+    XChangeProperty(display(), m_root, Atoms::net_activeWindow,
+                    XA_WINDOW, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&w), 1);
+}
+
+
+void WindowManager::updateWorkarea()
+{
+    int screenW = DisplayWidth(display(), m_screenNumber);
+    int screenH = DisplayHeight(display(), m_screenNumber);
+    int left = 0, right = 0, top = 0, bottom = 0;
+
+    // Iterate all clients (both normal and hidden) for dock struts
+    auto checkStruts = [&](const auto& clients) {
+        for (const auto& client : clients) {
+            if (!client->isDock()) continue;
+
+            Atom actualType;
+            int actualFormat;
+            unsigned long nItems, bytesAfter;
+            unsigned char *data = nullptr;
+
+            // Try _NET_WM_STRUT_PARTIAL first (12 values)
+            bool found = false;
+            if (XGetWindowProperty(display(), client->window(),
+                    Atoms::net_wmStrutPartial, 0, 12, false, XA_CARDINAL,
+                    &actualType, &actualFormat, &nItems, &bytesAfter, &data) == Success
+                && data && nItems >= 4) {
+                long *struts = reinterpret_cast<long*>(data);
+                left   = std::max(left,   static_cast<int>(struts[0]));
+                right  = std::max(right,  static_cast<int>(struts[1]));
+                top    = std::max(top,    static_cast<int>(struts[2]));
+                bottom = std::max(bottom, static_cast<int>(struts[3]));
+                found = true;
+            }
+            if (data) { XFree(data); data = nullptr; }
+
+            // Fallback to _NET_WM_STRUT (4 values)
+            if (!found) {
+                if (XGetWindowProperty(display(), client->window(),
+                        Atoms::net_wmStrut, 0, 4, false, XA_CARDINAL,
+                        &actualType, &actualFormat, &nItems, &bytesAfter, &data) == Success
+                    && data && nItems >= 4) {
+                    long *struts = reinterpret_cast<long*>(data);
+                    left   = std::max(left,   static_cast<int>(struts[0]));
+                    right  = std::max(right,  static_cast<int>(struts[1]));
+                    top    = std::max(top,    static_cast<int>(struts[2]));
+                    bottom = std::max(bottom, static_cast<int>(struts[3]));
+                }
+                if (data) { XFree(data); data = nullptr; }
+            }
+        }
+    };
+
+    checkStruts(m_clients);
+    checkStruts(m_hiddenClients);
+
+    // Clamp strut values to screen dimensions (security: prevent absurd values)
+    left   = std::min(left,   screenW);
+    right  = std::min(right,  screenW);
+    top    = std::min(top,    screenH);
+    bottom = std::min(bottom, screenH);
+
+    long workarea[4] = {
+        static_cast<long>(left),
+        static_cast<long>(top),
+        static_cast<long>(screenW - left - right),
+        static_cast<long>(screenH - top - bottom)
+    };
+
+    XChangeProperty(display(), m_root, Atoms::net_workarea,
+                    XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(workarea), 4);
+}
+
+
 void WindowManager::clearFocus()
 {
     static Window w = 0;
@@ -440,6 +670,7 @@ void WindowManager::clearFocus()
 
     // Focus-follows-pointer mode: just clear active client
     setActiveClient(nullptr);
+    updateActiveWindow(None);
 
     if (active) {
         active->deactivate();
@@ -495,6 +726,7 @@ void WindowManager::addToHiddenList(Client *c)
         m_clients.erase(it);
     }
     // Note: map entry NOT updated -- raw Client* value unchanged per D-06, Pitfall 3
+    updateClientList();
 }
 
 
@@ -508,6 +740,7 @@ void WindowManager::removeFromHiddenList(Client *c)
         m_hiddenClients.erase(it);
     }
     // Note: map entry NOT updated -- raw Client* value unchanged per D-06, Pitfall 3
+    updateClientList();
 }
 
 

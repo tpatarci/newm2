@@ -77,6 +77,11 @@ public:
     void showGeometry(int x, int y);
     void removeGeometry();
 
+    // EWMH helpers (called from Client)
+    void updateClientList();
+    void updateActiveWindow(Window w);
+    void updateWorkarea();
+
     bool raiseTransients(Client *c);
 
     void addToHiddenList(Client *);
@@ -139,11 +144,17 @@ private:
     x11::XftColorWrap m_menuHlColor;      // "gray60" highlight (replaces XOR)
     unsigned long m_menuBorderPixel;      // for XCreateSimpleWindow border
 
+    // EWMH WM check window (per EWMH spec, child of root)
+    Window m_wmCheckWindow;
+
     static const char* const m_menuCreateLabel;
     const char* menuLabel(int);
     void menu(XButtonEvent *e);
     void spawn();
     void circulate(bool activeFirst);
+
+    // EWMH setup (called internally)
+    void setupEwmhProperties();
 
     // Focus tracking
     bool m_focusChanging;
@@ -190,6 +201,32 @@ struct Atoms {
     static Atom wm_takeFocus;
     static Atom wm_colormaps;
     static Atom wm2_running;
+
+    // EWMH atoms
+    static Atom net_supported;
+    static Atom net_supportingWmCheck;
+    static Atom net_clientList;
+    static Atom net_activeWindow;
+    static Atom net_wmWindowType;
+    static Atom net_wmState;
+    static Atom net_wmName;
+    static Atom net_wmStateFullscreen;
+    static Atom net_wmStateMaximizedVert;
+    static Atom net_wmStateMaximizedHorz;
+    static Atom net_wmStateHidden;
+    static Atom net_wmWindowTypeDock;
+    static Atom net_wmWindowTypeDialog;
+    static Atom net_wmWindowTypeNotification;
+    static Atom net_wmWindowTypeNormal;
+    static Atom net_wmWindowTypeUtility;
+    static Atom net_wmWindowTypeSplash;
+    static Atom net_wmWindowTypeToolbar;
+    static Atom net_wmStrut;
+    static Atom net_wmStrutPartial;
+    static Atom net_numberOfDesktops;
+    static Atom net_currentDesktop;
+    static Atom net_workarea;
+    static Atom utf8_string;
 };
 
 extern bool ignoreBadWindowErrors;

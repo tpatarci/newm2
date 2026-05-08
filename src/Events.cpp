@@ -275,6 +275,14 @@ void WindowManager::eventDestroy(XDestroyWindowEvent *e)
         // ~Client() runs here -- destructor handles unreparent, colormap cleanup
         // (BadWindow errors are now suppressed)
 
+        // Update _NET_CLIENT_LIST after client removal
+        updateClientList();
+
+        // EWMH: Recalculate workarea if dock was destroyed
+        if (c->isDock()) {
+            updateWorkarea();
+        }
+
         XSync(display(), false);
         ignoreBadWindowErrors = false;
     }
@@ -292,8 +300,30 @@ void WindowManager::eventClient(XClientMessageEvent *e)
         }
     }
 
-    std::fprintf(stderr, "wm2: unexpected XClientMessageEvent, type 0x%lx, "
-                  "window 0x%lx\n", e->message_type, e->window);
+    // EWMH: _NET_ACTIVE_WINDOW (per D-10, always grant)
+    if (e->message_type == Atoms::net_activeWindow) {
+        if (c && c->isNormal()) {
+            c->activate();
+        }
+        return;
+    }
+
+    // EWMH: _NET_WM_STATE (Pitfall 3: honor add/remove/toggle semantics)
+    if (e->message_type == Atoms::net_wmState) {
+        if (c && e->format == 32) {
+            int action = static_cast<int>(e->data.l[0]);  // 0=remove, 1=add, 2=toggle
+            Atom prop1 = static_cast<Atom>(e->data.l[1]);
+            Atom prop2 = static_cast<Atom>(e->data.l[2]);
+            c->applyWmState(action, prop1, prop2);
+        }
+        return;
+    }
+
+    // Reduce noise: only warn for truly unexpected messages (not EWMH we intentionally ignore)
+    if (e->message_type != Atoms::net_currentDesktop) {
+        std::fprintf(stderr, "wm2: unexpected XClientMessageEvent, type 0x%lx, "
+                      "window 0x%lx\n", e->message_type, e->window);
+    }
 }
 
 
