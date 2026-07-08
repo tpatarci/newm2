@@ -146,12 +146,21 @@ Plans:
   2. The AI scanner finds GUI applications in /usr/bin that lack .desktop files and adds them to the menu
   3. Scan results are cached at ~/.config/wm2-born-again/appcache.json so subsequent startups are fast
   4. User can manually add or remove menu entries via the config file, and those entries appear in the root menu
-**Plans**: 3 plans
+**Plans**: 6 plans
 
-Plans:
-- [ ] 07-01: TBD
-- [ ] 07-02: TBD
-- [ ] 07-03: TBD
+**Wave 1**
+- [ ] 07-01-PLAN.md -- XDG .desktop parser: AppEntry model, Exec tokenizer/field-code validator, D-05 filtering (APPS-01)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 07-02-PLAN.md -- Heuristic /usr/bin binary scanner: ELF DT_NEEDED reader, GUI/CLI classifier (APPS-02)
+- [ ] 07-04-PLAN.md -- WindowManager apps/category wiring, spawnArgv()/launchApp() safe process dispatch (APPS-05 backend)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 07-03-PLAN.md -- AppCache (hand-rolled JSON cache, mtime invalidation, D-07/D-08 merge) + Config manual menu entries (APPS-03, APPS-04)
+- [ ] 07-05-PLAN.md -- Categorized root menu + hover-to-expand submenu rendering in Buttons.cpp (APPS-05 presentation)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 07-06-PLAN.md -- main.cpp startup wiring + manual verification checkpoint (APPS-01 through APPS-05 end-to-end)
 
 ### Phase 8: Xrandr + VNC Compatibility + Focus/Rules
 **Goal**: The WM works reliably across VNC, XRDP, and X2Go with graceful extension fallbacks, and users get fine-grained control over focus behavior and per-window rules.
@@ -199,6 +208,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 4. Border + Xft Font Rendering | 3/3 | Complete | 2026-05-07 |
 | 5. Configuration System | 0/3 | Planned | - |
 | 6. EWMH Compliance | 0/3 | Planned | - |
-| 7. Root Menu + Application Discovery | 0/3 | Not started | - |
+| 7. Root Menu + Application Discovery | 0/6 | Planned | - |
 | 8. Xrandr + VNC + Focus/Rules | 0/3 | Not started | - |
 | 9. Config GUI + IPC | 0/3 | Not started | - |
