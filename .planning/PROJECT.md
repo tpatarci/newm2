@@ -34,7 +34,7 @@ A lightweight, visually distinctive window manager that works well on resource-c
 - [ ] Xrandr support for display configuration
 - [ ] Runtime configuration file (~/.config/wm2-born-again/config)
 - [ ] GUI configuration tool for non-programmers (GTK or similar lightweight toolkit)
-- [ ] Heuristic-based scan of /bin and /sbin to auto-discover applications for root menu
+- ✓ Heuristic-based scan of /bin and /sbin to auto-discover applications for root menu — Validated in Phase 7
 - [ ] Preserved classic wm2 visual identity — sideways tabs, shaped frames, minimal chrome
 - [ ] VNC/XRDP compatibility (graceful fallback when X extensions unavailable)
 - [ ] Command-line options (replacing compile-time-only configuration)
@@ -80,7 +80,7 @@ A lightweight, visually distinctive window manager that works well on resource-c
 | Replace xvertext with Xft | Core X fonts are deprecated; Xft supports antialiasing, UTF-8, fontconfig | Done — Phase 4 |
 | Add EWMH compliance | Modern apps and pagers expect _NET_* hints; without them panels/taskbars break | Done — Phase 6 |
 | Config file + GUI tool | Power users edit text; non-programmers use GUI; both write same format | — Pending |
-| AI menu discovery | Scans installed binaries to auto-populate root menu — novel feature, fits AI showcase | — Pending |
+| AI menu discovery | Scans installed binaries to auto-populate root menu — novel feature, fits AI showcase | Done — Phase 7 |
 | Xlib not XCB | XCB is lower-level but more complex; wm2's Xlib code works well and is well-understood. Can revisit later. | — Pending |
 | GTK for config GUI | Lightweight, available on most VPS setups, accessible to non-technical users | — Pending |
 
@@ -102,4 +102,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-08 after Phase 6 completion*
+*Last updated: 2026-07-08 after Phase 7 completion*
