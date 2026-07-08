@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include <X11/Xproto.h>
 #include <algorithm>
+#include <map>
 #include "Cursors.h"
 
 // Static member definitions
@@ -56,12 +57,13 @@ bool ignoreBadWindowErrors = false;
 const char *const WindowManager::m_menuCreateLabel = "New";
 
 
-WindowManager::WindowManager(const Config& config)
+WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& apps)
     : m_config(config)
     , m_screenNumber(0)
     , m_root(None)
     , m_defaultColormap(None)
     , m_activeClient(nullptr)
+    , m_apps(apps)
     , m_shapeEvent(0)
     , m_currentTime(-1)
     , m_looping(false)
@@ -69,6 +71,7 @@ WindowManager::WindowManager(const Config& config)
     , m_menuWindow(None)
     , m_menuFont(nullptr)
     , m_menuBorderPixel(0)
+    , m_submenuWindow(None)
     , m_wmCheckWindow(None)
     , m_focusChanging(false)
     , m_focusCandidate(nullptr)
@@ -86,6 +89,10 @@ WindowManager::WindowManager(const Config& config)
                  "  Copying and redistribution encouraged.  No warranty.\n\n");
 
     std::fprintf(stderr, "  Focus follows pointer.  Hidden clients only on menu.\n\n");
+
+    // Group the merged AppEntry list into category buckets for menu rendering.
+    // Pure data grouping, no X11 dependency -- safe to run before the display opens.
+    buildAppCategories();
 
     // Open display via RAII
     m_display.reset(XOpenDisplay(nullptr));
@@ -184,6 +191,29 @@ WindowManager::~WindowManager()
 }
 
 
+void WindowManager::buildAppCategories()
+{
+    // std::map keys sort alphabetically, giving us the base ordering for free;
+    // "Custom" (D-07: manual/uncategorized entries) is special-cased to always
+    // be appended last, matching conventional WM root-menu UX.
+    std::map<std::string, std::vector<AppEntry>> buckets;
+    for (const AppEntry& entry : m_apps) {
+        buckets[entry.category].push_back(entry);
+    }
+
+    m_appCategories.clear();
+    for (auto& kv : buckets) {
+        if (kv.first == "Custom") continue;
+        m_appCategories.emplace_back(kv.first, std::move(kv.second));
+    }
+
+    auto customIt = buckets.find("Custom");
+    if (customIt != buckets.end()) {
+        m_appCategories.emplace_back(customIt->first, std::move(customIt->second));
+    }
+}
+
+
 void WindowManager::release()
 {
     if (m_returnCode != 0) return;
@@ -204,6 +234,7 @@ void WindowManager::release()
 
     // Clean up Xft menu resources
     m_menuDraw.reset();
+    m_submenuDraw.reset();
     // m_menuFgColor, m_menuBgColor, m_menuHlColor auto-freed by RAII
 
     if (m_menuFont) {
@@ -215,6 +246,12 @@ void WindowManager::release()
     if (m_menuWindow != None) {
         XDestroyWindow(display(), m_menuWindow);
         m_menuWindow = None;
+    }
+
+    // Destroy submenu window (Phase 7), same pattern as m_menuWindow
+    if (m_submenuWindow != None) {
+        XDestroyWindow(display(), m_submenuWindow);
+        m_submenuWindow = None;
     }
 
     // Destroy EWMH WM check window
@@ -352,6 +389,17 @@ void WindowManager::initialiseScreen()
         XChangeWindowAttributes(display(), m_menuWindow, CWSaveUnder, &suAttr);
     }
 
+    // Submenu popup window (Phase 7): app-category flyout, provisioned the same
+    // way as m_menuWindow. Reuses m_menuFont/m_menuFgColor/m_menuBgColor/m_menuHlColor.
+    m_submenuWindow = XCreateSimpleWindow(display(), m_root, 0, 0, 1, 1, 1,
+                                          m_menuBorderPixel, 0);
+
+    if (DoesSaveUnders(ScreenOfDisplay(display(), m_screenNumber))) {
+        XSetWindowAttributes suAttr;
+        suAttr.save_under = true;
+        XChangeWindowAttributes(display(), m_submenuWindow, CWSaveUnder, &suAttr);
+    }
+
     // Load menu font via Xft with fontconfig fallback chain (D-02)
     // Font size 12 matches Lucida Bold 14pt visual footprint (D-03)
     x11::XftFontPtr menuFont = x11::make_xft_font_name(display(),
@@ -377,6 +425,9 @@ void WindowManager::initialiseScreen()
 
     // m_menuWindow background needs to match Xft background color pixel
     XSetWindowBackground(display(), m_menuWindow, m_menuBgColor->pixel);
+
+    // m_submenuWindow reuses the same background color as m_menuWindow
+    XSetWindowBackground(display(), m_submenuWindow, m_menuBgColor->pixel);
 
     // Set up EWMH root window properties (per EWMH spec)
     setupEwmhProperties();
@@ -797,13 +848,6 @@ void WindowManager::spawn()
 
     int status;
     wait(&status);
-}
-
-
-const char* WindowManager::menuLabel(int i)
-{
-    // Stub -- Buttons.cpp will use a different approach
-    return m_menuCreateLabel;
 }
 
 

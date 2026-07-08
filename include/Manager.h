@@ -2,12 +2,14 @@
 
 #include "x11wrap.h"
 #include "Config.h"
+#include "AppEntry.h"
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <X11/Xft/Xft.h>
 #include <X11/extensions/shape.h>
 #include <vector>
 #include <string>
+#include <utility>
 #include <memory>
 #include <unordered_map>
 #include <csignal>
@@ -34,7 +36,7 @@ class Client;
 
 class WindowManager {
 public:
-    WindowManager(const Config& config);
+    WindowManager(const Config& config, const std::vector<AppEntry>& apps);
     ~WindowManager();
 
     const Config& config() const { return m_config; }
@@ -119,6 +121,13 @@ private:
     std::unordered_map<Window, Client*> m_windowMap;  // D-05: O(1) lookup
     Client *m_activeClient;
 
+    // Application discovery (Phase 7): merged AppEntry list from Desktop/BinaryScan/Manual
+    // sources, and the same entries grouped into category buckets (alphabetical,
+    // "Custom" always last) ready for menu rendering.
+    std::vector<AppEntry> m_apps;
+    std::vector<std::pair<std::string, std::vector<AppEntry>>> m_appCategories;
+    void buildAppCategories();
+
     int m_shapeEvent;
     int m_currentTime;
 
@@ -144,11 +153,15 @@ private:
     x11::XftColorWrap m_menuHlColor;      // "gray60" highlight (replaces XOR)
     unsigned long m_menuBorderPixel;      // for XCreateSimpleWindow border
 
+    // Submenu popup window (Phase 7): app-category flyout, reuses the main
+    // menu's font/colors (m_menuFont/m_menuFgColor/m_menuBgColor/m_menuHlColor).
+    Window m_submenuWindow;
+    x11::XftDrawPtr m_submenuDraw;        // XftDraw bound to m_submenuWindow
+
     // EWMH WM check window (per EWMH spec, child of root)
     Window m_wmCheckWindow;
 
     static const char* const m_menuCreateLabel;
-    const char* menuLabel(int);
     void menu(XButtonEvent *e);
     void spawn();
     void circulate(bool activeFirst);
