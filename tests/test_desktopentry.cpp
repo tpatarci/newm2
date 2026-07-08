@@ -247,3 +247,25 @@ TEST_CASE("scanAll does not throw when XDG data dirs are empty/missing", "[deskt
     if (origHomeStr.empty()) unsetenv("XDG_DATA_HOME");
     else setenv("XDG_DATA_HOME", origHomeStr.c_str(), 1);
 }
+
+// =============================================================================
+// Test: a CRLF-only blank line (bare '\r' left by std::getline splitting on
+// '\n') does not crash the parser (CR-02 regression -- was UB via front() on
+// an empty string, which SIGABRTs under -D_GLIBCXX_ASSERTIONS hardening)
+// =============================================================================
+TEST_CASE("parseFile handles a CRLF-terminated blank line without crashing", "[desktopentry]") {
+    std::string path = writeTempDesktopFile(
+        "[Desktop Entry]\n"
+        "Name=Test\n"
+        "Exec=/bin/true\n"
+        "\r\n"
+        "[Extra Group]\r\n"
+        "Foo=bar\r\n"
+    );
+
+    auto result = DesktopEntry::parseFile(path);
+    REQUIRE(result.has_value());
+    REQUIRE(result->name == "Test");
+
+    removeTempFile(path);
+}

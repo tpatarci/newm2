@@ -246,12 +246,13 @@ std::optional<AppEntry> parseFile(const std::string& path) {
             continue;
         }
 
-        auto start = line.find_first_not_of(" \t");
+        auto start = line.find_first_not_of(" \t\r\n");
         if (start == std::string::npos) continue;  // blank line
         if (line[start] == '#') continue;           // comment
 
         auto end = line.find_last_not_of(" \t\r\n");
         std::string trimmedLine = line.substr(start, end - start + 1);
+        if (trimmedLine.empty()) continue;  // defense in depth
 
         if (trimmedLine.front() == '[') {
             inDesktopEntrySection = (trimmedLine == "[Desktop Entry]");
