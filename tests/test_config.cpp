@@ -807,3 +807,67 @@ TEST_CASE("CLI no args leaves config unchanged", "[config][cli]") {
     REQUIRE(cfg.autoRaise == false);
     REQUIRE(cfg.newWindowCommand == "xterm");
 }
+
+// =============================================================================
+// Manual menu entry tests (APPS-04): menu-entry-name=/menu-entry-command=/
+// menu-entry-category= accumulator parsing
+// =============================================================================
+
+// Test 36: Full triple (name, command, category) produces one AppEntry
+TEST_CASE("menu-entry-name/command/category produce one manual AppEntry", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("menu-entry-name", "Firefox");
+    cfg.applyKeyValue("menu-entry-command", "firefox --private-window");
+    cfg.applyKeyValue("menu-entry-category", "Internet");
+
+    REQUIRE(cfg.manualMenuEntries.size() == 1);
+    REQUIRE(cfg.manualMenuEntries[0].name == "Firefox");
+    REQUIRE(cfg.manualMenuEntries[0].execArgv == (std::vector<std::string>{"firefox", "--private-window"}));
+    REQUIRE(cfg.manualMenuEntries[0].category == "Internet");
+    REQUIRE(cfg.manualMenuEntries[0].source == AppEntry::Source::Manual);
+}
+
+// Test 37: menu-entry-name alone defaults category to "Custom" (D-07)
+TEST_CASE("menu-entry-name alone defaults category to Custom", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("menu-entry-name", "App");
+
+    REQUIRE(cfg.manualMenuEntries.size() == 1);
+    REQUIRE(cfg.manualMenuEntries[0].name == "App");
+    REQUIRE(cfg.manualMenuEntries[0].category == "Custom");
+}
+
+// Test 38: menu-entry-command with no preceding menu-entry-name does not
+// crash and leaves manualMenuEntries empty
+TEST_CASE("menu-entry-command with no preceding menu-entry-name is a no-op", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("menu-entry-command", "x");
+
+    REQUIRE(cfg.manualMenuEntries.empty());
+}
+
+// Test 39: multiple menu-entry-name= blocks each accumulate independently
+TEST_CASE("multiple menu-entry-name blocks accumulate independently", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("menu-entry-name", "First");
+    cfg.applyKeyValue("menu-entry-command", "first-cmd");
+    cfg.applyKeyValue("menu-entry-name", "Second");
+    cfg.applyKeyValue("menu-entry-command", "second-cmd");
+    cfg.applyKeyValue("menu-entry-category", "Graphics");
+
+    REQUIRE(cfg.manualMenuEntries.size() == 2);
+    REQUIRE(cfg.manualMenuEntries[0].name == "First");
+    REQUIRE(cfg.manualMenuEntries[0].execArgv == std::vector<std::string>{"first-cmd"});
+    REQUIRE(cfg.manualMenuEntries[0].category == "Custom");
+    REQUIRE(cfg.manualMenuEntries[1].name == "Second");
+    REQUIRE(cfg.manualMenuEntries[1].execArgv == std::vector<std::string>{"second-cmd"});
+    REQUIRE(cfg.manualMenuEntries[1].category == "Graphics");
+}
+
+// Test 40: menu-entry-category with no preceding menu-entry-name is a no-op
+TEST_CASE("menu-entry-category with no preceding menu-entry-name is a no-op", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("menu-entry-category", "Graphics");
+
+    REQUIRE(cfg.manualMenuEntries.empty());
+}

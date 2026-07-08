@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AppEntry.h"
+
 #include <string>
 #include <vector>
 
@@ -29,6 +31,9 @@ struct Config {
     // Commands
     std::string newWindowCommand = "xterm";
     bool execUsingShell = false;
+
+    // Manual menu entries (APPS-04)
+    std::vector<AppEntry> manualMenuEntries;
 
     // Load config: defaults -> system config -> user config -> CLI overrides
     static Config load(int argc, char** argv);

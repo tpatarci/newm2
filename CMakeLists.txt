@@ -206,4 +206,16 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/include
     )
     catch_discover_tests(test_binaryscanner)
+
+    # AppCache (hand-rolled JSON cache + merge/rescan orchestration) unit
+    # tests (pure data transformation, no X11 needed). Links DesktopEntry.cpp
+    # and BinaryScanner.cpp since loadOrRescan()'s rescan path calls both.
+    add_executable(test_appcache tests/test_appcache.cpp src/AppCache.cpp src/DesktopEntry.cpp src/BinaryScanner.cpp)
+    target_link_libraries(test_appcache PRIVATE
+        Catch2::Catch2WithMain
+    )
+    target_include_directories(test_appcache PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    catch_discover_tests(test_appcache)
 endif()

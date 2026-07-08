@@ -183,6 +183,48 @@ void Config::applyKeyValue(const std::string& key, const std::string& value) {
         return;
     }
 
+    // Manual menu entries (APPS-04): menu-entry-name= starts a new pending
+    // AppEntry pushed onto manualMenuEntries; menu-entry-command= and
+    // menu-entry-category= fill in manualMenuEntries.back(). This
+    // accumulator pattern avoids numbered keys (menu-entry-1-name=) --
+    // each menu-entry-name= opens a new "currently open entry".
+    if (key == "menu-entry-name") {
+        AppEntry entry;
+        entry.name = value;
+        entry.category = "Custom";  // D-07 default, applied at creation time
+        entry.source = AppEntry::Source::Manual;
+        manualMenuEntries.push_back(entry);
+        return;
+    }
+
+    if (key == "menu-entry-command") {
+        if (manualMenuEntries.empty()) {
+            std::fprintf(stderr, "wm2: warning: menu-entry-command with no preceding menu-entry-name\n");
+            return;
+        }
+        // Manual entries are user-typed directly into their own config
+        // file (a trusted source, per the config-manual-entries threat
+        // disposition) -- simple whitespace tokenization is sufficient,
+        // unlike .desktop's Exec= quoting/field-code handling.
+        std::vector<std::string> tokens;
+        std::istringstream ss(value);
+        std::string token;
+        while (ss >> token) {
+            tokens.push_back(token);
+        }
+        manualMenuEntries.back().execArgv = tokens;
+        return;
+    }
+
+    if (key == "menu-entry-category") {
+        if (manualMenuEntries.empty()) {
+            std::fprintf(stderr, "wm2: warning: menu-entry-category with no preceding menu-entry-name\n");
+            return;
+        }
+        manualMenuEntries.back().category = value;
+        return;
+    }
+
     // Unknown key -- warn but don't abort
     std::fprintf(stderr, "wm2: warning: unknown config key '%s'\n", key.c_str());
 }
