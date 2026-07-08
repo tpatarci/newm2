@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 4: Border + Xft Font Rendering** - Preserve sideways-tab visual identity, replace xvertext with Xft, UTF-8 labels, shaped window fallback
 - [ ] **Phase 5: Configuration System** - Runtime config file with key=value format, sensible defaults, CLI option overrides
 - [x] **Phase 6: EWMH Compliance** - All required EWMH atoms, single-desktop mode, panel/taskbar compatibility
-- [ ] **Phase 7: Root Menu + Application Discovery** - XDG .desktop parsing, heuristic-based binary scan, cached results, category-organized root menu
+- [x] **Phase 7: Root Menu + Application Discovery** - XDG .desktop parsing, heuristic-based binary scan, cached results, category-organized root menu (completed 2026-07-08)
 - [ ] **Phase 8: Xrandr + VNC Compatibility + Focus/Rules** - Display config, extension fallbacks, VNC compatibility, focus stealing prevention, window rules
 - [ ] **Phase 9: Config GUI + IPC** - GTK3 config tool, Unix domain socket IPC, live configuration changes, optional dependency
 
@@ -178,7 +178,7 @@ Plans:
   3. Scan results are cached at ~/.config/wm2-born-again/appcache.json so subsequent startups are fast
   4. User can manually add or remove menu entries via the config file, and those entries appear in the root menu
 
-**Plans**: 5/6 plans executed
+**Plans**: 6/6 plans complete
 
 **Wave 1**
 
@@ -196,7 +196,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 07-06-PLAN.md -- main.cpp startup wiring + manual verification checkpoint (APPS-01 through APPS-05 end-to-end)
+- [x] 07-06-PLAN.md -- main.cpp startup wiring + manual verification checkpoint (APPS-01 through APPS-05 end-to-end)
 
 ### Phase 8: Xrandr + VNC Compatibility + Focus/Rules
 
@@ -252,6 +252,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 4. Border + Xft Font Rendering | 3/3 | Complete | 2026-05-07 |
 | 5. Configuration System | 0/3 | Planned | - |
 | 6. EWMH Compliance | 0/3 | Planned | - |
-| 7. Root Menu + Application Discovery | 5/6 | In Progress|  |
+| 7. Root Menu + Application Discovery | 6/6 | Complete   | 2026-07-08 |
 | 8. Xrandr + VNC + Focus/Rules | 0/3 | Not started | - |
 | 9. Config GUI + IPC | 0/3 | Not started | - |
