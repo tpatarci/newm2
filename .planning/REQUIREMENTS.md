@@ -76,7 +76,7 @@
 - [x] **APPS-02**: AI-powered binary scan of /usr/bin/ for apps lacking .desktop files
 - [ ] **APPS-03**: Cached results at ~/.config/wm2-born-again/appcache.json
 - [ ] **APPS-04**: User can manually add/remove entries via config file
-- [ ] **APPS-05**: Root menu shows discovered apps organized by category
+- [x] **APPS-05**: Root menu shows discovered apps organized by category
 
 ### Focus & Window Rules
 
@@ -168,7 +168,7 @@
 | APPS-02 | Phase 7 | Complete |
 | APPS-03 | Phase 7 | Pending |
 | APPS-04 | Phase 7 | Pending |
-| APPS-05 | Phase 7 | Pending |
+| APPS-05 | Phase 7 | Complete |
 | XDIS-01 | Phase 8 | Pending |
 | XDIS-02 | Phase 8 | Pending |
 | XDIS-03 | Phase 8 | Pending |
