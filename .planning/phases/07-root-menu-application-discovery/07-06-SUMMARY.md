@@ -155,3 +155,7 @@ No blockers carried forward. The `libxft-dev` sandbox gap has a documented, reus
 ---
 *Phase: 07-root-menu-application-discovery*
 *Completed: 2026-07-08*
+
+## Self-Check: PASSED
+
+All modified files verified present on disk (`src/main.cpp`, `CMakeLists.txt`, `.planning/PROJECT.md`, `.planning/ROADMAP.md`, `.planning/phases/07-root-menu-application-discovery/07-06-SUMMARY.md`); all three commit hashes (`92d7dad`, `9c3a5f0`, `e998cd8`) verified present in git history.
