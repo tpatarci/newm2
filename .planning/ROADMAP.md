@@ -178,7 +178,7 @@ Plans:
   3. Scan results are cached at ~/.config/wm2-born-again/appcache.json so subsequent startups are fast
   4. User can manually add or remove menu entries via the config file, and those entries appear in the root menu
 
-**Plans**: 3/6 plans executed
+**Plans**: 4/6 plans executed
 
 **Wave 1**
 
@@ -191,7 +191,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 07-03-PLAN.md -- AppCache (hand-rolled JSON cache, mtime invalidation, D-07/D-08 merge) + Config manual menu entries (APPS-03, APPS-04)
+- [x] 07-03-PLAN.md -- AppCache (hand-rolled JSON cache, mtime invalidation, D-07/D-08 merge) + Config manual menu entries (APPS-03, APPS-04)
 - [ ] 07-05-PLAN.md -- Categorized root menu + hover-to-expand submenu rendering in Buttons.cpp (APPS-05 presentation)
 
 **Wave 4** *(blocked on Wave 3 completion)*
@@ -252,6 +252,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 4. Border + Xft Font Rendering | 3/3 | Complete | 2026-05-07 |
 | 5. Configuration System | 0/3 | Planned | - |
 | 6. EWMH Compliance | 0/3 | Planned | - |
-| 7. Root Menu + Application Discovery | 3/6 | In Progress|  |
+| 7. Root Menu + Application Discovery | 4/6 | In Progress|  |
 | 8. Xrandr + VNC + Focus/Rules | 0/3 | Not started | - |
 | 9. Config GUI + IPC | 0/3 | Not started | - |
