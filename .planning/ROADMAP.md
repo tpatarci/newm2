@@ -252,6 +252,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 4. Border + Xft Font Rendering | 3/3 | Complete | 2026-05-07 |
 | 5. Configuration System | 0/3 | Planned | - |
 | 6. EWMH Compliance | 0/3 | Planned | - |
-| 7. Root Menu + Application Discovery | 6/6 | Complete   | 2026-07-08 |
+| 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
 | 8. Xrandr + VNC + Focus/Rules | 0/3 | Not started | - |
 | 9. Config GUI + IPC | 0/3 | Not started | - |
