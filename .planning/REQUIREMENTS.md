@@ -73,7 +73,7 @@
 ### Application Discovery
 
 - [x] **APPS-01**: Parse XDG .desktop files from $XDG_DATA_DIRS/applications/ for menu entries
-- [ ] **APPS-02**: AI-powered binary scan of /usr/bin/ for apps lacking .desktop files
+- [x] **APPS-02**: AI-powered binary scan of /usr/bin/ for apps lacking .desktop files
 - [ ] **APPS-03**: Cached results at ~/.config/wm2-born-again/appcache.json
 - [ ] **APPS-04**: User can manually add/remove entries via config file
 - [ ] **APPS-05**: Root menu shows discovered apps organized by category
@@ -165,7 +165,7 @@
 | EWMH-08 | Phase 6 | Complete |
 | EWMH-09 | Phase 6 | Complete |
 | APPS-01 | Phase 7 | Complete |
-| APPS-02 | Phase 7 | Pending |
+| APPS-02 | Phase 7 | Complete |
 | APPS-03 | Phase 7 | Pending |
 | APPS-04 | Phase 7 | Pending |
 | APPS-05 | Phase 7 | Pending |

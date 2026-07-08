@@ -6,14 +6,14 @@ current_phase: 07
 current_phase_name: root-menu-application-discovery
 status: executing
 stopped_at: Phase 7 context gathered
-last_updated: "2026-07-08T08:32:28.321Z"
+last_updated: "2026-07-08T08:47:07.936Z"
 last_activity: 2026-07-08
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 9
   completed_phases: 6
   total_plans: 22
-  completed_plans: 17
+  completed_plans: 18
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 07 (root-menu-application-discovery) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-07-08 — Phase 07 execution started
 
@@ -68,6 +68,7 @@ Progress: [██████████] 100%
 | Phase 06 P02 | 7min | 1 tasks | 6 files |
 | Phase 06 P03 | 5min | 1 tasks | 5 files |
 | Phase 07 P01 | 15min | 3 tasks | 5 files |
+| Phase 07 P02 | 20min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,8 @@ Recent decisions affecting current work:
 - [Phase 03 P03]: Added X11/Xatom.h include for XA_WINDOW atom in colormap property test
 - [Phase ?]: 07-01: xdgDataHome() kept internal (anonymous namespace), not exposed in DesktopEntry.h public API
 - [Phase ?]: 07-01: field-code-only tokens (e.g. lone %u) are dropped from execArgv rather than kept as empty strings
+- [Phase ?]: Local MmapGuard RAII struct in BinaryScanner.cpp's anonymous namespace instead of reusing Manager.h's FdGuard, to keep BinaryScanner X11-free
+- [Phase ?]: Binary-scan-discovered apps default to category=Other (distinct from D-07's Custom for manual entries)
 
 ### Pending Todos
 
@@ -110,6 +113,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-08T08:31:50.597Z
+Last session: 2026-07-08T08:44:01.345Z
 Stopped at: Phase 7 context gathered
 Resume file: .planning/phases/07-root-menu-application-discovery/07-CONTEXT.md
