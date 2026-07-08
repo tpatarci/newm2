@@ -156,3 +156,7 @@ None -- no external service configuration required. (Same note as 07-04: install
 ---
 *Phase: 07-root-menu-application-discovery*
 *Completed: 2026-07-08*
+
+## Self-Check: PASSED
+
+All modified files verified present on disk (`include/Manager.h`, `src/Buttons.cpp`, `.planning/phases/07-root-menu-application-discovery/07-05-SUMMARY.md`); all three commit hashes (`80ba992`, `45c75a5`, `1dc1716`) verified present in git history.
