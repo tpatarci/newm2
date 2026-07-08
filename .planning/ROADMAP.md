@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 4: Border + Xft Font Rendering** - Preserve sideways-tab visual identity, replace xvertext with Xft, UTF-8 labels, shaped window fallback
 - [ ] **Phase 5: Configuration System** - Runtime config file with key=value format, sensible defaults, CLI option overrides
 - [x] **Phase 6: EWMH Compliance** - All required EWMH atoms, single-desktop mode, panel/taskbar compatibility
-- [ ] **Phase 7: Root Menu + Application Discovery** - XDG .desktop parsing, AI-powered binary scan, cached results, category-organized root menu
+- [ ] **Phase 7: Root Menu + Application Discovery** - XDG .desktop parsing, heuristic-based binary scan, cached results, category-organized root menu
 - [ ] **Phase 8: Xrandr + VNC Compatibility + Focus/Rules** - Display config, extension fallbacks, VNC compatibility, focus stealing prevention, window rules
 - [ ] **Phase 9: Config GUI + IPC** - GTK3 config tool, Unix domain socket IPC, live configuration changes, optional dependency
 
@@ -168,7 +168,7 @@ Plans:
 
 ### Phase 7: Root Menu + Application Discovery
 
-**Goal**: The root menu shows all installed GUI applications organized by category, combining XDG .desktop entries with AI-powered binary discovery and user customizations.
+**Goal**: The root menu shows all installed GUI applications organized by category, combining XDG .desktop entries with heuristic-based binary discovery and user customizations.
 **Depends on**: Phase 6
 **Requirements**: APPS-01, APPS-02, APPS-03, APPS-04, APPS-05
 **Success Criteria** (what must be TRUE):

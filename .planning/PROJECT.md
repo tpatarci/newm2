@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A modernized resurrection of wm2, Chris Cannam's minimalist X11 window manager from 1997, adapted for use on VPS droplets (DigitalOcean-style) accessed via VNC/RDP. Retains wm2's distinctive sideways-tab visual identity while updating the internals for modern Linux, adding runtime configuration, and introducing AI-powered application discovery for the root menu. Also serves as a showcase project for AI-assisted software development.
+A modernized resurrection of wm2, Chris Cannam's minimalist X11 window manager from 1997, adapted for use on VPS droplets (DigitalOcean-style) accessed via VNC/RDP. Retains wm2's distinctive sideways-tab visual identity while updating the internals for modern Linux, adding runtime configuration, and introducing heuristic-based application discovery for the root menu. Also serves as a showcase project for AI-assisted software development.
 
 ## Core Value
 
@@ -34,7 +34,7 @@ A lightweight, visually distinctive window manager that works well on resource-c
 - [ ] Xrandr support for display configuration
 - [ ] Runtime configuration file (~/.config/wm2-born-again/config)
 - [ ] GUI configuration tool for non-programmers (GTK or similar lightweight toolkit)
-- [ ] AI-powered scan of /bin and /sbin to auto-discover applications for root menu
+- [ ] Heuristic-based scan of /bin and /sbin to auto-discover applications for root menu
 - [ ] Preserved classic wm2 visual identity — sideways tabs, shaped frames, minimal chrome
 - [ ] VNC/XRDP compatibility (graceful fallback when X extensions unavailable)
 - [ ] Command-line options (replacing compile-time-only configuration)
@@ -58,7 +58,7 @@ A lightweight, visually distinctive window manager that works well on resource-c
 
 **Remote desktop compatibility:** Must work with TigerVNC, TightVNC, XRDP, and X2Go. The Shape extension is required for wm2's visual identity; must handle gracefully when unavailable. Font rendering must work with minimal server-side font packages.
 
-**AI showcase:** This project is intentionally being developed with AI assistance (Claude Code) as a demonstration that AI-assisted programming can deliver quality results on real, non-trivial software. The AI-powered menu scanner is both a practical feature and a meta-demonstration of this principle.
+**AI showcase:** This project is intentionally being developed with AI assistance (Claude Code) as a demonstration that AI-assisted programming can deliver quality results on real, non-trivial software. The heuristic-based menu scanner is both a practical feature and a meta-demonstration of this principle.
 
 **Existing codebase analysis:** Full codebase map in `.planning/codebase/` — 7 documents covering stack, architecture, structure, conventions, testing, integrations, and concerns (especially 296 lines of technical debt and issues documented in CONCERNS.md).
 
