@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 06
-current_phase_name: ewmh-compliance
+current_phase: 07
+current_phase_name: root-menu-application-discovery
 status: executing
 stopped_at: Phase 7 context gathered
-last_updated: "2026-07-08T07:53:58.013Z"
-last_activity: 2026-05-08
-last_activity_desc: Phase 06 Plan 03 completed
+last_updated: "2026-07-08T08:32:28.321Z"
+last_activity: 2026-07-08
+last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 9
   completed_phases: 6
-  total_plans: 16
-  completed_plans: 16
+  total_plans: 22
+  completed_plans: 17
   percent: 67
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** A lightweight, visually distinctive window manager that works well on resource-constrained VPS instances via remote desktop -- simple enough for non-programmers to configure, reliable enough for daily use.
-**Current focus:** Phase 06 — ewmh-compliance
+**Current focus:** Phase 07 — root-menu-application-discovery
 
 ## Current Position
 
-Phase: 06 (ewmh-compliance) — COMPLETE
-Plan: 3 of 3
+Phase: 07 (root-menu-application-discovery) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-05-08 -- Phase 06 Plan 03 completed
+Last activity: 2026-07-08 — Phase 07 execution started
 
 Progress: [██████████] 100%
 
@@ -67,6 +67,7 @@ Progress: [██████████] 100%
 | Phase 06 P01 | 15min | 1 tasks | 6 files |
 | Phase 06 P02 | 7min | 1 tasks | 6 files |
 | Phase 06 P03 | 5min | 1 tasks | 5 files |
+| Phase 07 P01 | 15min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,8 @@ Recent decisions affecting current work:
 - [Phase ?]: Destructor-only cleanup replaces release() method; unreparent called in destructor for non-withdrawn clients
 - [Phase 03 P03]: Tests verify infrastructure types (ServerGrab, ClientState) directly on Xvfb since full WindowManager cannot be unit-tested
 - [Phase 03 P03]: Added X11/Xatom.h include for XA_WINDOW atom in colormap property test
+- [Phase ?]: 07-01: xdgDataHome() kept internal (anonymous namespace), not exposed in DesktopEntry.h public API
+- [Phase ?]: 07-01: field-code-only tokens (e.g. lone %u) are dropped from execArgv rather than kept as empty strings
 
 ### Pending Todos
 
@@ -107,6 +110,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-08T06:49:13.665Z
+Last session: 2026-07-08T08:31:50.597Z
 Stopped at: Phase 7 context gathered
 Resume file: .planning/phases/07-root-menu-application-discovery/07-CONTEXT.md
