@@ -164,6 +164,8 @@ private:
     static const char* const m_menuCreateLabel;
     void menu(XButtonEvent *e);
     void spawn();
+    void spawnArgv(const std::vector<std::string>& argv);
+    void launchApp(const AppEntry& entry);
     void circulate(bool activeFirst);
 
     // EWMH setup (called internally)

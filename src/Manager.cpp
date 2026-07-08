@@ -851,6 +851,88 @@ void WindowManager::spawn()
 }
 
 
+void WindowManager::spawnArgv(const std::vector<std::string>& argv)
+{
+    // Double-fork to avoid zombies (from 9wm), generalized from spawn() to take
+    // an arbitrary pre-tokenized argv instead of a single command string.
+    // Never routes through a shell -- always execvp() directly (T-7-06).
+    char *displayName = DisplayString(display());
+
+    if (fork() == 0) {
+        if (fork() == 0) {
+            close(ConnectionNumber(display()));
+
+            if (displayName && displayName[0] != '\0') {
+                setenv("DISPLAY", displayName, 1);
+            }
+
+            if (argv.empty()) {
+                // No-op guard: avoids execvp(nullptr, ...) undefined behavior.
+                std::exit(1);
+            }
+
+            std::vector<char*> argvPointers;
+            argvPointers.reserve(argv.size() + 1);
+            for (const std::string& arg : argv) {
+                argvPointers.push_back(const_cast<char*>(arg.c_str()));
+            }
+            argvPointers.push_back(nullptr);
+
+            execvp(argv[0].c_str(), argvPointers.data());
+
+            std::fprintf(stderr, "wm2: exec %s failed", argv[0].c_str());
+            perror(" ");
+            std::exit(1);
+        }
+        std::exit(0);
+    }
+
+    int status;
+    wait(&status);
+}
+
+
+void WindowManager::launchApp(const AppEntry& entry)
+{
+    // T-7-06: Desktop- and BinaryScan-sourced entries can never reach the shell
+    // path below -- only Manual (config-authored) entries may opt into it, and
+    // only via the pre-existing execUsingShell config flag (Phase 5 precedent).
+    if (entry.source == AppEntry::Source::Manual && m_config.execUsingShell) {
+        std::string joined;
+        for (std::size_t i = 0; i < entry.execArgv.size(); ++i) {
+            if (i > 0) joined += ' ';
+            joined += entry.execArgv[i];
+        }
+
+        char *displayName = DisplayString(display());
+
+        if (fork() == 0) {
+            if (fork() == 0) {
+                close(ConnectionNumber(display()));
+
+                if (displayName && displayName[0] != '\0') {
+                    setenv("DISPLAY", displayName, 1);
+                }
+
+                execl("/bin/sh", "sh", "-c", joined.c_str(),
+                      static_cast<char*>(nullptr));
+
+                std::fprintf(stderr, "wm2: exec %s failed", joined.c_str());
+                perror(" ");
+                std::exit(1);
+            }
+            std::exit(0);
+        }
+
+        int status;
+        wait(&status);
+        return;
+    }
+
+    spawnArgv(entry.execArgv);
+}
+
+
 void WindowManager::considerFocusChange(Client *c, Window w, Time ts)
 {
     if (m_focusChanging) {
