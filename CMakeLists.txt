@@ -196,4 +196,14 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/include
     )
     catch_discover_tests(test_desktopentry)
+
+    # BinaryScanner (ELF DT_NEEDED) unit tests (pure data transformation, no X11 needed)
+    add_executable(test_binaryscanner tests/test_binaryscanner.cpp src/BinaryScanner.cpp)
+    target_link_libraries(test_binaryscanner PRIVATE
+        Catch2::Catch2WithMain
+    )
+    target_include_directories(test_binaryscanner PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    catch_discover_tests(test_binaryscanner)
 endif()

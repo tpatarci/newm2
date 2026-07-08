@@ -1,8 +1,10 @@
 #include "BinaryScanner.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
+#include <dirent.h>
 #include <elf.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -195,6 +197,76 @@ bool isGuiBinary(const std::vector<std::string>& neededLibs) {
         }
     }
     return false;
+}
+
+std::vector<AppEntry> scanUsrBin(const std::vector<std::string>& existingNames) {
+    std::vector<AppEntry> result;
+
+    DIR* dir = opendir("/usr/bin");
+    if (dir == nullptr) {
+        std::fprintf(stderr, "wm2: warning: BinaryScanner: cannot open /usr/bin\n");
+        return result;
+    }
+
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        const std::string name = entry->d_name;
+        if (name == "." || name == "..") {
+            continue;
+        }
+
+        const std::string path = "/usr/bin/" + name;
+
+        // T-7-04: same open()+fstat()-on-the-fd pattern as readNeededLibraries
+        // -- never a separate stat() on the path before opening it.
+        int fd = open(path.c_str(), O_RDONLY);
+        if (fd < 0) {
+            continue;
+        }
+
+        struct stat st;
+        if (fstat(fd, &st) != 0) {
+            close(fd);
+            continue;
+        }
+        if (!S_ISREG(st.st_mode) || (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0) {
+            close(fd);
+            continue;
+        }
+
+        // Cheap 2-byte shebang check via the already-open fd -- must happen
+        // before any ELF/mmap work (Pitfall 4: never attempt ELF parsing on
+        // a script).
+        char magic[2] = {0, 0};
+        ssize_t n = read(fd, magic, sizeof(magic));
+        close(fd);
+        if (n == static_cast<ssize_t>(sizeof(magic)) && magic[0] == '#' && magic[1] == '!') {
+            continue;  // shebang script, not ELF -- skip without parsing
+        }
+
+        std::optional<std::vector<std::string>> needed = readNeededLibraries(path);
+        if (!needed) {
+            continue;
+        }
+        if (!isGuiBinary(*needed)) {
+            continue;
+        }
+
+        if (std::find(existingNames.begin(), existingNames.end(), name) != existingNames.end()) {
+            continue;  // already has a matching .desktop entry
+        }
+
+        AppEntry app;
+        app.name = name;
+        app.execArgv = {path};
+        app.icon = "";
+        app.category = "Other";
+        app.source = AppEntry::Source::BinaryScan;
+        result.push_back(std::move(app));
+    }
+
+    closedir(dir);
+    return result;
 }
 
 }  // namespace BinaryScanner
