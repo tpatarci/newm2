@@ -1,10 +1,13 @@
 #include "AppCache.h"
 
+#include "BinaryScanner.h"
 #include "DesktopEntry.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <optional>
 #include <sstream>
@@ -372,6 +375,61 @@ void write(const std::string& path, const CacheData& data) {
             << "\", \"source\": \"" << sourceToString(e.source) << "\"}";
     }
     out << "]}";
+}
+
+std::vector<AppEntry> mergeEntries(const std::vector<AppEntry>& autoDiscovered,
+                                    const std::vector<AppEntry>& manualEntries) {
+    // D-08: a manual entry whose name matches an auto-discovered entry's
+    // name replaces it entirely, at the same position; a manual entry with
+    // no name match is appended. mergeEntries() does not re-apply D-07's
+    // "Custom" default -- that is applied once, at config-parse time
+    // (Config::applyKeyValue, Task 3), so every manualEntries element
+    // already carries its final category by the time it reaches here.
+    std::vector<AppEntry> result = autoDiscovered;
+
+    for (const auto& manual : manualEntries) {
+        auto it = std::find_if(result.begin(), result.end(), [&manual](const AppEntry& e) {
+            return e.name == manual.name;
+        });
+        if (it != result.end()) {
+            *it = manual;
+        } else {
+            result.push_back(manual);
+        }
+    }
+
+    return result;
+}
+
+std::vector<AppEntry> loadOrRescan(const std::string& cachePath,
+                                    const std::vector<AppEntry>& manualEntries) {
+    CacheData cache = read(cachePath);
+
+    std::vector<AppEntry> autoDiscovered;
+
+    if (!needsRescan(cache.scannedAt) && !cache.entries.empty()) {
+        // Fast path (D-06): cache is fresh, use it directly.
+        autoDiscovered = cache.entries;
+    } else {
+        // Stale or empty cache -- full rescan, then persist for next startup.
+        autoDiscovered = DesktopEntry::scanAll();
+
+        std::vector<std::string> existingNames;
+        existingNames.reserve(autoDiscovered.size());
+        for (const auto& entry : autoDiscovered) {
+            existingNames.push_back(entry.name);
+        }
+
+        std::vector<AppEntry> binaryScanned = BinaryScanner::scanUsrBin(existingNames);
+        autoDiscovered.insert(autoDiscovered.end(), binaryScanned.begin(), binaryScanned.end());
+
+        CacheData fresh;
+        fresh.scannedAt = std::time(nullptr);
+        fresh.entries = autoDiscovered;
+        write(cachePath, fresh);
+    }
+
+    return mergeEntries(autoDiscovered, manualEntries);
 }
 
 } // namespace AppCache
