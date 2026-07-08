@@ -113,7 +113,8 @@ void WindowManager::menu(XButtonEvent *e)
     }
     int nh = static_cast<int>(clients.size()) + 1;
 
-    int n = static_cast<int>(clients.size()) + 1;
+    int numCategories = static_cast<int>(m_appCategories.size());
+    int n = static_cast<int>(clients.size()) + 1 + numCategories;
 
     int mx = DisplayWidth(display(), m_screenNumber) - 1;
     int my = DisplayHeight(display(), m_screenNumber) - 1;
@@ -123,7 +124,9 @@ void WindowManager::menu(XButtonEvent *e)
 
     auto menuLabelFn = [&](int idx) -> const char* {
         if (idx == 0) return m_menuCreateLabel;
-        if (allowExit && idx > static_cast<int>(clients.size())) return "[Exit wm2]";
+        if (idx < nh) return clients[idx - 1]->label().c_str();
+        if (idx < nh + numCategories) return m_appCategories[idx - nh].first.c_str();
+        if (allowExit && idx == n - 1) return "[Exit wm2]";
         return clients[idx - 1]->label().c_str();
     };
 
@@ -247,6 +250,16 @@ void WindowManager::menu(XButtonEvent *e)
                             4, selecting * entryHeight + 9,
                             maxWidth - 8, entryHeight);
             }
+
+            if (selecting >= nh && selecting < nh + numCategories) {
+                // D-03/D-04: hovering a category row opens its submenu
+                // immediately, without requiring a click. openCategorySubmenu()
+                // resolves the whole two-level interaction (launch or dismiss)
+                // and unmaps both popups before returning, so menu() has
+                // nothing left to do.
+                openCategorySubmenu(m_appCategories[selecting - nh], e, x, y, maxWidth, selecting);
+                return;
+            }
             break;
 
         case Expose:
@@ -273,8 +286,9 @@ void WindowManager::menu(XButtonEvent *e)
                 int dx = extents.width;
                 int dy = i * entryHeight + m_menuFont->ascent + 10;
 
-                if (i >= nh) {
-                    // Right-aligned items (exit option)
+                if (allowExit && i == n - 1) {
+                    // Right-aligned items (exit option only -- category rows
+                    // also fall at index >= nh but must stay left-aligned)
                     XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
                         m_menuFont, maxWidth - 8 - dx, dy,
                         reinterpret_cast<const FcChar8*>(label), len);
@@ -306,6 +320,12 @@ void WindowManager::menu(XButtonEvent *e)
             spawn();
         } else if (selecting < nh) {
             clients[selecting - 1]->unhide(true);
+        } else if (selecting < nh + numCategories) {
+            // Defensive fallback: a ButtonRelease landed directly on a
+            // category row without a preceding MotionNotify (e.g. a very
+            // fast click). The primary open path is the hover-triggered one
+            // in the MotionNotify case above.
+            openCategorySubmenu(m_appCategories[selecting - nh], e, x, y, maxWidth, selecting);
         } else if (selecting < n) {
             clients[selecting - 1]->mapRaised();
             clients[selecting - 1]->ensureVisible();
