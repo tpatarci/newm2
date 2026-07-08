@@ -334,6 +334,191 @@ void WindowManager::menu(XButtonEvent *e)
 }
 
 
+void WindowManager::openCategorySubmenu(const std::pair<std::string, std::vector<AppEntry>>& category,
+                                          XButtonEvent* e, int outerX, int outerY,
+                                          int outerMaxWidth, int rowIndex)
+{
+    int n2 = static_cast<int>(category.second.size());
+    if (n2 == 0) return;
+
+    int mx = DisplayWidth(display(), m_screenNumber) - 1;
+    int my = DisplayHeight(display(), m_screenNumber) - 1;
+
+    // Measure submenu width exactly as the outer menu does, but over the
+    // category's app names instead of menuLabelFn().
+    int submenuWidth, submenuMaxWidth = 10;
+    for (int i = 0; i < n2; ++i) {
+        const char* label = category.second[i].name.c_str();
+        int len = static_cast<int>(std::strlen(label));
+        XGlyphInfo extents;
+        XftTextExtentsUtf8(display(), m_menuFont,
+            reinterpret_cast<const FcChar8*>(label), len, &extents);
+        submenuWidth = extents.width;
+        if (submenuWidth > submenuMaxWidth) submenuMaxWidth = submenuWidth;
+    }
+    submenuMaxWidth += 32;
+
+    // Same font -> same per-row metrics as the outer menu.
+    int entryHeight = m_menuFont->ascent + m_menuFont->descent + 4;
+    int totalHeight = entryHeight * n2 + 13;
+
+    // Anchor to the right of the outer menu, at the hovered row's top edge;
+    // flip to the left of the outer menu if it would cross the right screen
+    // edge, mirroring the outer menu's own edge-avoidance logic.
+    int subX = outerX + outerMaxWidth;
+    int subY = outerY + rowIndex * entryHeight;
+
+    if (subX + submenuMaxWidth >= mx) subX = outerX - submenuMaxWidth;
+    if (subX < 0) subX = 0;
+    if (subX + submenuMaxWidth >= mx) subX = mx - submenuMaxWidth;
+
+    if (subY + totalHeight >= my) subY = my - totalHeight;
+    if (subY < 0) subY = 0;
+
+    XMoveResizeWindow(display(), m_submenuWindow, subX, subY, submenuMaxWidth, totalHeight);
+    XSelectInput(display(), m_submenuWindow, MenuMask);
+    XMapRaised(display(), m_submenuWindow);
+
+    if (!m_submenuDraw) {
+        m_submenuDraw = x11::XftDrawPtr(XftDrawCreate(display(), m_submenuWindow,
+            DefaultVisual(display(), m_screenNumber),
+            DefaultColormap(display(), m_screenNumber)));
+    } else {
+        XftDrawChange(m_submenuDraw.get(), m_submenuWindow);
+    }
+
+    // T-7-09: release the outer menu's grab before attempting the submenu's
+    // grab, and if the submenu grab fails, re-grab the outer menu so the
+    // pointer is never left ungrabbed mid-interaction.
+    XUngrabPointer(display(), e->time);
+
+    if (attemptGrab(m_submenuWindow, None, MenuGrabMask, e->time) != GrabSuccess) {
+        XUnmapWindow(display(), m_submenuWindow);
+        attemptGrab(m_menuWindow, None, MenuGrabMask, e->time);
+        return;
+    }
+
+    bool done2 = false;
+    bool drawn2 = false;
+    int selecting2 = -1, prev2 = -1, sel2 = -1;
+    XEvent event;
+
+    while (!done2) {
+        XMaskEvent(display(), MenuMask, &event);
+
+        switch (event.type) {
+
+        default:
+            std::fprintf(stderr, "wm2: unknown event type %d\n", event.type);
+            break;
+
+        case ButtonPress:
+            break;
+
+        case ButtonRelease:
+            {
+                sel2 = -1;
+                if (drawn2) {
+                    if (event.xbutton.button != e->button) break;
+                    int rx = event.xbutton.x;
+                    int ry = event.xbutton.y - 11;
+                    sel2 = ry / entryHeight;
+
+                    if (selecting2 >= 0 && ry >= selecting2 * entryHeight - 3 &&
+                        ry <= (selecting2 + 1) * entryHeight - 3) sel2 = selecting2;
+
+                    if (rx < 0 || rx > submenuMaxWidth || ry < -3) sel2 = -1;
+                    else if (sel2 < 0 || sel2 >= n2) sel2 = -1;
+                }
+
+                if (!nobuttons(&event.xbutton)) sel2 = -1;
+                releaseGrab(&event.xbutton);
+                XUnmapWindow(display(), m_submenuWindow);
+                done2 = true;
+            }
+            break;
+
+        case MotionNotify:
+            if (!drawn2) break;
+            {
+                int rx = event.xbutton.x;
+                int ry = event.xbutton.y - 11;
+                prev2 = selecting2;
+                selecting2 = ry / entryHeight;
+
+                if (prev2 >= 0 && ry >= prev2 * entryHeight - 3 &&
+                    ry <= (prev2 + 1) * entryHeight - 3) selecting2 = prev2;
+
+                if (rx < 0 || rx > submenuMaxWidth || ry < -3) selecting2 = -1;
+                else if (selecting2 < 0 || selecting2 > n2) selecting2 = -1;
+
+                if (selecting2 == prev2) break;
+
+                if (prev2 >= 0 && prev2 < n2) {
+                    // Unhighlight previous
+                    XftDrawRect(m_submenuDraw.get(), m_menuBgColor.get(),
+                                4, prev2 * entryHeight + 9,
+                                submenuMaxWidth - 8, entryHeight);
+                }
+
+                if (selecting2 >= 0 && selecting2 < n2) {
+                    // Highlight new selection
+                    XftDrawRect(m_submenuDraw.get(), m_menuHlColor.get(),
+                                4, selecting2 * entryHeight + 9,
+                                submenuMaxWidth - 8, entryHeight);
+                }
+            }
+            break;
+
+        case Expose:
+            // Clear submenu background
+            XftDrawRect(m_submenuDraw.get(), m_menuBgColor.get(), 0, 0,
+                        submenuMaxWidth, totalHeight);
+
+            // Draw border outline (4 sides, 1px each)
+            XftDrawRect(m_submenuDraw.get(), m_menuFgColor.get(), 2, 7,
+                        submenuMaxWidth - 5, 1);         // top
+            XftDrawRect(m_submenuDraw.get(), m_menuFgColor.get(), 2,
+                        totalHeight - 4, submenuMaxWidth - 5, 1);  // bottom
+            XftDrawRect(m_submenuDraw.get(), m_menuFgColor.get(), 2, 7,
+                        1, totalHeight - 10);      // left
+            XftDrawRect(m_submenuDraw.get(), m_menuFgColor.get(),
+                        submenuMaxWidth - 3, 7, 1, totalHeight - 10);  // right
+
+            for (int i = 0; i < n2; ++i) {
+                // Submenu rows are always plain app entries -- no
+                // "New"/Exit rows, so everything is left-aligned.
+                const char* label = category.second[i].name.c_str();
+                int len = static_cast<int>(std::strlen(label));
+                int dy = i * entryHeight + m_menuFont->ascent + 10;
+                XftDrawStringUtf8(m_submenuDraw.get(), m_menuFgColor.get(),
+                    m_menuFont, 8, dy,
+                    reinterpret_cast<const FcChar8*>(label), len);
+            }
+
+            if (selecting2 >= 0 && selecting2 < n2) {
+                XftDrawRect(m_submenuDraw.get(), m_menuHlColor.get(),
+                            4, selecting2 * entryHeight + 9,
+                            submenuMaxWidth - 8, entryHeight);
+            }
+
+            drawn2 = true;
+        }
+    }
+
+    // Both popups resolve as a single unit: whether an app was launched or
+    // the user backed out, close the outer menu too (RESEARCH.md's
+    // recommended simplest-viable design over a full bidirectional
+    // grab-transfer state machine).
+    XUnmapWindow(display(), m_menuWindow);
+
+    // T-7-10: sel2 is bounds-checked against n2 before dispatch.
+    if (sel2 >= 0 && sel2 < n2) {
+        launchApp(category.second[sel2]);
+    }
+}
+
+
 void WindowManager::showGeometry(int x, int y)
 {
     char string[20];
