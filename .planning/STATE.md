@@ -6,14 +6,14 @@ current_phase: 07
 current_phase_name: root-menu-application-discovery
 status: executing
 stopped_at: Completed 07-03-PLAN.md
-last_updated: "2026-07-08T09:22:00.271Z"
+last_updated: "2026-07-08T09:33:44.862Z"
 last_activity: 2026-07-08
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 9
   completed_phases: 6
   total_plans: 22
-  completed_plans: 20
+  completed_plans: 21
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 07 (root-menu-application-discovery) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-07-08 — Phase 07 execution started
 
@@ -71,6 +71,7 @@ Progress: [██████████] 100%
 | Phase 07 P02 | 20min | 2 tasks | 4 files |
 | Phase 07 P04 | 25min | 2 tasks | 2 files |
 | Phase 07 P03 | 20min | 3 tasks | 7 files |
+| Phase 07 P05 | 20min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -98,6 +99,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 07-04: Task 1/Task 2 commits split via temporary revert-reapply since both touch the same two files
 - [Phase ?]: 07-03: write() creates parent config directory if missing (nothing else in the project creates ~/.config/wm2-born-again/)
 - [Phase ?]: 07-03: mergeEntries() does not re-apply D-07 Custom default -- applied once at Config::applyKeyValue's menu-entry-name= handler
+- [Phase 07]: openCategorySubmenu() signature extended with outerX/outerY/outerMaxWidth/rowIndex params beyond the plan's literal 2-param declaration, since the outer menu's position/hover-row-index are menu()'s local variables not otherwise recoverable
 
 ### Pending Todos
 
@@ -119,6 +121,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-08T09:22:00.262Z
+Last session: 2026-07-08T09:30:33.841Z
 Stopped at: Completed 07-03-PLAN.md
 Resume file: None
