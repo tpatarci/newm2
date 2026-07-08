@@ -164,6 +164,13 @@ void WindowManager::menu(XButtonEvent *e)
     if (warp) XWarpPointer(display(), None, root(),
                             None, None, None, None, e->x, e->y);
 
+    // Preserve the window's screen-space origin: x/y are reassigned inside
+    // the event loop below to window-relative pointer coordinates (the grab
+    // uses owner_events=False), so openCategorySubmenu() must anchor off
+    // these saved values, not the reused x/y (CR-01).
+    const int winX = x;
+    const int winY = y;
+
     XMoveResizeWindow(display(), m_menuWindow, x, y, maxWidth, totalHeight);
     XSelectInput(display(), m_menuWindow, MenuMask);
     XMapRaised(display(), m_menuWindow);
@@ -257,7 +264,7 @@ void WindowManager::menu(XButtonEvent *e)
                 // resolves the whole two-level interaction (launch or dismiss)
                 // and unmaps both popups before returning, so menu() has
                 // nothing left to do.
-                openCategorySubmenu(m_appCategories[selecting - nh], e, x, y, maxWidth, selecting);
+                openCategorySubmenu(m_appCategories[selecting - nh], e, winX, winY, maxWidth, selecting);
                 return;
             }
             break;
@@ -325,7 +332,7 @@ void WindowManager::menu(XButtonEvent *e)
             // category row without a preceding MotionNotify (e.g. a very
             // fast click). The primary open path is the hover-triggered one
             // in the MotionNotify case above.
-            openCategorySubmenu(m_appCategories[selecting - nh], e, x, y, maxWidth, selecting);
+            openCategorySubmenu(m_appCategories[selecting - nh], e, winX, winY, maxWidth, selecting);
         } else if (selecting < n) {
             clients[selecting - 1]->mapRaised();
             clients[selecting - 1]->ensureVisible();
@@ -339,7 +346,17 @@ void WindowManager::openCategorySubmenu(const std::pair<std::string, std::vector
                                           int outerMaxWidth, int rowIndex)
 {
     int n2 = static_cast<int>(category.second.size());
-    if (n2 == 0) return;
+    if (n2 == 0) {
+        // Nothing to show. Release the outer menu's still-held grab and
+        // close it the same way the normal (non-empty) path eventually does
+        // (XUngrabPointer + unmap m_menuWindow below), so an empty category
+        // -- unreachable today via buildAppCategories(), but not guaranteed
+        // by the type system -- can never leave the pointer grabbed
+        // session-wide (WR-01).
+        XUngrabPointer(display(), e->time);
+        XUnmapWindow(display(), m_menuWindow);
+        return;
+    }
 
     int mx = DisplayWidth(display(), m_screenNumber) - 1;
     int my = DisplayHeight(display(), m_screenNumber) - 1;
@@ -394,7 +411,13 @@ void WindowManager::openCategorySubmenu(const std::pair<std::string, std::vector
 
     if (attemptGrab(m_submenuWindow, None, MenuGrabMask, e->time) != GrabSuccess) {
         XUnmapWindow(display(), m_submenuWindow);
-        attemptGrab(m_menuWindow, None, MenuGrabMask, e->time);
+        // WR-02: if re-grabbing the outer menu also fails (e.g. another
+        // client grabbed the pointer in between), abort the whole menu
+        // interaction instead of leaving it in a degraded, ungrabbed state
+        // -- mirroring how menu() itself handles its initial grab failure.
+        if (attemptGrab(m_menuWindow, None, MenuGrabMask, e->time) != GrabSuccess) {
+            XUnmapWindow(display(), m_menuWindow);
+        }
         return;
     }
 
