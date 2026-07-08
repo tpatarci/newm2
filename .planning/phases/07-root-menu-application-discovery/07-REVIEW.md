@@ -26,7 +26,10 @@ findings:
   warning: 3
   info: 3
   total: 8
-status: issues_found
+critical_open: 0
+warning_open: 1
+info_open: 3
+status: fixed
 ---
 
 # Phase 07: Code Review Report
@@ -34,7 +37,23 @@ status: issues_found
 **Reviewed:** 2026-07-08
 **Depth:** standard
 **Files Reviewed:** 17
-**Status:** issues_found
+**Status:** fixed (both Critical findings and 2/3 Warnings resolved same-day; see Resolution section)
+
+## Resolution (2026-07-08)
+
+Both **Critical** findings and two of three **Warning** findings were fixed directly by the orchestrator immediately after this review, then independently re-verified (not just re-compiled):
+
+- **CR-01** (submenu mispositioned): Fixed in `93410c8`. Re-verified interactively on Xvfb — opened the menu away from the screen origin and hovered a middle category row ("Graphics"); the submenu now appears precisely anchored to that row, confirming the original bug (and that the initial manual-verification checkpoint had coincidentally masked it by testing only a corner-click + last-row hover).
+- **CR-02** (CRLF blank-line crash): Fixed in `8eaad4d`. Verified by reproducing the pre-fix crash standalone (`-D_GLIBCXX_ASSERTIONS` build, exit 134/SIGABRT on the exact input) and confirming the post-fix build handles the same input cleanly (exit 0). Added a regression test (`tests/test_desktopentry.cpp`, "parseFile handles a CRLF-terminated blank line without crashing").
+- **WR-01** (grab leak on empty category) and **WR-02** (unchecked re-grab): Fixed in `93410c8`.
+
+Full project test suite re-run after all fixes: **137/137 passing** (136 prior + 1 new regression test).
+
+**Left open, not urgent** (per this report's own severity assessment — self-inflicted/hand-edit-only or purely theoretical, no active trigger):
+- WR-03 (hand-rolled JSON key lookup is lexical, not structural)
+- IN-01 (dead fallback branch in `menuLabelFn`)
+- IN-02 (unchecked `uint64` addition in ELF PT_LOAD bounds check)
+- IN-03 (redundant double-`open()` in `scanUsrBin()`)
 
 ## Summary
 
