@@ -186,4 +186,14 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/include
     )
     catch_discover_tests(test_config)
+
+    # DesktopEntry (.desktop) parsing unit tests (pure data transformation, no X11 needed)
+    add_executable(test_desktopentry tests/test_desktopentry.cpp src/DesktopEntry.cpp)
+    target_link_libraries(test_desktopentry PRIVATE
+        Catch2::Catch2WithMain
+    )
+    target_include_directories(test_desktopentry PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    catch_discover_tests(test_desktopentry)
 endif()
