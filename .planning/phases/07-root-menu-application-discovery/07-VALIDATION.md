@@ -2,7 +2,7 @@
 phase: 7
 slug: root-menu-application-discovery
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-07-08
 ---
@@ -74,11 +74,13 @@ Task IDs are assigned by the planner; rows below are keyed by requirement until 
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 10s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies — every `type="auto"`/`tdd` task across 07-01..07-06 has an `<automated>` verify command; the sole checkpoint (07-06 Task 2) has an automated pre-check plus a human resume-signal
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify — no gaps found
+- [x] Wave 0 covers all MISSING references — `tests/test_desktopentry.cpp` (07-01), `tests/test_binaryscanner.cpp` (07-02), `tests/test_appcache.cpp` (07-03) all exist as planned tasks
+- [x] No watch-mode flags — confirmed across all verify commands
+- [x] Feedback latency < 10s — full-suite estimate ~5-10s (Test Infrastructure table above)
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Revision note (2026-07-08):** gsd-plan-checker flagged pipe-to-tail exit-code masking in the `<verify><automated>` blocks of Plans 07-01 through 07-05 (unguarded `cmd | tail -N` patterns that always report success regardless of the build/compile result) and a missing standalone syntax-check alternative in Plan 07-04 Task 1. All affected commands were corrected to either `set -o pipefail` before the pipe or capture-then-exit with the real upstream exit status; Plan 07-04 Task 1 now has a working `g++ -fsyntax-only` verify command. Re-reviewed against the sign-off criteria above with all fixes applied.
+
+**Approval:** approved (post-revision, planner iteration 1)
