@@ -128,6 +128,23 @@ private:
     std::vector<std::pair<std::string, std::vector<AppEntry>>> m_appCategories;
     void buildAppCategories();
 
+    // Capability sentinel convention (Phase 8). Every optional X extension this
+    // WM depends on is represented by the SAME triple:
+    //
+    //   1. an int member holding the extension's event base, set once in the
+    //      constructor, where any value BELOW ZERO means "capability absent";
+    //   2. a has*Extension() predicate over that member (see above), which is
+    //      the only thing the rest of the code is allowed to ask; and
+    //   3. exactly one call funnel per extension that returns without touching
+    //      the X connection when the predicate is false.
+    //
+    // The negative sentinel is load-bearing beyond the predicate: the default
+    // branch of the event dispatch in src/Events.cpp compares the incoming
+    // event type against these members, and a real event type is never
+    // negative, so a forced-off capability can never be matched by accident.
+    //
+    // Later plans in this phase add further capability members alongside this
+    // one; they follow the same triple rather than inventing a new shape.
     int m_shapeEvent;
     int m_currentTime;
 

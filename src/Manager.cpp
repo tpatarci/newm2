@@ -163,8 +163,29 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     Atoms::utf8_string            = XInternAtom(display(), "UTF8_STRING", false);
 
     // Check Shape extension -- warn but continue if missing (graceful fallback)
+    //
+    // D-12: the capability can additionally be forced unavailable from the
+    // environment. This is an INTERNAL TEST LEVER only: there is deliberately no
+    // user-facing CLI flag (a --no-shape option is deferred beyond this phase)
+    // and the variable is kept out of user documentation. It exists because the
+    // X server refuses to turn SHAPE off at run time -- it answers
+    // `Extension "SHAPE" can not be disabled` and lists the toggleable
+    // extensions, which do not include it -- so this is the only way to drive
+    // the rectangular fallback end-to-end against the real binary.
+    //
+    // Read exactly once, here, and never re-read: extension availability is
+    // fixed for the lifetime of an X connection. Forcing the sentinel at this
+    // one point rather than at each consumer makes every hasShapeExtension()
+    // caller correct at once.
     int dummy;
-    if (XShapeQueryExtension(display(), &m_shapeEvent, &dummy)) {
+    const char *forceNoShape = std::getenv("WM2_FORCE_NO_SHAPE");
+    if (forceNoShape != nullptr && std::strcmp(forceNoShape, "1") == 0) {
+        // Deliberately worded differently from the genuine-absence warning
+        // below, so a captured transcript proves the forced path was actually
+        // taken rather than the server merely happening to lack the extension.
+        std::fprintf(stderr, "wm2: warning: shape extension forced off, frames will be rectangular\n");
+        m_shapeEvent = -1;
+    } else if (XShapeQueryExtension(display(), &m_shapeEvent, &dummy)) {
         std::fprintf(stderr, "  Shape extension available.\n");
     } else {
         std::fprintf(stderr, "wm2: warning: no shape extension, frames will be rectangular\n");
