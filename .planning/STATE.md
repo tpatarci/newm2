@@ -6,15 +6,14 @@ current_phase: 8
 current_phase_name: Xrandr + VNC Compatibility + Focus/Rules
 status: planning
 stopped_at: Phase 8 context gathered
-last_updated: "2026-08-11T06:59:48.709Z"
-last_activity: 2026-07-08
-last_activity_desc: Inserted compiled behavior checklist into Phase 8 milestone scope
+last_updated: "2026-08-11T09:06:11.681Z"
+last_activity: 2026-08-11
+last_activity_desc: gathered Phase 8 context across 8 gray areas (32 decisions captured)
 progress:
-  total_phases: 9
+  total_phases: 8
   completed_phases: 7
-  total_plans: 22
+  total_plans: 36
   completed_plans: 22
-  percent: 78
 ---
 
 # Project State
