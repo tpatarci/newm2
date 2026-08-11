@@ -63,6 +63,12 @@ if(BUILD_TESTS)
     list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
     include(Catch)
 
+    # XTEST input synthesis (D-08, TEST-05). Test-only on purpose: the shipped
+    # wm2-born-again target must NOT gain libXtst -- the 512MB VPS constraint
+    # argues against dragging test-only libraries into the binary. Declared
+    # inside if(BUILD_TESTS) and linked into test_wm_process only.
+    pkg_check_modules(XTST REQUIRED IMPORTED_TARGET xtst)
+
     # --- Environment preflight fixture (D-01, D-02, TEST-07) ---
     #
     # Setup-only ctest fixture: fails with a named cause before any behavioral
@@ -137,10 +143,27 @@ if(BUILD_TESTS)
             ${XFT_INCLUDE_DIRS}
         )
 
-        # Xvfb fixture: start before tests, stop after
+        # Xvfb fixture: start before tests, stop after.
+        #
+        # The shared-display group below additionally takes a named resource
+        # lock (RESEARCH Pitfall 3). A running WM owns SubstructureRedirectMask
+        # exclusively and reparents every window created on its display, which
+        # would corrupt the raw-Xlib geometry and property assertions in
+        # test_client / test_ewmh. test_wm_process allocates its own display and
+        # never touches this one, but the lock makes it structurally impossible
+        # for `ctest -j` to interleave these four targets with each other or
+        # with any future WM-bearing target that mistakenly lands here.
         set(XVFB_PID_FILE "${CMAKE_BINARY_DIR}/xvfb.pid")
+        set(XVFB_LOG_FILE "${CMAKE_BINARY_DIR}/xvfb99.log")
+
+        # Two fixes over the original one-liner, both required for `ctest -j`:
+        #   1. The backgrounded server's stdout/stderr go to a FILE. Previously
+        #      it inherited ctest's output pipe and never closed it, so ctest
+        #      blocked forever after the tests finished -- the whole suite hung.
+        #   2. Readiness is a bounded poll on the server actually answering,
+        #      not a flat `sleep 1` that can expire early under parallel load.
         add_test(NAME start_xvfb
-            COMMAND bash -c "Xvfb :99 -screen 0 1024x768x24 -ac +render -noreset & echo $! > ${XVFB_PID_FILE} && sleep 1"
+            COMMAND bash -c "Xvfb :99 -screen 0 1024x768x24 -ac +render -noreset >${XVFB_LOG_FILE} 2>&1 & echo $! > ${XVFB_PID_FILE}; n=0; while [ $n -lt 100 ]; do DISPLAY=:99 xdpyinfo >/dev/null 2>&1 && exit 0; n=$((n+1)); sleep 0.1; done; echo 'wm2: Xvfb :99 did not become ready' >&2; exit 1"
         )
         set_tests_properties(start_xvfb PROPERTIES FIXTURES_SETUP xvfb_display)
 
@@ -154,6 +177,7 @@ if(BUILD_TESTS)
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
                 FIXTURES_REQUIRED "xvfb_display;preflight_ok"
+                RESOURCE_LOCK "x_display_99"
         )
     else()
         message(WARNING "Xvfb not found -- smoke tests disabled")
@@ -197,6 +221,7 @@ if(BUILD_TESTS)
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
                 FIXTURES_REQUIRED "xvfb_display;preflight_ok"
+                RESOURCE_LOCK "x_display_99"
         )
 
         # Xft PoC test (need Xvfb display + Xft/fontconfig)
@@ -216,6 +241,7 @@ if(BUILD_TESTS)
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
                 FIXTURES_REQUIRED "xvfb_display;preflight_ok"
+                RESOURCE_LOCK "x_display_99"
         )
 
         # EWMH compliance tests (need Xvfb display)
@@ -232,6 +258,7 @@ if(BUILD_TESTS)
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
                 FIXTURES_REQUIRED "xvfb_display;preflight_ok"
+                RESOURCE_LOCK "x_display_99"
         )
 
         # --- Process-level WM tests (D-07, TEST-05) ---
@@ -246,6 +273,7 @@ if(BUILD_TESTS)
         target_link_libraries(test_wm_process PRIVATE
             Catch2::Catch2WithMain
             PkgConfig::X11
+            PkgConfig::XTST
         )
         target_include_directories(test_wm_process PRIVATE
             ${CMAKE_SOURCE_DIR}/include

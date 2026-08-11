@@ -11,11 +11,14 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "support/WmFixture.h"
+#include "support/XTestDriver.h"
 
 #include "x11wrap.h"
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 
+#include <chrono>
+#include <thread>
 #include <vector>
 
 using namespace wm2test;
@@ -53,6 +56,44 @@ Window createDockWindow(Display* d, int strutBottom)
     XMapWindow(d, w);
     XSync(d, False);
     return w;
+}
+
+// Compute a root-window coordinate that lands on the sideways tab.
+//
+// Derived from live geometry, never hardcoded. The tab WINDOW (Border::m_tab,
+// src/Border.cpp:722) is a bounding box spanning most of the frame's top strip
+// -- on a 246x169 frame it measures 245x54 -- and the Shape extension carves the
+// actual sideways tab out of its left column. So "find the tall narrow child"
+// does not work: the clickable region is a shaped subset, not the window rect.
+//
+// What IS reliable is the client's own offset inside the frame. Border::xIndent()
+// returns `m_tabWidth + FRAME_WIDTH + 1` (include/Border.h:54), so the client's
+// x offset within the frame is exactly the width of the tab column. Clicking at
+// half that offset puts the pointer inside the tab, and dropping below the small
+// square button at +4+4 avoids the hide/destroy control.
+bool tabClickPoint(Display* d, Window frame, Window client, int& rootX, int& rootY)
+{
+    // Client position relative to its frame == the tab column width / top inset.
+    int indentX = 0, indentY = 0;
+    Window dummy = None;
+    if (!XTranslateCoordinates(d, client, frame, 0, 0, &indentX, &indentY, &dummy)) {
+        return false;
+    }
+    if (indentX <= 2) return false;   // no tab column yet (not reparented/shaped)
+
+    // Inside the tab column horizontally; below the button vertically but still
+    // within the tab's shaped height (m_tabHeight + m_tabWidth).
+    const int localX = indentX / 2;
+    const int localY = indentY + 20;
+
+    int rx = 0, ry = 0;
+    if (!XTranslateCoordinates(d, frame, DefaultRootWindow(d),
+                               localX, localY, &rx, &ry, &dummy)) {
+        return false;
+    }
+    rootX = rx;
+    rootY = ry;
+    return true;
 }
 
 bool workareaEquals(Display* d, Atom workarea,
@@ -217,4 +258,116 @@ TEST_CASE("SIGTERM shuts the WM down cleanly with exit status 0", "[wm_process]"
 
     INFO("wm stderr: " << fixture.wmStderr());
     REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behavior 5 (Task 3 expansion): synthesised input actually drives the real WM
+//
+// Proves the XTEST driver reaches the WM's real input path rather than emitting
+// events into the void. XSendEvent could not prove this at all: Client::eventButton
+// returns early on `e->send_event` (src/Client.cpp:1377), so a synthetic event
+// would never reach activate(). XTEST events carry send_event = False and
+// therefore exercise the genuine path.
+//
+// SCOPE, stated precisely: this asserts that synthesised input AS A WHOLE
+// (warp + press + release) drives the WM. It does NOT isolate the click from the
+// warp, because today's WM activates on pointer entry -- the three focus
+// booleans are parsed but unwired (D-15), so click-to-focus does not yet exist
+// as a distinct behavior. Verified by removing the XTEST calls: the test fails.
+// Verified by removing only the click: it still passes, via focus-follows-pointer.
+// Once FOCUS-02 wires click-to-focus, a later plan should split these.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Synthesised XTEST input on a client's tab activates that window",
+          "[wm_process]")
+{
+    WmFixture fixture;
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    Atom activeWindow = XInternAtom(d.get(), "_NET_ACTIVE_WINDOW", False);
+    REQUIRE(activeWindow != None);
+
+    Window root = DefaultRootWindow(d.get());
+
+    // Two normal clients, so "the right one got activated" is a real assertion
+    // rather than something a single-window run would satisfy by accident.
+    Window first = XCreateSimpleWindow(d.get(), root, 40, 40, 200, 150, 0,
+                                       BlackPixel(d.get(), DefaultScreen(d.get())),
+                                       WhitePixel(d.get(), DefaultScreen(d.get())));
+    Window target = XCreateSimpleWindow(d.get(), root, 320, 200, 220, 160, 0,
+                                        BlackPixel(d.get(), DefaultScreen(d.get())),
+                                        WhitePixel(d.get(), DefaultScreen(d.get())));
+    XMapWindow(d.get(), first);
+    XMapWindow(d.get(), target);
+    XSync(d.get(), False);
+
+    // Wait for the WM to frame the target (reparent away from root).
+    Window frame = None;
+    REQUIRE(WmFixture::pollUntil([&] {
+        Window wroot = None, parent = None, *children = nullptr;
+        unsigned int n = 0;
+        if (!XQueryTree(d.get(), target, &wroot, &parent, &children, &n)) return false;
+        if (children) XFree(children);
+        if (parent == None || parent == root) return false;
+        frame = parent;
+        return true;
+    }, 8000));
+    REQUIRE(frame != None);
+
+    // Dedicated input connection with grab control enabled (Pitfall 10).
+    XTestDriver driver(fixture.display());
+
+    // Park the pointer in a corner clear of BOTH frames before doing anything
+    // else. This WM runs focus-follows-pointer with auto-raise, so a pointer
+    // resting over either window would race the activation below and flip
+    // _NET_ACTIVE_WINDOW back underneath the test.
+    driver.moveTo(5, 5);
+
+    // Precondition: with the pointer parked on root and no click yet, this WM
+    // (focus-follows-pointer, activation on click/enter) has activated nothing.
+    // Assert that explicitly so the post-click assertion cannot pass vacuously.
+    Window preClickActive = None;
+    const bool preRead = readWindowProp(d.get(), root, activeWindow, preClickActive);
+    INFO("first=" << first << " target=" << target
+         << " pre-click active=" << preClickActive << " (read ok: " << preRead << ")");
+    REQUIRE(preClickActive != target);
+
+    int tabX = 0, tabY = 0;
+    REQUIRE(WmFixture::pollUntil([&] {
+        return tabClickPoint(d.get(), frame, target, tabX, tabY);
+    }, 5000));
+
+    driver.moveTo(tabX, tabY);
+
+    // press -> brief wait -> release, NOT click(). A Button1 press on the tab
+    // makes the WM take a pointer grab and enter its interactive move loop
+    // (Border::eventButton). A release delivered back-to-back can arrive before
+    // that grab is established, leaving the WM waiting in the move loop for a
+    // release that already happened -- which under parallel load failed roughly
+    // 4 runs in 6. The wait is the sanctioned sequencing shape for press/release
+    // pairs (08-RESEARCH.md Example 2); it is deliberately NOT passed as the
+    // XTEST `delay` argument, which would block the driver connection instead.
+    driver.press(Button1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    driver.release(Button1);
+
+    Window active = None;
+    const bool activated = WmFixture::pollUntil([&] {
+        return readWindowProp(d.get(), root, activeWindow, active) && active == target;
+    }, 8000);
+
+    INFO("target window: " << target << "  frame: " << frame);
+    INFO("clicked at root coords: " << tabX << "," << tabY);
+    INFO("_NET_ACTIVE_WINDOW: " << active);
+    INFO("wm stderr: " << fixture.wmStderr());
+    REQUIRE(activated);
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+
+    XDestroyWindow(d.get(), target);
+    XDestroyWindow(d.get(), first);
+    XSync(d.get(), False);
 }
