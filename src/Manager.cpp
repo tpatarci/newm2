@@ -1161,10 +1161,31 @@ void WindowManager::considerFocusChange(Client *c, Window w, Time ts)
     m_focusPointerMoved = false;
     m_focusPointerNowStill = false;
 
-    // Start the auto-raise deadline per D-03
-    m_autoRaiseDeadline = std::chrono::steady_clock::now() +
-        std::chrono::milliseconds(m_config.autoRaiseDelay);
-    m_autoRaiseDeadlineActive = true;
+    // Start the auto-raise deadline per D-03 -- but only when the user asked
+    // for auto-raise.
+    //
+    // FOCUS-02 / D-15: the auto-raise gate. Until this branch existed the
+    // boolean had no runtime consumer and the deadline was armed
+    // unconditionally. The gate belongs HERE, where the deadline is armed,
+    // rather than in checkDelaysForFocus()'s expiry branches: with nothing
+    // armed, computePollTimeout() already reports no active deadline and the
+    // event loop blocks indefinitely instead of waking every autoRaiseDelay
+    // milliseconds. That is both the behaviour the user asked for and the
+    // no-idle-CPU-spin item on the compiled-behaviour checklist. Gating the
+    // expiry instead would have left the loop waking on a timer whose only
+    // effect was to do nothing.
+    //
+    // Deliberately NOT touched: the timer arithmetic (this decides WHETHER the
+    // machinery runs, not how long it runs), and the pointer-stopped deadline
+    // below, which serves a different purpose and is armed by the first
+    // MotionNotify.
+    if (m_config.autoRaise) {
+        m_autoRaiseDeadline = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(m_config.autoRaiseDelay);
+        m_autoRaiseDeadlineActive = true;
+    } else {
+        m_autoRaiseDeadlineActive = false;
+    }
     // Pointer-stopped timer starts after first MotionNotify per D-04
     m_pointerStoppedDeadlineActive = false;
 

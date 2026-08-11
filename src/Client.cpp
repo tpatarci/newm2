@@ -890,7 +890,16 @@ void Client::focusIfAppropriate(bool ifActive)
 
     if (hasWindow(cw)) {
         activate();
-        mapRaised();
+        // FOCUS-02 / D-15: the raise-on-focus gate, first of two.
+        //
+        // This is the one boolean whose meaning was fused into another action:
+        // activating a window and raising it above its neighbours were an
+        // inseparable pair here and in eventFocusIn(). The activation is
+        // unconditional; only the raise is a policy choice. Both sites are split
+        // IDENTICALLY -- splitting one and not the other would make the
+        // manager-driven focus route and the FocusIn route disagree about what
+        // the same configuration means.
+        if (m_windowManager->config().raiseOnFocus) mapRaised();
         m_windowManager->stopConsideringFocus();
     }
 }
@@ -1330,6 +1339,23 @@ void Client::eventEnter(XCrossingEvent *e)
 {
     if (e->type != EnterNotify) return;
 
+    // FOCUS-02 / D-15: the click-to-focus gate.
+    //
+    // Until this line existed the three focus-policy booleans had NO runtime
+    // consumer at all -- parsed since Phase 5, read only by tests/test_config.cpp
+    // ever since -- so the WM performed delayed focus-follows-pointer no matter
+    // what the user configured. FOCUS-02 was not merely unproven, it was
+    // unimplemented.
+    //
+    // With click-to-focus set, pointer entry must not start focus tracking at
+    // all. Focus then arrives from exactly one place: the trailing activate() at
+    // the end of eventButton(), which already exists and needs no change. The
+    // call below is GATED, not deleted -- with the boolean clear this is still
+    // the entry point to the whole tracking state machine.
+    //
+    // D-16: three independent booleans, deliberately not a focus-policy enum.
+    if (windowManager()->config().clickToFocus) return;
+
     // Start auto-raise focus tracking (replaces immediate activate for
     // focus-follows-pointer; the auto-raise timer will activate after delay)
     windowManager()->considerFocusChange(this, m_window, e->time);
@@ -1340,7 +1366,9 @@ void Client::eventFocusIn(XFocusInEvent *e)
 {
     if (m_window == e->window && !isActive()) {
         activate();
-        mapRaised();
+        // FOCUS-02 / D-15: the raise-on-focus gate, second of two. Split
+        // identically to focusIfAppropriate() -- see the reasoning there.
+        if (windowManager()->config().raiseOnFocus) mapRaised();
     }
 }
 
