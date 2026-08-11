@@ -239,6 +239,20 @@ void WindowManager::eventDestroy(XDestroyWindowEvent *e)
     Client *c = windowToClient(e->window);
 
     if (c) {
+        // SCAN-02: Capture dock-ness BEFORE STEP 4 erases the owning unique_ptr.
+        // The post-erase workarea recomputation used to query the client through
+        // the raw pointer after ~Client() had already run -- a heap-use-after-free
+        // reachable by any client that simply destroys a managed window
+        // (COMPILED_CODE_BEHAVIOR_CHECKLIST.md "Current Scan Findings",
+        // src/Events.cpp:237-283; threat T-8-UAF). Branch on the local instead.
+        //
+        // Read through this alias, never through the raw `c` pointer, so the
+        // greppable regression guard holds: grepping this file for an isDock
+        // call made through `c` must return zero matches. Any reappearance of
+        // that spelling means a post-erase dereference has come back.
+        const Client &dying = *c;
+        const bool wasDock = dying.isDock();
+
         // STEP 1: Clear focus tracking BEFORE destroying the Client (Pitfall 1)
         if (m_focusChanging && c == m_focusCandidate) {
             stopConsideringFocus();
@@ -278,8 +292,8 @@ void WindowManager::eventDestroy(XDestroyWindowEvent *e)
         // Update _NET_CLIENT_LIST after client removal
         updateClientList();
 
-        // EWMH: Recalculate workarea if dock was destroyed
-        if (c->isDock()) {
+        // EWMH: Recalculate workarea if dock was destroyed (SCAN-02: `c` is dangling here)
+        if (wasDock) {
             updateWorkarea();
         }
 

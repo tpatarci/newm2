@@ -1,4 +1,10 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.20)
+# D-33: 3.20 is the real floor. The tags-as-labels discovery option is
+# implemented in Catch2's CatchAddTests.cmake with string(JSON ...), which needs
+# CMake >= 3.19, and every ctest gate in Phase 8 carries --no-tests=error, which
+# needs ctest >= 3.20. Declaring an older floor would make a 3.16-3.18 builder
+# fail at configure time with an opaque string(JSON) error instead of a named
+# cause -- exactly the failure mode scripts/preflight.sh exists to eliminate.
 project(wm2-born-again VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -67,7 +73,36 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/include
         ${XFT_INCLUDE_DIRS}
     )
-    catch_discover_tests(test_raii)
+    # D-33: TAG SELECTION CONVENTION -- applies to every test-discovery call in
+    # this file, no exceptions.
+    #
+    # Catch2 registers each ctest test under its TEST_CASE *name*, so a Catch2
+    # tag is invisible to `ctest -R` (which matches names). A tag-shaped -R
+    # expression matches zero tests, and ctest exits 0 on zero matches -- making
+    # every such gate green-on-nothing. The tags-as-labels option (Catch2 v3.14
+    # extras/Catch.cmake:152) registers the tags as ctest LABELS, fixing this at
+    # the registration site rather than at each call site.
+    #
+    # Consequently, every gate in Phase 8 selects by ANCHORED label and always
+    # passes --no-tests=error:
+    #     ctest -L '^wm_process$' --no-tests=error
+    #     ctest -L '^(wm_lifecycle|wm_sizehints|wm_gravity)$' --no-tests=error
+    # Anchoring is load-bearing: -L is an unanchored regex, so a bare
+    # `-L config` would also drag in `wm_config_runtime`. --no-tests=error is the
+    # backstop that turns a mistyped or renamed tag into exit code 8 instead of a
+    # silent pass.
+    #
+    # The option is orthogonal to PROPERTIES: Catch2 emits the labels through a
+    # separate set_tests_properties call, so nothing already attached is
+    # clobbered. Do NOT add the test-renaming prefix/suffix options -- they
+    # rename tests out from under this convention and cannot express multi-tag
+    # targets.
+    #
+    # NOTE: the acceptance gates for this convention are line-counting greps
+    # (label-option lines must equal discovery-call lines; the shared-display
+    # bindings must number exactly four). Keep those literal tokens out of
+    # comment prose, or the comments defeat the guards they describe.
+    catch_discover_tests(test_raii ADD_TAGS_AS_LABELS)
 
     # Smoke tests (need Xvfb display)
     find_program(XVFB_EXECUTABLE Xvfb)
@@ -95,7 +130,7 @@ if(BUILD_TESTS)
         set_tests_properties(stop_xvfb PROPERTIES FIXTURES_CLEANUP xvfb_display)
 
         # Discover smoke tests with fixture requirement set per-test
-        catch_discover_tests(test_smoke
+        catch_discover_tests(test_smoke ADD_TAGS_AS_LABELS
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
                 FIXTURES_REQUIRED xvfb_display
@@ -114,7 +149,7 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/include
         ${XFT_INCLUDE_DIRS}
     )
-    catch_discover_tests(test_eventloop)
+    catch_discover_tests(test_eventloop ADD_TAGS_AS_LABELS)
 
     # Auto-raise timer unit tests (pure chrono arithmetic, no display needed)
     add_executable(test_autoraise tests/test_autoraise.cpp)
@@ -125,7 +160,7 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/include
         ${XFT_INCLUDE_DIRS}
     )
-    catch_discover_tests(test_autoraise)
+    catch_discover_tests(test_autoraise ADD_TAGS_AS_LABELS)
 
     # Client lifecycle tests (need Xvfb display, TEST-03)
     if(XVFB_EXECUTABLE)
@@ -138,7 +173,7 @@ if(BUILD_TESTS)
             ${CMAKE_SOURCE_DIR}/include
             ${XFT_INCLUDE_DIRS}
         )
-        catch_discover_tests(test_client
+        catch_discover_tests(test_client ADD_TAGS_AS_LABELS
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
                 FIXTURES_REQUIRED xvfb_display
@@ -157,7 +192,7 @@ if(BUILD_TESTS)
             ${CMAKE_SOURCE_DIR}/include
             ${XFT_INCLUDE_DIRS}
         )
-        catch_discover_tests(test_xft_poc
+        catch_discover_tests(test_xft_poc ADD_TAGS_AS_LABELS
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
                 FIXTURES_REQUIRED xvfb_display
@@ -173,11 +208,47 @@ if(BUILD_TESTS)
             ${CMAKE_SOURCE_DIR}/include
             ${XFT_INCLUDE_DIRS}
         )
-        catch_discover_tests(test_ewmh
+        catch_discover_tests(test_ewmh ADD_TAGS_AS_LABELS
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
                 FIXTURES_REQUIRED xvfb_display
         )
+
+        # --- Process-level WM tests (D-07, TEST-05) ---
+        #
+        # Runs the REAL wm2-born-again binary as a child process. Deliberately
+        # carries NO shared-display ENVIRONMENT binding and NO
+        # `FIXTURES_REQUIRED xvfb_display`: this target allocates, locks and
+        # tears down its own display per fixture instance. A running WM owns
+        # SubstructureRedirectMask exclusively and would reparent the windows
+        # test_client / test_ewmh assert on (RESEARCH Pitfall 3).
+        add_executable(test_wm_process tests/test_wm_process.cpp)
+        target_link_libraries(test_wm_process PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+        )
+        target_include_directories(test_wm_process PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/tests
+            ${XFT_INCLUDE_DIRS}
+        )
+
+        # Scratch directory for per-fixture display locks, captured child stderr,
+        # and ASan log_path output. Under the build tree, never a bare fixed /tmp
+        # name (threat T-8-TMP).
+        set(WM_PROCESS_WORKDIR "${CMAKE_BINARY_DIR}/wm-process-tests")
+        file(MAKE_DIRECTORY "${WM_PROCESS_WORKDIR}")
+
+        target_compile_definitions(test_wm_process PRIVATE
+            WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
+            WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
+            WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+        )
+
+        # The tests exec the binary, so it must exist before they run.
+        add_dependencies(test_wm_process wm2-born-again)
+
+        catch_discover_tests(test_wm_process ADD_TAGS_AS_LABELS)
     endif()
 
     # Config parsing unit tests (pure data transformation, no X11 needed)
@@ -188,7 +259,7 @@ if(BUILD_TESTS)
     target_include_directories(test_config PRIVATE
         ${CMAKE_SOURCE_DIR}/include
     )
-    catch_discover_tests(test_config)
+    catch_discover_tests(test_config ADD_TAGS_AS_LABELS)
 
     # DesktopEntry (.desktop) parsing unit tests (pure data transformation, no X11 needed)
     add_executable(test_desktopentry tests/test_desktopentry.cpp src/DesktopEntry.cpp)
@@ -198,7 +269,7 @@ if(BUILD_TESTS)
     target_include_directories(test_desktopentry PRIVATE
         ${CMAKE_SOURCE_DIR}/include
     )
-    catch_discover_tests(test_desktopentry)
+    catch_discover_tests(test_desktopentry ADD_TAGS_AS_LABELS)
 
     # BinaryScanner (ELF DT_NEEDED) unit tests (pure data transformation, no X11 needed)
     add_executable(test_binaryscanner tests/test_binaryscanner.cpp src/BinaryScanner.cpp)
@@ -208,7 +279,7 @@ if(BUILD_TESTS)
     target_include_directories(test_binaryscanner PRIVATE
         ${CMAKE_SOURCE_DIR}/include
     )
-    catch_discover_tests(test_binaryscanner)
+    catch_discover_tests(test_binaryscanner ADD_TAGS_AS_LABELS)
 
     # AppCache (hand-rolled JSON cache + merge/rescan orchestration) unit
     # tests (pure data transformation, no X11 needed). Links DesktopEntry.cpp
@@ -220,5 +291,5 @@ if(BUILD_TESTS)
     target_include_directories(test_appcache PRIVATE
         ${CMAKE_SOURCE_DIR}/include
     )
-    catch_discover_tests(test_appcache)
+    catch_discover_tests(test_appcache ADD_TAGS_AS_LABELS)
 endif()
