@@ -326,3 +326,83 @@ reproduces — `gdb -p <wm pid>` on the hung child would confirm or refute the
 `XMaskEvent` hypothesis in one backtrace. Natural owner is the
 test-infrastructure / diagnostics work (08-11 … 08-13), alongside item 9, which
 is also an event-loop timing defect.
+
+### UPDATE (08-06): the `XMaskEvent` hypothesis is refuted; this is item 9
+
+08-06 reproduced this at a much higher rate than 08-05 could — **5 failures in
+144 fixture startups (~3.5%)** on its new `[wm_norender]` group — which made it
+measurable rather than anecdotal. What that measurement establishes:
+
+- **Not `XMaskEvent`.** `timestamp(true)` waits for a `PropertyNotify` matching
+  `PropertyChangeMask`, and root carries that bit (`src/Manager.cpp:568`).
+  `setupEwmhProperties()` runs *before* it (last statement of
+  `initialiseScreen()`) and writes a dozen root properties, so several matching
+  events are already queued when the wait begins. `XMaskEvent` returns the first
+  one immediately. The originally suspected call cannot block here.
+- **Not `scanInitialWindows()` adopting the probe either.** Tested directly by
+  inserting a 700 ms delay ahead of the scan so the readiness probe was
+  guaranteed to be adopted rather than map-requested: the probe was still
+  reparented and the case still passed, with the retry disabled.
+- **It is item 9.** The remaining signature matches item 9 exactly: the WM has
+  *issued* the reparent but its output is not on the wire, and the fixture is
+  polling with no other X traffic to wake it. Item 9 records the same behaviour
+  and the same cure — "The move appeared the instant any unrelated event reached
+  the WM — reproduced deterministically by creating one throwaway window."
+- **The cure confirms it.** `WmFixture::proveEventLoopLive()` now retries with a
+  **fresh** probe window (up to three attempts) instead of waiting longer on one.
+  Creating the second window is itself the unrelated event that wakes the WM.
+  Measured after the change: **0 failures in 150 fixture startups** of the same
+  gate.
+
+**Limits of this evidence, stated plainly:** the flush stall is inferred from
+item 9's documented signature and from the fact that the cure is item 9's known
+workaround — it was not observed directly on a wedged process. `ptrace_scope=1`
+on this host prevents a sibling `gdb` from attaching, and the failure did not
+reproduce under a standalone harness where the WM could be made a direct child
+(0 wedges in 20 runs there). The before/after rates are the strong part of this;
+the mechanism is the plausible part.
+
+**Disposition:** item 10 is now a *symptom* of item 9 and should be closed with
+it. The harness no longer flakes on it, so it is no longer a test-reliability
+problem — but the underlying defect is unchanged and still user-visible: a
+self-repositioning application appears frozen until something else happens on
+the desktop.
+
+## 11. The sideways tab does not grow with the window title (PRE-EXISTING, visible)
+
+**Found during:** 08-06 Task 2, while reading `Border::fixTabHeight()` closely
+enough to make it null-font safe.
+
+**Symptom:** the tab is very nearly the same length whatever the title is.
+**Measured** on a live WM (two clients, one titled `A`, one titled
+`A Very Long Window Title Indeed Yes`): the tab windows came back **265x54** and
+**265x58** respectively — four pixels apart for a 34-fold difference in title
+length. The long label therefore runs far past the end of its tab.
+
+**Cause:** the two rotated-extent reads have their axes swapped. For an
+`FcMatrix`-rotated font the string runs along `XGlyphInfo::height` and its
+thickness is `XGlyphInfo::width` — **measured** in this plan's
+`[xft_norender_spike]`: `"M"` is `w=12 h=13`, `"Hello"` is `w=12 h=39`. But:
+
+- the tab WIDTH (thickness) is computed from `extents.height` of a sample glyph
+  — the along-string advance;
+- the tab LENGTH is computed from `extents.width` of the label — the thickness,
+  which barely moves with the label and changes only when the glyph set gains a
+  descender or a capital.
+
+Swapping the two reads would make the tab track the title, which is what the
+sideways-tab design intends and what the ellipsis-shortening loop below it
+already assumes (that loop is currently near-dead: `m_tabHeight` almost always
+comes out under `maxHeight` on the first try, so titles are never shortened).
+
+**Pre-existing:** yes. Both reads predate Phase 8; 08-06 moved the first one
+into `loadTabFont()` unchanged and left the second exactly where it was.
+
+**Why not fixed here:** 08-06 explicitly forbids changing the rendered
+appearance when XRender is available, and this is a pure appearance change on
+the healthy path — the opposite of what that plan is for. It also needs a
+before/after visual comparison to land safely, which is 08-14's evidence work.
+
+**Disposition:** deferred, recommended for 08-14 or a follow-up rendering plan.
+It is a two-line change plus screenshots; the risk is entirely in the review,
+not in the edit.

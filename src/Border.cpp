@@ -229,13 +229,22 @@ void Border::loadTabFont()
             reinterpret_cast<const FcChar8*>(sample), 1, &extents);
         m_tabWidth = extents.height + 4;
     } else {
-        // Rung 3: the tab has to be wide enough to read a few characters
-        // ACROSS, not one glyph deep, so it is sized from a short sample
-        // string. drawLabelHorizontal() truncates the title to fit.
-        const char* sample = "MMMM";
+        // Rung 3: an unrotated face has its advance on the other axis, so
+        // measuring a glyph the rotated way would size the tab from the
+        // string direction instead of the line direction. Use the face's own
+        // line height, which is the unrotated equivalent of what the rotated
+        // branch above is reaching for.
+        //
+        // Deliberately NOT sized from a multi-character sample, tempting as
+        // that is for readability: m_tabWidth is shared by every frame and by
+        // the tab's shape geometry, and a tab several times wider than normal
+        // overflows small windows badly. Legibility is bought back by
+        // truncation in drawLabelHorizontal(), not by a wider tab.
+        const char* sample = "M";
         XftTextExtentsUtf8(display(), m_tabFont,
-            reinterpret_cast<const FcChar8*>(sample), 4, &extents);
-        m_tabWidth = extents.width + 4;
+            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
+        m_tabWidth = m_tabFont->ascent + m_tabFont->descent + 4;
+        if (m_tabWidth < extents.height + 4) m_tabWidth = extents.height + 4;
     }
 
     if (m_tabWidth < TAB_TOP_HEIGHT * 2 + 8) {
@@ -499,7 +508,13 @@ void Border::fixTabHeight(int maxHeight)
         m_label.clear();
         m_tabHeight = m_tabWidth * 2;
         if (m_tabHeight > maxHeight) m_tabHeight = maxHeight;
-        if (m_tabHeight < 10) m_tabHeight = 10;
+        // The floor is m_tabWidth, not an arbitrary small number: shapeTab()
+        // builds rectangles of height (m_tabHeight - m_tabWidth + ...), and a
+        // shorter tab makes those negative. XRectangle fields are unsigned, so
+        // a negative height wraps to ~65535, the rectangle list stops being
+        // YXSorted, and the server answers BadMatch -- which aborts framing
+        // entirely. Measured on a 60x40 window before this floor was added.
+        if (m_tabHeight < m_tabWidth) m_tabHeight = m_tabWidth;
         return;
     }
 
@@ -514,7 +529,13 @@ void Border::fixTabHeight(int maxHeight)
         }
         m_tabHeight = m_tabWidth * 2;
         if (m_tabHeight > maxHeight) m_tabHeight = maxHeight;
-        if (m_tabHeight < 10) m_tabHeight = 10;
+        // The floor is m_tabWidth, not an arbitrary small number: shapeTab()
+        // builds rectangles of height (m_tabHeight - m_tabWidth + ...), and a
+        // shorter tab makes those negative. XRectangle fields are unsigned, so
+        // a negative height wraps to ~65535, the rectangle list stops being
+        // YXSorted, and the server answers BadMatch -- which aborts framing
+        // entirely. Measured on a 60x40 window before this floor was added.
+        if (m_tabHeight < m_tabWidth) m_tabHeight = m_tabWidth;
         return;
     }
 

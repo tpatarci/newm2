@@ -52,7 +52,7 @@
 - [x] **XDIS-01**: Xrandr support for display configuration and resolution changes
 - [x] **XDIS-02**: Graceful fallback when Xrandr unavailable (VNC)
 - [x] **XDIS-03**: Graceful fallback when Shape extension unavailable (rectangular frames)
-- [ ] **XDIS-04**: Graceful fallback when XRender unavailable (core X font fallback)
+- [ ] **XDIS-04**: Graceful fallback when XRender unavailable — the WM keeps running and keeps managing windows, with tab labels degraded or absent rather than the process exiting. Satisfied at the fontconfig-fallback level: the preferred family chain, a generic sans chain, an unrotated face, and finally no label, none of which may terminate the WM. (Amended in Phase 8, plan 08-06, D-14. The original wording promised a fallback to the X server's own bitmap fonts, which contradicts what is built: Phase 4 removed core X fonts and the bundled rotation library by decision, so reviving them here would undo that. Phase 8 also measured that libXft renders the rotated tab face through its core X11 glyph path when XRender is absent, so the sideways tab survives a RENDER-less server anyway.)
 - [ ] **XDIS-05**: Compatible with TigerVNC, TightVNC, XRDP, X2Go out of the box
 
 ### Configuration

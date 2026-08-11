@@ -168,8 +168,13 @@ fi
 section "fontconfig fallback chains"
 
 if command -v fc-match >/dev/null 2>&1; then
+    # The third pattern is the generic rung of the tab-font ladder in
+    # src/Border.cpp (XDIS-04). It is checked here rather than asserted in a
+    # comment, because that rung is what stands between a font-poor target and
+    # a window manager with no labels at all.
     for pattern in "Noto Sans,DejaVu Sans,Sans:size=12" \
-                   "Noto Sans,DejaVu Sans,Sans:bold:size=12"; do
+                   "Noto Sans,DejaVu Sans,Sans:bold:size=12" \
+                   "sans-serif:bold:size=12"; do
         # fc-match exits 0 even when it resolves nothing useful, so require a
         # non-empty result naming a real font file.
         if MATCH=$(fc-match "$pattern" 2>/dev/null) && [ -n "$MATCH" ]; then

@@ -550,27 +550,55 @@ private:
         return ReadyResult::Ready;
     }
 
+    // RETRIED ON PURPOSE, with a FRESH window each attempt.
+    //
+    // The probe races WindowManager::scanInitialWindows() (src/Manager.cpp),
+    // which runs after _NET_SUPPORTING_WM_CHECK is published and adopts every
+    // non-override-redirect child of root that exists at that instant. Adoption
+    // goes through windowToClient(w, true), which constructs a Client but does
+    // NOT frame it -- framing happens on MapRequest, and a window that was
+    // already mapped when it was adopted will never send one. So a probe
+    // created inside that window is adopted, never reparented, and waiting
+    // longer cannot help: the fixture would report "event loop not pumping"
+    // against a WM whose loop is running perfectly.
+    //
+    // That is the confirmed mechanism behind the rare startup failure recorded
+    // as deferred item 10 (measured at roughly 3-5% of fixture startups here,
+    // and reproduced deterministically by delaying the scan). The scan happens
+    // exactly once, so a second window created after it always gets a real
+    // MapRequest -- hence retry with a new window rather than a longer wait.
     bool proveEventLoopLive(Display* d)
     {
+        constexpr int kAttempts = 3;
+        const int perAttemptMs =
+            m_options.readinessTimeoutMs / kAttempts < 1500
+                ? 1500 : m_options.readinessTimeoutMs / kAttempts;
+
         Window root = DefaultRootWindow(d);
-        Window probe = XCreateSimpleWindow(d, root, 0, 0, 60, 40, 0,
-                                           BlackPixel(d, DefaultScreen(d)),
-                                           WhitePixel(d, DefaultScreen(d)));
-        XMapWindow(d, probe);
-        XSync(d, False);
 
-        const bool reparented = pollUntil([&] {
-            if (m_wm.tryReap()) return false;
-            Window parent = None, wroot = None, *children = nullptr;
-            unsigned int nChildren = 0;
-            if (!XQueryTree(d, probe, &wroot, &parent, &children, &nChildren)) return false;
-            if (children) XFree(children);
-            return parent != None && parent != root;
-        }, m_options.readinessTimeoutMs);
+        for (int attempt = 0; attempt < kAttempts; ++attempt) {
+            Window probe = XCreateSimpleWindow(d, root, 0, 0, 60, 40, 0,
+                                               BlackPixel(d, DefaultScreen(d)),
+                                               WhitePixel(d, DefaultScreen(d)));
+            XMapWindow(d, probe);
+            XSync(d, False);
 
-        XDestroyWindow(d, probe);
-        XSync(d, False);
-        return reparented;
+            const bool reparented = pollUntil([&] {
+                if (m_wm.tryReap()) return false;
+                Window parent = None, wroot = None, *children = nullptr;
+                unsigned int nChildren = 0;
+                if (!XQueryTree(d, probe, &wroot, &parent, &children, &nChildren)) return false;
+                if (children) XFree(children);
+                return parent != None && parent != root;
+            }, perAttemptMs);
+
+            XDestroyWindow(d, probe);
+            XSync(d, False);
+
+            if (reparented) return true;
+            if (m_wm.reaped()) return false;   // no retry can revive a dead WM
+        }
+        return false;
     }
 
     // --- child-side helpers (post-fork, pre-exec) --------------------------

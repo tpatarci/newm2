@@ -10,6 +10,8 @@
 //   [wm_noshape]          -- the WM runs correctly with Shape forced unavailable
 //   [shape_invariant]     -- source-level guard: one and only one Shape call site
 //   [xft_norender_spike]  -- 08-RESEARCH Open Question 1, answered in-tree
+//   [wm_norender]         -- the WM runs correctly with XRender absent, and on
+//                            every rung of the tab-font degradation ladder
 //
 // Why an environment variable rather than a server without the extension: the X
 // server refuses to turn SHAPE off, answering `Extension "SHAPE" can not be
@@ -70,6 +72,56 @@ WmFixtureOptions noRenderServer()
     WmFixtureOptions o;
     o.xvfbArgs = {"-extension", "RENDER"};
     return o;
+}
+
+// --- the XDIS-04 transcript vocabulary -------------------------------------
+//
+// The XRender capability line, and the four rungs of the tab-font ladder. Rung
+// 1 is silent by design (it is the healthy path), so it has no marker here --
+// its signature is the ABSENCE of every string below.
+constexpr const char* kNoRenderLine   = "no xrender extension";
+constexpr const char* kRenderLine     = "XRender extension available";
+constexpr const char* kRung2Line      = "preferred rotated tab font unavailable";
+constexpr const char* kRung3Line      = "no rotated tab font on this display";
+constexpr const char* kRung4Line      = "no usable tab font on this display";
+// Worded distinctly from the rung lines, so a transcript proves the lever was
+// honoured rather than the host merely happening to lack a font.
+constexpr const char* kForcedRotatedOff = "rotated tab font forced off";
+constexpr const char* kForcedFontOff    = "tab font forced off";
+
+// True when the transcript names any rung of the ladder, i.e. when the WM did
+// NOT get the rotated tab font it prefers.
+bool namesAnyLadderRung(const std::string& err)
+{
+    return err.find(kRung2Line) != std::string::npos ||
+           err.find(kRung3Line) != std::string::npos ||
+           err.find(kRung4Line) != std::string::npos;
+}
+
+WmFixtureOptions forcedNoRotatedTabFont()
+{
+    WmFixtureOptions o;
+    o.childEnv["WM2_FORCE_NO_ROTATED_TAB_FONT"] = "1";
+    return o;
+}
+
+WmFixtureOptions forcedNoTabFont()
+{
+    WmFixtureOptions o;
+    o.childEnv["WM2_FORCE_NO_TAB_FONT"] = "1";
+    return o;
+}
+
+// A frame that exists but has collapsed to nothing would satisfy "the client
+// was reparented" while being useless to a user, so the frame's own rectangle
+// is read from the server rather than inferred.
+bool frameSize(Display* d, Window frame, unsigned int& w, unsigned int& h)
+{
+    XWindowAttributes attrs;
+    if (!XGetWindowAttributes(d, frame, &attrs)) return false;
+    w = static_cast<unsigned int>(attrs.width);
+    h = static_cast<unsigned int>(attrs.height);
+    return true;
 }
 
 // Map a normal (non-transient, non-dock) client and wait until the WM reparents
@@ -526,4 +578,237 @@ TEST_CASE("Spike: a rotated Xft font loads, measures and draws with XRender disa
     XSetErrorHandler(previous);
 
     REQUIRE(fixture.wmAlive());
+}
+
+// ===========================================================================
+// XDIS-04 end to end: the WM itself on a RENDER-less server, and on every rung
+// of the tab-font ladder.
+//
+// Read the split before reading the cases. The spike above measured that a
+// RENDER-less server does NOT cost the rotated font, so the RENDER-less runs
+// legitimately take rung 1 and produce no ladder warning at all -- and the
+// cases below assert exactly that rather than looking for a degradation that
+// does not happen. The discriminator that keeps them from being false greens
+// is therefore the WM's own XRender capability line, which the control case
+// pins in the opposite direction.
+//
+// Rungs 3 and 4 are then exercised on their own terms with the two levers,
+// because no server option can make fontconfig fail to resolve a font. Without
+// those two cases the ladder's lower rungs would be untested code claiming to
+// be a fallback -- which is the failure this whole plan exists to remove.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Case 1: the assertion that would have failed before the ladder existed
+// ---------------------------------------------------------------------------
+
+TEST_CASE("On a server without XRender the WM starts, manages a client and frames it",
+          "[wm_norender]")
+{
+    // Reaching this line at all is half the assertion: WmFixture's constructor
+    // throws unless the WM published _NET_SUPPORTING_WM_CHECK *and* proved its
+    // event loop is pumping. A WM that took the old exit path on the font load
+    // would never get that far.
+    WmFixture fixture(noRenderServer());
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d.get(), client);
+    INFO("wm stderr: " << fixture.wmStderr());
+    REQUIRE(client != None);
+    REQUIRE(frame != None);
+
+    Atom clientList = XInternAtom(d.get(), "_NET_CLIENT_LIST", False);
+    REQUIRE(clientList != None);
+
+    std::vector<Window> managed;
+    REQUIRE(WmFixture::pollUntil([&] {
+        return readWindowList(d.get(), DefaultRootWindow(d.get()), clientList, managed) &&
+               listContains(managed, client);
+    }, 8000));
+
+    // A labelless tab would be acceptable; a collapsed frame would not.
+    unsigned int fw = 0, fh = 0;
+    REQUIRE(frameSize(d.get(), frame, fw, fh));
+    INFO("frame " << frame << " is " << fw << "x" << fh);
+    REQUIRE(fw > 0);
+    REQUIRE(fh > 0);
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+
+    XDestroyWindow(d.get(), client);
+    XSync(d.get(), False);
+}
+
+// ---------------------------------------------------------------------------
+// Case 2: the run really was RENDER-less, and it cost nothing
+//
+// Without the first assertion every [wm_norender] case could pass green on a
+// fully RENDER-capable server. The second is the spike's finding restated as a
+// property of the shipped binary: no rung of the ladder is entered, so the
+// sideways tab is intact.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A RENDER-less server is recorded in the transcript and costs no font rung",
+          "[wm_norender]")
+{
+    WmFixture fixture(noRenderServer());
+
+    REQUIRE(WmFixture::pollUntil([&] {
+        return fixture.wmStderr().find(kNoRenderLine) != std::string::npos;
+    }, 5000));
+
+    const std::string err = fixture.wmStderr();
+    INFO("wm stderr: " << err);
+
+    REQUIRE(err.find(kRenderLine) == std::string::npos);
+
+    // The measured answer to 08-RESEARCH Open Question 1, asserted rather than
+    // asserted-about: libXft's core path produces the rotated face, so the WM
+    // stays on rung 1 and says nothing about its tab font. If this ever goes
+    // red, the ladder started carrying real weight on a RENDER-less server and
+    // the release notes need to say so.
+    REQUIRE_FALSE(namesAnyLadderRung(err));
+
+    REQUIRE(fixture.wmAlive());
+}
+
+// ---------------------------------------------------------------------------
+// Case 3: a degraded server must not turn shutdown into a crash
+// ---------------------------------------------------------------------------
+
+TEST_CASE("On a server without XRender SIGTERM still shuts the WM down cleanly",
+          "[wm_norender]")
+{
+    WmFixture fixture(noRenderServer());
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    Window client = None;
+    REQUIRE(mapClientAndAwaitFrame(d.get(), client) != None);
+
+    REQUIRE(fixture.terminateWmCleanly());
+
+    // Explicitly NOT the exit path a font failure used to take, NOT the ASan
+    // exitcode sentinel, and NOT a signal death.
+    REQUIRE(fixture.wm().exitedNormally());
+    REQUIRE(fixture.wm().exitCode() == 0);
+    REQUIRE(fixture.wm().exitCode() != 1);
+    REQUIRE(fixture.wm().exitCode() != 42);
+    REQUIRE(fixture.wm().termSignal() == 0);
+
+    INFO("wm stderr: " << fixture.wmStderr());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Case 4: the XRender-present control
+//
+// Proves the two cases above discriminate between the two servers rather than
+// asserting something that holds either way.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Without the disable the same WM records XRender as available",
+          "[wm_norender]")
+{
+    WmFixture fixture;          // the fixture's default server keeps RENDER
+
+    REQUIRE(WmFixture::pollUntil([&] {
+        return fixture.wmStderr().find(kRenderLine) != std::string::npos;
+    }, 5000));
+
+    const std::string err = fixture.wmStderr();
+    INFO("wm stderr: " << err);
+
+    REQUIRE(err.find(kNoRenderLine) == std::string::npos);
+    REQUIRE_FALSE(namesAnyLadderRung(err));
+
+    REQUIRE(fixture.wmAlive());
+}
+
+// ---------------------------------------------------------------------------
+// Case 5: rung 3 -- an unrotated face, reached with the lever
+// ---------------------------------------------------------------------------
+
+TEST_CASE("With the rotated tab font unavailable the WM degrades to horizontal labels",
+          "[wm_norender]")
+{
+    WmFixture fixture(forcedNoRotatedTabFont());
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d.get(), client);
+    INFO("wm stderr: " << fixture.wmStderr());
+    REQUIRE(frame != None);
+
+    unsigned int fw = 0, fh = 0;
+    REQUIRE(frameSize(d.get(), frame, fw, fh));
+    REQUIRE(fw > 0);
+    REQUIRE(fh > 0);
+
+    const std::string err = fixture.wmStderr();
+    INFO("wm stderr: " << err);
+
+    // Exactly one rung announced, and it is rung 3.
+    REQUIRE(err.find(kRung3Line) != std::string::npos);
+    REQUIRE(err.find(kRung4Line) == std::string::npos);
+    REQUIRE(err.find(kRung2Line) == std::string::npos);
+    // ...and the transcript says the rung was forced rather than discovered.
+    REQUIRE(err.find(kForcedRotatedOff) != std::string::npos);
+
+    REQUIRE(fixture.terminateWmCleanly());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Case 6: rung 4 -- no font at all
+//
+// The rung the plan's truth statement is really about: frames are still drawn,
+// windows are still manageable, one warning is emitted, and the WM lives.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("With no tab font at all the WM still frames clients and exits cleanly",
+          "[wm_norender]")
+{
+    WmFixture fixture(forcedNoTabFont());
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d.get(), client);
+    INFO("wm stderr: " << fixture.wmStderr());
+    REQUIRE(client != None);
+    REQUIRE(frame != None);
+
+    Atom clientList = XInternAtom(d.get(), "_NET_CLIENT_LIST", False);
+    std::vector<Window> managed;
+    REQUIRE(WmFixture::pollUntil([&] {
+        return readWindowList(d.get(), DefaultRootWindow(d.get()), clientList, managed) &&
+               listContains(managed, client);
+    }, 8000));
+
+    unsigned int fw = 0, fh = 0;
+    REQUIRE(frameSize(d.get(), frame, fw, fh));
+    INFO("frame " << frame << " is " << fw << "x" << fh);
+    REQUIRE(fw > 0);
+    REQUIRE(fh > 0);
+
+    const std::string err = fixture.wmStderr();
+    INFO("wm stderr: " << err);
+
+    REQUIRE(err.find(kRung4Line) != std::string::npos);
+    REQUIRE(err.find(kRung3Line) == std::string::npos);
+    REQUIRE(err.find(kRung2Line) == std::string::npos);
+    REQUIRE(err.find(kForcedFontOff) != std::string::npos);
+
+    REQUIRE(fixture.terminateWmCleanly());
+    REQUIRE(fixture.wm().exitCode() == 0);
+    REQUIRE(fixture.asanReports().empty());
 }
