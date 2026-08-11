@@ -200,9 +200,9 @@ Plans:
 
 ### Phase 8: Xrandr + VNC Compatibility + Focus/Rules
 
-**Goal**: The WM works reliably across VNC, XRDP, and X2Go with graceful extension fallbacks, and users get fine-grained control over focus behavior and per-window rules.
+**Goal**: The WM works reliably across VNC, XRDP, and X2Go with graceful extension fallbacks, users get fine-grained control over focus behavior and per-window rules, and the compiled binary is proven through repeatable build, sanitizer, Xvfb/Xephyr, and runtime smoke gates.
 **Depends on**: Phase 7
-**Requirements**: XDIS-01, XDIS-02, XDIS-03, XDIS-04, XDIS-05, FOCUS-01, FOCUS-02, RULES-01, RULES-02
+**Requirements**: XDIS-01, XDIS-02, XDIS-03, XDIS-04, XDIS-05, FOCUS-01, FOCUS-02, RULES-01, RULES-02, TEST-05, TEST-06, TEST-07, TEST-08
 **Success Criteria** (what must be TRUE):
 
   1. Display resolution changes via xrandr are handled correctly -- windows reposition within the new screen geometry
@@ -210,14 +210,72 @@ Plans:
   3. Focus stealing prevention works -- new windows do not grab focus unless the user interacted with the launching application within a reasonable time window
   4. Users can set focus policy to click-to-focus, focus-follows-pointer, or auto-raise via the config file
   5. Window rules in the config file can match windows by WM_CLASS or WM_NAME and apply actions like no-decorate, specific position/size, or skip-taskbar
+  6. COMPILED_CODE_BEHAVIOR_CHECKLIST.md gates pass or have explicit accepted exceptions: dependency preflight, Debug/Release builds, full CTest, ASan/UBSan, runtime Xvfb/Xephyr smoke, and release evidence
+  7. Current behavior-scan findings are resolved or explicitly accepted: missing xft/fontconfig build preflight, eventDestroy client lifetime hazard, no-Shape fallback proof, and focus config wiring proof
 
-**Plans**: 3 plans
+**Plans**: 14 plans
+
+> **Plan-count revision (2026-08-11).** The original 3-plan skeleton is superseded. D-09 requires all 13 "Missing Automated Coverage To Add" checklist items to land in this phase, and D-04 makes four build/sanitizer/static-analysis/evidence gates unwaivable. The original 08-01 alone expands into six plans (harness, gates, and three coverage plans plus the evidence bundle). Scope is unchanged -- nothing was dropped or deferred; the same work is sliced into executable 2-4 task units. The three original plan themes map to: 08-01/02/11/12/13 (verification gate), 08-03/04/05/06/14 (Xrandr + remote desktop), 08-07/08/09/10 (focus + rules).
+
+Plans execute as a linear chain: `parallelization` is disabled in `.planning/config.json`, and nearly every plan touches `CMakeLists.txt`, `src/Manager.cpp` or `src/Client.cpp`, so no two plans have disjoint `files_modified`.
 
 Plans:
 
-- [ ] 08-01: TBD
-- [ ] 08-02: TBD
-- [ ] 08-03: TBD
+**Wave 1**
+
+- [ ] 08-01-PLAN.md -- Build unblock (libxft-dev/libfontconfig1-dev, clean build trees), process-level tracer proving the real binary under Xvfb with the eventDestroy use-after-free fixed, preflight script + blocking ctest fixture, XTestDriver (TEST-05, TEST-07)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 08-02-PLAN.md -- Build-all gate (Debug/Release/ASan), two-mechanism static-analysis gate (hash-anchored cppcheck baseline + clang-tidy allowlist), forked-child sanitizer noise fix (TEST-06)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 08-03-PLAN.md -- Shape funnel: 26 raw call sites collapsed into one guarded `combineShape()`, `WM2_FORCE_NO_SHAPE` lever, rectangular-fallback proof + greppable invariant (XDIS-03)
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 08-04-PLAN.md -- Screen-geometry accessor refactor: `screenWidth()`/`screenHeight()` as single source of truth, 16 direct reads rerouted, pre-refactor values pinned by tests (XDIS-01 foundation)
+
+**Wave 5** *(blocked on Wave 4)*
+
+- [ ] 08-05-PLAN.md -- Xrandr wiring: required pkg-config dep, capability query, root StructureNotifyMask, idempotent geometry-change handler with the mandatory Xlib cache refresh, D-25 reflow, proof on a RANDR-less server (XDIS-01, XDIS-02)
+
+**Wave 6** *(blocked on Wave 5)*
+
+- [ ] 08-06-PLAN.md -- XRender-less degradation: rotated-font spike, fatal-to-ladder rewrite in Border, RENDER-less end-to-end proof, XDIS-04 requirement-wording amendment (XDIS-04)
+
+**Wave 7** *(blocked on Wave 6)*
+
+- [ ] 08-07-PLAN.md -- Focus policy wiring: the three dead booleans gated to real runtime behavior, defaults corrected to match shipped behavior, process-level focus tests (FOCUS-02)
+
+**Wave 8** *(blocked on Wave 7)*
+
+- [ ] 08-08-PLAN.md -- Focus stealing prevention: five new atoms advertised, last-user-interaction clock, map-time arbitration with DEMANDS_ATTENTION, `_NET_ACTIVE_WINDOW` arbitration (blocking decision checkpoint -- overturns Phase 6 D-10), configurable off switch (FOCUS-01)
+
+**Wave 9** *(blocked on Wave 8)*
+
+- [ ] 08-09-PLAN.md -- Window rules model + parser: X11-free `Rules.h`/`Rules.cpp`, repeated-key-group `rule-*` config keys, exact/substring AND matching, later-wins fold, display-free unit tests (RULES-01)
+
+**Wave 10** *(blocked on Wave 9)*
+
+- [ ] 08-10-PLAN.md -- Window rule application: `XGetClassHint` read, no-decorate / position+size / skip-taskbar at map time via existing primitives, RULES-02 requirement-wording amendment recording the workspace exclusion (RULES-02)
+
+**Wave 11** *(blocked on Wave 10)*
+
+- [ ] 08-11-PLAN.md -- Coverage items 2, 4, 8, 9: normal-client destroy, hidden-list transfers, all size-hint resize constraints, all gravity modes (TEST-05)
+
+**Wave 12** *(blocked on Wave 11)*
+
+- [ ] 08-12-PLAN.md -- Coverage items 10, 11, 12: EWMH client-message matrix, fullscreen/maximize restore in awkward orderings, malformed client properties (TEST-05)
+
+**Wave 13** *(blocked on Wave 12)*
+
+- [ ] 08-13-PLAN.md -- Coverage items 5, 6, 13: config-to-runtime behavior, the four terminating X11 error paths, 100-window stress under ASan, plus a working `--help` (TEST-05)
+
+**Wave 14** *(blocked on Wave 13)*
+
+- [ ] 08-14-PLAN.md -- Capability-capture script, enforced RSS/idle-CPU budget, real TigerVNC/XRDP/X2Go sessions (blocking human-verify checkpoint), release notes with the single-screen limitation, corrected checklist baseline, committed evidence bundle, final run of all four hard blockers (XDIS-05, TEST-06, TEST-08)
 
 ### Phase 9: Config GUI + IPC
 
@@ -253,5 +311,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 5. Configuration System | 0/3 | Planned | - |
 | 6. EWMH Compliance | 0/3 | Planned | - |
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
-| 8. Xrandr + VNC + Focus/Rules | 0/3 | Not started | - |
+| 8. Xrandr + VNC + Focus/Rules | 0/14 | Planning complete | - |
 | 9. Config GUI + IPC | 0/3 | Not started | - |
