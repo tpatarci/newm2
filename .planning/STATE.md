@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 8
-current_phase_name: Xrandr + VNC Compatibility + Focus/Rules
-status: planning
-stopped_at: Phase 8 context gathered
-last_updated: "2026-08-11T09:06:11.681Z"
+current_phase: 08
+current_phase_name: xrandr-vnc-compatibility-focus-rules
+status: executing
+stopped_at: Completed 08-01-PLAN.md
+last_updated: "2026-08-11T11:39:38.440Z"
 last_activity: 2026-08-11
 last_activity_desc: gathered Phase 8 context across 8 gray areas (32 decisions captured)
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 36
-  completed_plans: 22
+  completed_plans: 23
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** A lightweight, visually distinctive window manager that works well on resource-constrained VPS instances via remote desktop -- simple enough for non-programmers to configure, reliable enough for daily use.
-**Current focus:** Phase 08 — Xrandr + VNC Compatibility + Focus/Rules
+**Current focus:** Phase 08 — xrandr-vnc-compatibility-focus-rules
 
 ## Current Position
 
-Phase: 8 — Xrandr + VNC Compatibility + Focus/Rules
-Plan: 08-01 — Compiled behavior verification gate (not yet planned)
-Status: Context gathered — 08-CONTEXT.md written, ready for planning
-Last activity: 2026-08-11 — gathered Phase 8 context across 8 gray areas (32 decisions captured)
+Phase: 08 (xrandr-vnc-compatibility-focus-rules) — EXECUTING
+Plan: 2 of 14
+Status: Ready to execute
+Last activity: 2026-08-11 — Phase 08 execution started
 
-Progress: 78% (7/9 phases complete)
+Progress: [██████░░░░] 64% (7/9 phases complete)
 
 ## Performance Metrics
 
@@ -73,6 +73,11 @@ Progress: 78% (7/9 phases complete)
 | Phase 07 P03 | 20min | 3 tasks | 7 files |
 | Phase 07 P05 | 20min | 2 tasks | 2 files |
 | Phase 07 P06 | 25min | 3 tasks | 4 files |
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 08 P01 | 103min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -104,6 +109,11 @@ Recent decisions affecting current work:
 - [Phase ?]: 07-06: wm2-born-again CMake target was missing AppCache.cpp/DesktopEntry.cpp/BinaryScanner.cpp source entries -- fixed in Task 1
 - [Phase ?]: 07-06: D-02 wording fix scoped strictly to PROJECT.md/ROADMAP.md's 5 flagged AI-powered occurrences -- AI showcase framing preserved
 - [Phase 8]: COMPILED_CODE_BEHAVIOR_CHECKLIST.md is routed into Phase 8 as the first verification/hardening gate rather than a standalone milestone, because its findings overlap XDIS, FOCUS, remote-display compatibility, and runtime proof requirements
+- [Phase 08]: 08-01: eventDestroy fix cited as SCAN-02 not D-07 -- D-07 already denotes the child-process harness (08-CONTEXT) and Phase 7's Custom-category default
+- [Phase 08]: 08-01: dock-ness read via a 'const Client& dying' alias so the c->isDock() grep guard is a true regression detector
+- [Phase 08]: 08-01: fixture Xvfb needs -noreset plus a retained keepalive connection; the readiness probe's disconnect was resetting the server under the WM (~9% flake)
+- [Phase 08]: 08-01: XTEST tab click uses press -> 200ms -> release, not click(), to avoid racing the WM's move-loop pointer grab
+- [Phase 08]: 08-01: D-33 tag-selection convention established -- Catch2 tags as ctest labels, anchored -L, --no-tests=error on every gate; CMake floor raised to 3.20
 
 ### Pending Todos
 
@@ -128,6 +138,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-11T06:59:48.665Z
-Stopped at: Phase 8 context gathered
-Resume file: .planning/phases/08-xrandr-vnc-compatibility-focus-rules/08-CONTEXT.md
+Last session: 2026-08-11T11:39:38.420Z
+Stopped at: Completed 08-01-PLAN.md
+Resume file: None
