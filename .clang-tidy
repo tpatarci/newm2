@@ -25,9 +25,13 @@
 # its existing findings are resolved. The three families below are the current
 # backlog, with the finding counts measured on this tree:
 #
-#   bugprone-branch-clone            5 findings, all in src/ (Buttons.cpp x4,
-#                                    Client.cpp x1) -- real production code to
+#   bugprone-branch-clone            6 findings, all in src/ (Buttons.cpp x4,
+#                                    Client.cpp x2) -- real production code to
 #                                    review, tracked in deferred-items.md.
+#                                    (08-03 correction: recorded as 5 in 08-02,
+#                                    which missed Client.cpp:1415. Re-measured
+#                                    at that plan's own commit -- 6 is the true
+#                                    pre-existing count, not a regression.)
 #   bugprone-use-after-move          3 findings, all in tests/ that deliberately
 #                                    read a moved-from object to prove the
 #                                    move-only RAII wrappers null themselves

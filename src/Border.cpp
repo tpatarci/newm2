@@ -152,6 +152,31 @@ bool Border::shapeAvailable()
 }
 
 
+// D-11: every rectangle-combining Shape request the window manager issues is
+// funnelled through this one function. The early return below IS the XDIS-03
+// fallback -- on a server that lacks the extension (or with the capability
+// forced off for testing) the WM emits no Shape protocol traffic at all,
+// instead of sending requests the server cannot answer.
+//
+// The rectangle array is taken as pointer-to-const for the callers' benefit;
+// the constness is cast away at the Xlib boundary, which does not annotate it.
+//
+// NOTE: a ctest case (tests/test_wm_fallbacks.cpp, tag [shape_invariant])
+// asserts that this file names the Xlib rectangle-combining entry point exactly
+// ONCE. Keep that literal token out of comment prose here, or the comment
+// defeats the guard it documents (same failure mode recorded in 08-01/08-02).
+void Border::combineShape(Window dest, int destKind, int xOff, int yOff,
+                          const XRectangle *rects, int nRects,
+                          int op, int ordering)
+{
+    if (!windowManager()->hasShapeExtension()) return;
+
+    XShapeCombineRectangles(display(), dest, destKind, xOff, yOff,
+                            const_cast<XRectangle *>(rects), nRects,
+                            op, ordering);
+}
+
+
 void Border::shapeParentRectangular(int w, int h)
 {
     // Simple rectangular frame: full width/height, no fancy shaping
@@ -160,11 +185,11 @@ void Border::shapeParentRectangular(int w, int h)
     frame.y = 0;
     frame.width = w + m_tabWidth + FRAME_WIDTH + 1;
     frame.height = h + FRAME_WIDTH + 1;
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
+    combineShape(m_parent, ShapeBounding,
         0, 0, &frame, 1, ShapeSet, YXBanded);
 
     frame.x++; frame.y++; frame.width -= 2; frame.height -= 2;
-    XShapeCombineRectangles(display(), m_parent, ShapeClip,
+    combineShape(m_parent, ShapeClip,
         0, 0, &frame, 1, ShapeSet, YXBanded);
 }
 
@@ -177,7 +202,7 @@ void Border::shapeTabRectangular(int w, int h)
     tabBounding.y = 0;
     tabBounding.width = m_tabWidth + 2;
     tabBounding.height = m_tabHeight + m_tabWidth + 2;
-    XShapeCombineRectangles(display(), m_tab, ShapeBounding,
+    combineShape(m_tab, ShapeBounding,
         0, 0, &tabBounding, 1, ShapeSet, YXBanded);
 
     XRectangle tabClip;
@@ -185,7 +210,7 @@ void Border::shapeTabRectangular(int w, int h)
     tabClip.y = 1;
     tabClip.width = m_tabWidth;
     tabClip.height = m_tabHeight + m_tabWidth;
-    XShapeCombineRectangles(display(), m_tab, ShapeClip,
+    combineShape(m_tab, ShapeClip,
         0, 0, &tabClip, 1, ShapeSet, YXBanded);
 }
 
@@ -343,14 +368,14 @@ void Border::shapeTransientParent(int w, int h)
     r.x = xIndent() - 1; r.y = yIndent() - 1;
     r.width = w + 2; r.height = h + 2;
 
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding, 0, 0,
-                            &r, 1, ShapeSet, YXBanded);
+    combineShape(m_parent, ShapeBounding, 0, 0,
+                 &r, 1, ShapeSet, YXBanded);
 
     r.x = xIndent(); r.y = yIndent();
     r.width = w; r.height = h;
 
-    XShapeCombineRectangles(display(), m_parent, ShapeClip, 0, 0,
-                            &r, 1, ShapeSet, YXBanded);
+    combineShape(m_parent, ShapeClip, 0, 0,
+                 &r, 1, ShapeSet, YXBanded);
 }
 
 
@@ -373,9 +398,9 @@ void Border::setTransientFrameVisibility(bool visible, int w, int h)
         appendRect(i - 1, h, 1, i + 2);
     }
 
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            visible ? ShapeUnion : ShapeSubtract, YXSorted);
+    combineShape(m_parent, ShapeBounding,
+                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
+                 visible ? ShapeUnion : ShapeSubtract, YXSorted);
 
     rects.clear();
 
@@ -388,9 +413,9 @@ void Border::setTransientFrameVisibility(bool visible, int w, int h)
         appendRect(i - 1, h, 1, i + 1);
     }
 
-    XShapeCombineRectangles(display(), m_parent, ShapeClip,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            visible ? ShapeUnion : ShapeSubtract, YXSorted);
+    combineShape(m_parent, ShapeClip,
+                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
+                 visible ? ShapeUnion : ShapeSubtract, YXSorted);
 }
 
 
@@ -435,18 +460,18 @@ void Border::shapeParent(int w, int h)
         appendRect(i, m_tabHeight + i - 1, m_tabWidth - i + 2, 1);
     }
 
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSet, YXSorted);
+    combineShape(m_parent, ShapeBounding,
+                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
+                 ShapeSet, YXSorted);
 
     rects[mainRect].x++;
     rects[mainRect].y++;
     rects[mainRect].width -= 2;
     rects[mainRect].height -= 2;
 
-    XShapeCombineRectangles(display(), m_parent, ShapeClip,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSet, YXSorted);
+    combineShape(m_parent, ShapeClip,
+                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
+                 ShapeSet, YXSorted);
 }
 
 
@@ -480,9 +505,9 @@ void Border::shapeTab(int w, int h)
         appendRect(i, m_tabHeight + i - 1, m_tabWidth - i + 2, 1);
     }
 
-    XShapeCombineRectangles(display(), m_tab, ShapeBounding,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSet, YXSorted);
+    combineShape(m_tab, ShapeBounding,
+                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
+                 ShapeSet, YXSorted);
 
     rects.clear();
 
@@ -499,9 +524,9 @@ void Border::shapeTab(int w, int h)
         appendRect(i + 1, m_tabHeight + i - 1, m_tabWidth - i, 1);
     }
 
-    XShapeCombineRectangles(display(), m_tab, ShapeClip,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSet, YXSorted);
+    combineShape(m_tab, ShapeClip,
+                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
+                 ShapeSet, YXSorted);
 }
 
 
@@ -535,23 +560,23 @@ void Border::resizeTab(int h)
     r.x = 0; r.y = shorter;
     r.width = m_tabWidth + 2; r.height = longer - shorter;
 
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
-                            0, 0, &r, 1, operation, YXBanded);
-    XShapeCombineRectangles(display(), m_parent, ShapeClip,
-                            0, 0, &r, 1, operation, YXBanded);
-    XShapeCombineRectangles(display(), m_tab, ShapeBounding,
-                            0, 0, &r, 1, operation, YXBanded);
+    combineShape(m_parent, ShapeBounding,
+                 0, 0, &r, 1, operation, YXBanded);
+    combineShape(m_parent, ShapeClip,
+                 0, 0, &r, 1, operation, YXBanded);
+    combineShape(m_tab, ShapeBounding,
+                 0, 0, &r, 1, operation, YXBanded);
 
     r.x++; r.width -= 2;
 
-    XShapeCombineRectangles(display(), m_tab, ShapeClip,
-                            0, 0, &r, 1, operation, YXBanded);
+    combineShape(m_tab, ShapeClip,
+                 0, 0, &r, 1, operation, YXBanded);
 
     if (m_client->isActive()) {
         r.x = m_tabWidth + 1; r.y = shorter;
         r.width = FRAME_WIDTH - 1; r.height = longer - shorter;
-        XShapeCombineRectangles(display(), m_parent, ShapeBounding,
-                                0, 0, &r, 1, ShapeUnion, YXBanded);
+        combineShape(m_parent, ShapeBounding,
+                     0, 0, &r, 1, ShapeUnion, YXBanded);
     }
 
     std::vector<XRectangle> diagRects;
@@ -562,27 +587,27 @@ void Border::resizeTab(int h)
         diagRects.push_back(dr);
     }
 
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
-                            0, 0, diagRects.data(),
-                            static_cast<unsigned int>(diagRects.size()),
-                            ShapeUnion, YXBanded);
-    XShapeCombineRectangles(display(), m_parent, ShapeClip,
-                            0, 0, diagRects.data(),
-                            static_cast<unsigned int>(diagRects.size()),
-                            ShapeUnion, YXBanded);
-    XShapeCombineRectangles(display(), m_tab, ShapeBounding,
-                            0, 0, diagRects.data(),
-                            static_cast<unsigned int>(diagRects.size()),
-                            ShapeUnion, YXBanded);
+    combineShape(m_parent, ShapeBounding,
+                 0, 0, diagRects.data(),
+                 static_cast<unsigned int>(diagRects.size()),
+                 ShapeUnion, YXBanded);
+    combineShape(m_parent, ShapeClip,
+                 0, 0, diagRects.data(),
+                 static_cast<unsigned int>(diagRects.size()),
+                 ShapeUnion, YXBanded);
+    combineShape(m_tab, ShapeBounding,
+                 0, 0, diagRects.data(),
+                 static_cast<unsigned int>(diagRects.size()),
+                 ShapeUnion, YXBanded);
 
     if (diagRects.size() >= 2) {
         for (size_t i = 0; i < diagRects.size() - 1; ++i) {
             diagRects[i].x++; diagRects[i].width -= 2;
         }
-        XShapeCombineRectangles(display(), m_tab, ShapeClip,
-                                0, 0, diagRects.data(),
-                                static_cast<unsigned int>(diagRects.size() - 1),
-                                ShapeUnion, YXBanded);
+        combineShape(m_tab, ShapeClip,
+                     0, 0, diagRects.data(),
+                     static_cast<unsigned int>(diagRects.size() - 1),
+                     ShapeUnion, YXBanded);
     }
 }
 
@@ -598,9 +623,9 @@ void Border::shapeResize()
         rects.push_back(r);
     }
 
-    XShapeCombineRectangles(display(), m_resize, ShapeBounding, 0, 0,
-                            rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSet, YXBanded);
+    combineShape(m_resize, ShapeBounding, 0, 0,
+                 rects.data(), static_cast<unsigned int>(rects.size()),
+                 ShapeSet, YXBanded);
 
     rects.clear();
 
@@ -611,9 +636,9 @@ void Border::shapeResize()
         rects.push_back(r);
     }
 
-    XShapeCombineRectangles(display(), m_resize, ShapeClip, 0, 0,
-                            rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSet, YXBanded);
+    combineShape(m_resize, ShapeClip, 0, 0,
+                 rects.data(), static_cast<unsigned int>(rects.size()),
+                 ShapeSet, YXBanded);
 
     rects.clear();
 
@@ -624,9 +649,9 @@ void Border::shapeResize()
         rects.push_back(r);
     }
 
-    XShapeCombineRectangles(display(), m_resize, ShapeClip, 0, 0,
-                            rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSubtract, YXBanded);
+    combineShape(m_resize, ShapeClip, 0, 0,
+                 rects.data(), static_cast<unsigned int>(rects.size()),
+                 ShapeSubtract, YXBanded);
 
     // Install down-right cursor on resize handle
     windowManager()->installCursorOnWindow(WindowManager::RootCursor::DownRight, m_resize);
@@ -676,9 +701,9 @@ void Border::setFrameVisibility(bool visible, int w, int h)
     rects[finalIdx].width += 1;
     rects[finalIdx].height = h - rects[finalIdx].height + 2;
 
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            visible ? ShapeUnion : ShapeSubtract, YXSorted);
+    combineShape(m_parent, ShapeBounding,
+                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
+                 visible ? ShapeUnion : ShapeSubtract, YXSorted);
     rects.clear();
 
     // Clip rectangles
@@ -699,9 +724,9 @@ void Border::setFrameVisibility(bool visible, int w, int h)
 
     appendRect(m_tabWidth + 2, h, FRAME_WIDTH - 2, FRAME_WIDTH + 1);
 
-    XShapeCombineRectangles(display(), m_parent, ShapeClip,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            visible ? ShapeUnion : ShapeSubtract, YXSorted);
+    combineShape(m_parent, ShapeClip,
+                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
+                 visible ? ShapeUnion : ShapeSubtract, YXSorted);
 
     if (visible && !isFixedSize()) {
         XMapRaised(display(), m_resize);

@@ -39,7 +39,7 @@ documented in that file.
 | Family | Count | Where | Note |
 |---|---|---|---|
 | `cppcoreguidelines-init-variables` | 140 | src/ + tests/ | Overwhelmingly `XGetWindowProperty` out-parameters (`actualType`, `actualFormat`, `nItems`, `bytesAfter`), uninitialised by design because Xlib fills them. Enforcing this would require a project-wide convention change, not a bug fix. |
-| `bugprone-branch-clone` | 5 | `src/Buttons.cpp` x4 (lines 220, 242, 453, 475), `src/Client.cpp` x1 (line 1362) | **The only entries here that may be real defects.** "Repeated branch in conditional chain" in the menu/geometry code. Not investigated in 08-02 (out of scope: this plan builds the gate, it does not fix findings). Worth a look during the focus/rules work that touches `Buttons.cpp`. |
+| `bugprone-branch-clone` | 6 | `src/Buttons.cpp` x4 (lines 220, 242, 453, 475), `src/Client.cpp` x2 (line 1362 "repeated branch in conditional chain", line 1415 "switch has 2 consecutive identical branches" -- the latter was missed by 08-02's count and re-measured at that plan's own commit in 08-03, so 6 is pre-existing, not a regression) | **The only entries here that may be real defects.** "Repeated branch in conditional chain" in the menu/geometry code. Not investigated in 08-02 (out of scope: this plan builds the gate, it does not fix findings). Worth a look during the focus/rules work that touches `Buttons.cpp`. |
 | `bugprone-use-after-move` | 3 | `tests/test_eventloop.cpp` x2, `tests/test_raii.cpp` x1 | Deliberate: the tests read a moved-from object to prove the move-only RAII wrappers null themselves out. Enforcing would require `NOLINT` on intentional test code. |
 
 **Disposition:** deferred. The gate is real today on `bugprone-dangling-handle`

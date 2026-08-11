@@ -72,6 +72,16 @@ private:
     void resizeTab(int);
     void shapeResize();
 
+    // D-11: the one and only entry point through which this class is permitted
+    // to issue a rectangle-combining request to the X Shape extension. Mirrors
+    // the Xlib call's parameter list minus the Display*, and takes the rectangle
+    // array as pointer-to-const so callers may pass const data. Definition in
+    // src/Border.cpp guards on the capability and returns without touching the
+    // connection when it is absent.
+    void combineShape(Window dest, int destKind, int xOff, int yOff,
+                      const XRectangle *rects, int nRects,
+                      int op, int ordering);
+
     Client *m_client;
 
     Window m_parent;
