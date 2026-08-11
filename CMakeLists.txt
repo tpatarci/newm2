@@ -300,6 +300,50 @@ if(BUILD_TESTS)
             PROPERTIES
                 FIXTURES_REQUIRED preflight_ok
         )
+
+        # --- Degraded-capability tests (XDIS-03, TEST-05) ---
+        #
+        # Same shape as test_wm_process above -- own display per fixture
+        # instance, so deliberately NO shared-display binding and NO
+        # `FIXTURES_REQUIRED xvfb_display`.
+        #
+        # Two additions over that target. libXext, because the fallback
+        # assertions ask the SERVER whether a frame carries a bounding shape
+        # mask (a positive protocol-level check, not "nothing crashed"). And a
+        # source-directory definition, because the single-funnel guard reads
+        # src/Border.cpp as data and counts call sites in it.
+        #
+        # This target accumulates further tag groups as later plans in the
+        # phase land their fallback coverage. That is the point of selecting by
+        # per-test label rather than by target name (D-33): one file can carry
+        # several unrelated capability groups without any of the gates
+        # over-selecting.
+        add_executable(test_wm_fallbacks tests/test_wm_fallbacks.cpp)
+        target_link_libraries(test_wm_fallbacks PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+            PkgConfig::XEXT
+        )
+        target_include_directories(test_wm_fallbacks PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/tests
+            ${XFT_INCLUDE_DIRS}
+        )
+
+        target_compile_definitions(test_wm_fallbacks PRIVATE
+            WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
+            WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
+            WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+            WM2_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        )
+
+        # The tests exec the binary, so it must exist before they run.
+        add_dependencies(test_wm_fallbacks wm2-born-again)
+
+        catch_discover_tests(test_wm_fallbacks ADD_TAGS_AS_LABELS
+            PROPERTIES
+                FIXTURES_REQUIRED preflight_ok
+        )
     endif()
 
     # Config parsing unit tests (pure data transformation, no X11 needed)
