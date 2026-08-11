@@ -34,6 +34,15 @@ struct Config {
     bool clickToFocus = false;
     bool raiseOnFocus = true;
     bool autoRaise    = true;
+    // FOCUS-01 (plan 08-08): focus-stealing prevention, ON by default.
+    //
+    // Unlike the three above, this one defaults to its safe value rather than to
+    // the previous behaviour, because it IS the mitigation: a default of false
+    // would ship the feature switched off. The switch exists at all for D-19's
+    // reason -- a user whose important legacy applications set no
+    // _NET_WM_USER_TIME may prefer the old unconditional grant to a correct
+    // refusal, and that is their informed choice to make (threat T-8-OFF).
+    bool focusStealingPrevention = true;
     // Timing (milliseconds)
     int autoRaiseDelay      = 400;
     int pointerStoppedDelay = 80;

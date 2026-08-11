@@ -59,6 +59,13 @@ TEST_CASE("Config defaults match upstream Config.h", "[config]") {
     REQUIRE(cfg.raiseOnFocus == true);
     REQUIRE(cfg.autoRaise == true);
 
+    // FOCUS-01 (plan 08-08): focus-stealing prevention defaults ON. It is an
+    // access-control mitigation, so the safe value is the default one; the
+    // switch exists (D-19) for users whose legacy X clients set no
+    // _NET_WM_USER_TIME and who would rather have the old always-grant
+    // behaviour than a correctly-refused window.
+    REQUIRE(cfg.focusStealingPrevention == true);
+
     // Timing (milliseconds) - 3 settings
     REQUIRE(cfg.autoRaiseDelay == 400);
     REQUIRE(cfg.pointerStoppedDelay == 80);
@@ -737,6 +744,76 @@ TEST_CASE("A CLI enable overrides a config-file disable for every focus boolean"
     REQUIRE(cfg.clickToFocus == true);
     REQUIRE(cfg.raiseOnFocus == true);
     REQUIRE(cfg.autoRaise == true);
+
+    removeTempFile(path);
+}
+
+// ---------------------------------------------------------------------------
+// FOCUS-01 (plan 08-08): the focus-stealing-prevention off switch.
+//
+// All four precedence steps are asserted -- built-in default, config-file key,
+// CLI enable, CLI negation -- because this switch disables a security
+// mitigation. A user who believes they have turned it off and has not, or who
+// believes it is on and it is not, is worse off than one with no switch at all.
+// ---------------------------------------------------------------------------
+
+// Step 2: the config-file key, in both directions.
+TEST_CASE("Config key focus-stealing-prevention parses in both directions",
+          "[config]") {
+    Config cfg;
+    REQUIRE(cfg.focusStealingPrevention == true);   // step 1: the default
+
+    cfg.applyKeyValue("focus-stealing-prevention", "false");
+    REQUIRE(cfg.focusStealingPrevention == false);
+
+    cfg.applyKeyValue("focus-stealing-prevention", "true");
+    REQUIRE(cfg.focusStealingPrevention == true);
+
+    // The same 0/1 spelling the other booleans accept.
+    cfg.applyKeyValue("focus-stealing-prevention", "0");
+    REQUIRE(cfg.focusStealingPrevention == false);
+
+    cfg.applyKeyValue("focus-stealing-prevention", "1");
+    REQUIRE(cfg.focusStealingPrevention == true);
+}
+
+// Step 3/4: the CLI pair. The enable case forces the value OFF first, so it
+// cannot pass vacuously against a default that is already true.
+TEST_CASE("CLI --no-focus-stealing-prevention disables the mitigation",
+          "[config][cli]") {
+    Config cfg;
+    REQUIRE(cfg.focusStealingPrevention == true);
+    char* argv[] = { const_cast<char*>("wm2"),
+                     const_cast<char*>("--no-focus-stealing-prevention"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.focusStealingPrevention == false);
+}
+
+TEST_CASE("CLI --focus-stealing-prevention enables the mitigation",
+          "[config][cli]") {
+    Config cfg;
+    cfg.focusStealingPrevention = false;
+    REQUIRE(cfg.focusStealingPrevention == false);
+    char* argv[] = { const_cast<char*>("wm2"),
+                     const_cast<char*>("--focus-stealing-prevention"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.focusStealingPrevention == true);
+}
+
+// The whole chain, in the direction that actually matters for a mitigation:
+// a config file that turned it off, overridden back on from the command line.
+TEST_CASE("A CLI enable overrides a config-file disable of focus-stealing prevention",
+          "[config][cli]") {
+    std::string path = writeTempConfig("focus-stealing-prevention = false\n");
+
+    Config cfg;
+    cfg.applyFile(path);
+    REQUIRE(cfg.focusStealingPrevention == false);   // disagrees with the default
+
+    char* argv[] = { const_cast<char*>("wm2"),
+                     const_cast<char*>("--focus-stealing-prevention"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.focusStealingPrevention == true);
 
     removeTempFile(path);
 }

@@ -199,16 +199,14 @@ Window pumpedActiveWindow(Display* d)
 // Map a normal client at an exact geometry and wait until the WM has both
 // reparented it into a frame AND published it in _NET_CLIENT_LIST. The second
 // half keeps later reads from racing the rest of Client::manage().
-Window mapClientAndAwaitFrame(Display* d, int x, int y, int w, int h, Window& clientOut)
+// The waiting half of mapClientAndAwaitFrame, split out so the FOCUS-01 cases
+// below can set properties on a window BETWEEN creating it and mapping it --
+// which is the only correct order for _NET_WM_USER_TIME, since the WM reads it
+// during Client::manage() and a property written after the map request would
+// race the read it is supposed to govern.
+Window awaitFrameFor(Display* d, Window win)
 {
     Window root = DefaultRootWindow(d);
-    Window win = XCreateSimpleWindow(d, root, x, y,
-                                     static_cast<unsigned>(w), static_cast<unsigned>(h), 0,
-                                     BlackPixel(d, DefaultScreen(d)),
-                                     WhitePixel(d, DefaultScreen(d)));
-    XMapWindow(d, win);
-    XSync(d, False);
-    clientOut = win;
 
     Window frame = None;
     const bool framed = WmFixture::pollUntil([&] {
@@ -244,6 +242,20 @@ Window mapClientAndAwaitFrame(Display* d, int x, int y, int w, int h, Window& cl
     }, 8000);
 
     return frame;
+}
+
+Window mapClientAndAwaitFrame(Display* d, int x, int y, int w, int h, Window& clientOut)
+{
+    Window root = DefaultRootWindow(d);
+    Window win = XCreateSimpleWindow(d, root, x, y,
+                                     static_cast<unsigned>(w), static_cast<unsigned>(h), 0,
+                                     BlackPixel(d, DefaultScreen(d)),
+                                     WhitePixel(d, DefaultScreen(d)));
+    XMapWindow(d, win);
+    XSync(d, False);
+    clientOut = win;
+
+    return awaitFrameFor(d, win);
 }
 
 bool contains(const Rect& r, int x, int y)
@@ -321,6 +333,155 @@ bool buildOverlappingPair(Display* d, OverlappingPair& out)
 void waitPastFocusDelays()
 {
     std::this_thread::sleep_for(std::chrono::milliseconds(kNonEventWaitMs));
+}
+
+// ===========================================================================
+// FOCUS-01 (plan 08-08) helpers: focus-stealing prevention
+// ===========================================================================
+
+// A timestamp from the SERVER's clock, obtained the same way
+// WindowManager::timestamp() obtains one: append zero bytes to a property and
+// read the time off the resulting PropertyNotify. The tests cannot invent
+// timestamps, because "stale" and "fresh" are only meaningful relative to the
+// same clock the WM is comparing against.
+Time serverTime(Display* d)
+{
+    XSetWindowAttributes attr;
+    attr.override_redirect = True;
+    Window w = XCreateWindow(d, DefaultRootWindow(d), -50, -50, 1, 1, 0,
+                             CopyFromParent, InputOutput, CopyFromParent,
+                             CWOverrideRedirect, &attr);
+    XSelectInput(d, w, PropertyChangeMask);
+
+    Atom probe = XInternAtom(d, "_WM2TEST_TIME_PROBE", False);
+    XChangeProperty(d, w, probe, XA_STRING, 8, PropModeAppend, nullptr, 0);
+
+    XEvent ev;
+    XWindowEvent(d, w, PropertyChangeMask, &ev);
+    const Time t = ev.xproperty.time;
+
+    XDestroyWindow(d, w);
+    XSync(d, False);
+    return t;
+}
+
+void setUserTimeProp(Display* d, Window w, Time t)
+{
+    static Atom a = None;
+    if (a == None) a = XInternAtom(d, "_NET_WM_USER_TIME", False);
+    unsigned long v = static_cast<unsigned long>(t);
+    XChangeProperty(d, w, a, XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&v), 1);
+}
+
+void setUserTimeWindowProp(Display* d, Window w, Window proxy)
+{
+    static Atom a = None;
+    if (a == None) a = XInternAtom(d, "_NET_WM_USER_TIME_WINDOW", False);
+    unsigned long v = static_cast<unsigned long>(proxy);
+    XChangeProperty(d, w, a, XA_WINDOW, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&v), 1);
+}
+
+// True when `w` currently advertises _NET_WM_STATE_DEMANDS_ATTENTION. This is
+// the observable half of "the refusal was not silent": a refused window must be
+// discoverable as wanting the user, not merely absent from the focus.
+bool hasDemandsAttention(Display* d, Window w)
+{
+    static Atom stateAtom = None, demands = None;
+    if (stateAtom == None) stateAtom = XInternAtom(d, "_NET_WM_STATE", False);
+    if (demands == None) demands = XInternAtom(d, "_NET_WM_STATE_DEMANDS_ATTENTION", False);
+
+    Atom actualType = None;
+    int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0;
+    unsigned char* raw = nullptr;
+    if (XGetWindowProperty(d, w, stateAtom, 0, 64, False, XA_ATOM,
+                           &actualType, &actualFormat, &nItems, &bytesAfter,
+                           &raw) != Success) {
+        return false;
+    }
+    bool found = false;
+    if (raw && actualType == XA_ATOM && actualFormat == 32) {
+        Atom* vals = reinterpret_cast<Atom*>(raw);
+        for (unsigned long i = 0; i < nItems; ++i) if (vals[i] == demands) found = true;
+    }
+    if (raw) XFree(raw);
+    return found;
+}
+
+// The ICCCM half of the same signal. Checked alongside the EWMH state because
+// they are set and cleared together and a implementation that published one
+// without the other would leave half the desktop unable to see the hint.
+bool hasUrgencyHint(Display* d, Window w)
+{
+    XWMHints* h = XGetWMHints(d, w);
+    if (!h) return false;
+    const bool urgent = (h->flags & XUrgencyHint) != 0;
+    XFree(h);
+    return urgent;
+}
+
+// Advance the WM's last-user-interaction clock with a REAL button press, and
+// return a server timestamp taken afterwards.
+//
+// Button2 on the root window is chosen deliberately: WindowManager::eventButton
+// feeds the clock at its very top, before dispatch, and Button2 is the one root
+// button with nothing bound to it (Button1 opens the root menu and takes a modal
+// pointer grab; Button3 circulates). So this advances the clock and perturbs
+// nothing else. It must be called while the pointer is parked on root.
+Time clickRootAndReadClock(Display* d, XTestDriver& driver)
+{
+    driver.click(Button2);
+    settleWm(d);
+    return serverTime(d);
+}
+
+struct UserTime {
+    enum class Mode { Absent, OnToplevel, OnProxy };
+    Mode mode = Mode::Absent;
+    Time value = 0;
+};
+
+// Create a client, publish its user-time the way a real application would
+// (BEFORE mapping), map it, and wait for the WM to frame it.
+//
+// A refused window is still mapped, still framed and still fully managed -- that
+// is what "refusal" means here, per the plan: mapped in the background with a
+// hint, never "not shown". So this helper is correct for the granted and the
+// refused case alike, and a failure to frame is a real failure either way.
+Window mapClientWithUserTime(Display* d, int x, int y, int w, int h,
+                             const UserTime& ut, Window& clientOut,
+                             Window* proxyOut = nullptr)
+{
+    Window root = DefaultRootWindow(d);
+    Window win = XCreateSimpleWindow(d, root, x, y,
+                                     static_cast<unsigned>(w), static_cast<unsigned>(h), 0,
+                                     BlackPixel(d, DefaultScreen(d)),
+                                     WhitePixel(d, DefaultScreen(d)));
+    clientOut = win;
+
+    if (ut.mode == UserTime::Mode::OnToplevel) {
+        setUserTimeProp(d, win, ut.value);
+    } else if (ut.mode == UserTime::Mode::OnProxy) {
+        // A real client's user-time window is a never-mapped window it owns, so
+        // it can rewrite the timestamp without generating PropertyNotify traffic
+        // on the toplevel. Override-redirect and never mapped: the WM sees a
+        // CreateNotify and nothing else, so it is never managed.
+        XSetWindowAttributes attr;
+        attr.override_redirect = True;
+        Window proxy = XCreateWindow(d, root, -60, -60, 1, 1, 0,
+                                     CopyFromParent, InputOutput, CopyFromParent,
+                                     CWOverrideRedirect, &attr);
+        setUserTimeProp(d, proxy, ut.value);
+        setUserTimeWindowProp(d, win, proxy);
+        if (proxyOut) *proxyOut = proxy;
+    }
+
+    XMapWindow(d, win);
+    XSync(d, False);
+
+    return awaitFrameFor(d, win);
 }
 
 } // namespace
@@ -742,4 +903,336 @@ TEST_CASE("With auto-raise off the WM burns no CPU while focus tracking is live"
     REQUIRE(fixture.asanReports().empty());
     XDestroyWindow(d.get(), client);
     XSync(d.get(), False);
+}
+
+// ===========================================================================
+// FOCUS-01 (plan 08-08): map-time focus arbitration
+//
+// Every case below establishes the WM's last-user-interaction clock with a REAL
+// button press first, then maps a window whose _NET_WM_USER_TIME is either newer
+// or older than that press. "Stale" and "fresh" have no meaning except relative
+// to that clock, which is why none of these cases invent a timestamp.
+//
+// The pointer is parked on root throughout, clear of every window mapped, so
+// nothing here is focused by a pointer crossing. That matters: with the default
+// pointer-focus policy a crossing would grant the focus these cases are trying
+// to prove was withheld.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Behaviour 8: a fresh user-time is focused, and does NOT demand attention
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A window mapped with a user-time newer than the last interaction is focused",
+          "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({}));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    const Time now = clickRootAndReadClock(d.get(), driver);
+
+    Window client = None;
+    Window frame = mapClientWithUserTime(d.get(), 200, 160, 300, 220,
+                                         { UserTime::Mode::OnToplevel, now }, client);
+    REQUIRE(client != None);
+    REQUIRE(frame != None);
+
+    const bool focused = WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == client;
+    }, 6000);
+    INFO("active window: " << pumpedActiveWindow(d.get()) << " expected " << client);
+    REQUIRE(focused);
+
+    // The other half: a granted window must not also be flagged. A refusal that
+    // fired on every window would satisfy the attention assertions below while
+    // making the feature useless.
+    settleWm(d.get());
+    CHECK_FALSE(hasDemandsAttention(d.get(), client));
+    CHECK_FALSE(hasUrgencyHint(d.get(), client));
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behaviour 9: a stale user-time is refused, visibly, and does not steal focus
+//
+// This is the case FOCUS-01 exists for. All three halves are asserted together:
+// the new window is not focused, the window that HAD focus still has it, and the
+// refusal is advertised. Asserting only the first would pass on a WM that had
+// simply stopped focusing anything.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A window mapped with a stale user-time is refused focus and demands attention",
+          "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({}));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    const Time now = clickRootAndReadClock(d.get(), driver);
+
+    // The incumbent: mapped with a fresh timestamp, so it legitimately holds the
+    // focus the stale window will try to take.
+    Window incumbent = None;
+    REQUIRE(mapClientWithUserTime(d.get(), 120, 120, 260, 200,
+                                  { UserTime::Mode::OnToplevel, now }, incumbent) != None);
+    REQUIRE(WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == incumbent;
+    }, 6000));
+
+    // Older than the button press above: a background application popping a
+    // window off a user action that happened long ago.
+    const Time stale = now / 2;
+    REQUIRE(stale > 0);
+
+    Window thief = None;
+    REQUIRE(mapClientWithUserTime(d.get(), 420, 300, 260, 200,
+                                  { UserTime::Mode::OnToplevel, stale }, thief) != None);
+
+    // A non-event assertion: it must be settled, repeatedly and SPACED, or it
+    // reads the value from before the map (deferred item 9).
+    settleWm(d.get());
+
+    INFO("stale user-time " << stale << " vs interaction clock ~" << now);
+    CHECK(activeWindow(d.get()) != thief);
+    CHECK(activeWindow(d.get()) == incumbent);
+
+    // Not silent. This is the difference between prevention and a black hole.
+    CHECK(hasDemandsAttention(d.get(), thief));
+    CHECK(hasUrgencyHint(d.get(), thief));
+
+    // And the incumbent was not collaterally flagged.
+    CHECK_FALSE(hasDemandsAttention(d.get(), incumbent));
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behaviour 10: no user-time property at all -> focused (D-19, legacy clients)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A window mapped with no user-time property is focused", "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({}));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    clickRootAndReadClock(d.get(), driver);
+
+    // A plain X client of the kind that predates the EWMH entirely: it publishes
+    // no timestamp, so the WM has no evidence against it and must not invent any.
+    Window client = None;
+    REQUIRE(mapClientWithUserTime(d.get(), 200, 160, 300, 220,
+                                  { UserTime::Mode::Absent, 0 }, client) != None);
+
+    const bool focused = WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == client;
+    }, 6000);
+    REQUIRE(focused);
+    CHECK_FALSE(hasDemandsAttention(d.get(), client));
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behaviour 11: a user-time of exactly zero -> not focused
+//
+// Zero is not "very old", it is the spec's explicit "do not focus me on map".
+// A client that maps a window it does not want raised into the user's way says
+// so this way, and the WM must honour it rather than treating it as a stale
+// timestamp that happens to compare small.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A window mapped with a user-time of exactly zero is not focused", "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({}));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    const Time now = clickRootAndReadClock(d.get(), driver);
+
+    Window incumbent = None;
+    REQUIRE(mapClientWithUserTime(d.get(), 120, 120, 260, 200,
+                                  { UserTime::Mode::OnToplevel, now }, incumbent) != None);
+    REQUIRE(WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == incumbent;
+    }, 6000));
+
+    Window quiet = None;
+    REQUIRE(mapClientWithUserTime(d.get(), 420, 300, 260, 200,
+                                  { UserTime::Mode::OnToplevel, 0 }, quiet) != None);
+
+    settleWm(d.get());
+
+    CHECK(activeWindow(d.get()) != quiet);
+    CHECK(activeWindow(d.get()) == incumbent);
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behaviour 12: the user-time WINDOW proxy is consulted
+//
+// The toplevel here carries NO _NET_WM_USER_TIME of its own. If the WM read only
+// the toplevel it would see "absent" and grant focus, which is exactly the
+// bypass this case pins shut: a client that uses the proxy mechanism must not be
+// exempt from arbitration.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A stale user-time on the user-time-window proxy is arbitrated", "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({}));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    const Time now = clickRootAndReadClock(d.get(), driver);
+
+    Window incumbent = None;
+    REQUIRE(mapClientWithUserTime(d.get(), 120, 120, 260, 200,
+                                  { UserTime::Mode::OnToplevel, now }, incumbent) != None);
+    REQUIRE(WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == incumbent;
+    }, 6000));
+
+    const Time stale = now / 2;
+    REQUIRE(stale > 0);
+
+    Window proxied = None;
+    Window proxy = None;
+    REQUIRE(mapClientWithUserTime(d.get(), 420, 300, 260, 200,
+                                  { UserTime::Mode::OnProxy, stale }, proxied, &proxy) != None);
+    REQUIRE(proxy != None);
+
+    settleWm(d.get());
+
+    INFO("proxy window " << proxy << " carries user-time " << stale);
+    CHECK(activeWindow(d.get()) != proxied);
+    CHECK(activeWindow(d.get()) == incumbent);
+    CHECK(hasDemandsAttention(d.get(), proxied));
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behaviour 13: the off switch genuinely switches it off
+//
+// Both windows that behaviours 9 and 11 proved are refused are mapped here under
+// --no-focus-stealing-prevention, and each must take the focus in turn. If this
+// case passes while 9 and 11 also pass, the switch controls the feature rather
+// than merely existing.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("With focus-stealing prevention off a stale window is focused anyway",
+          "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({ "--no-focus-stealing-prevention" }));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    const Time now = clickRootAndReadClock(d.get(), driver);
+    const Time stale = now / 2;
+    REQUIRE(stale > 0);
+
+    // Refused in behaviour 9 -- granted here.
+    Window staleWin = None;
+    REQUIRE(mapClientWithUserTime(d.get(), 120, 120, 260, 200,
+                                  { UserTime::Mode::OnToplevel, stale }, staleWin) != None);
+    REQUIRE(WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == staleWin;
+    }, 6000));
+    CHECK_FALSE(hasDemandsAttention(d.get(), staleWin));
+
+    // Refused in behaviour 11 -- granted here.
+    Window zeroWin = None;
+    REQUIRE(mapClientWithUserTime(d.get(), 420, 300, 260, 200,
+                                  { UserTime::Mode::OnToplevel, 0 }, zeroWin) != None);
+    REQUIRE(WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == zeroWin;
+    }, 6000));
+    CHECK_FALSE(hasDemandsAttention(d.get(), zeroWin));
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behaviour 14: activating a refused window clears the attention state
+//
+// The spec is explicit that the WM should unset the state once the window has
+// had the attention it asked for. A hint that never clears is worse than none:
+// it degrades into permanent decoration the user learns to ignore.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Activating a refused window clears its demands-attention state", "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({}));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    const Time now = clickRootAndReadClock(d.get(), driver);
+    const Time stale = now / 2;
+    REQUIRE(stale > 0);
+
+    Window refused = None;
+    REQUIRE(mapClientWithUserTime(d.get(), 200, 160, 320, 240,
+                                  { UserTime::Mode::OnToplevel, stale }, refused) != None);
+
+    settleWm(d.get());
+    REQUIRE(hasDemandsAttention(d.get(), refused));
+    REQUIRE(hasUrgencyHint(d.get(), refused));
+
+    // Now the user gives it the attention it asked for. A Button1 press inside
+    // the client area is not a border window, so Client::eventButton falls
+    // through to activate() -- the real user-activation path, driven through
+    // XTEST because the WM refuses send_event on this route.
+    Rect r{};
+    REQUIRE(serverRect(d.get(), refused, r));
+    driver.moveTo(r.x + r.w / 2, r.y + r.h / 2);
+    driver.click(Button1);
+
+    const bool focused = WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == refused;
+    }, 6000);
+    REQUIRE(focused);
+
+    settleWm(d.get());
+    CHECK_FALSE(hasDemandsAttention(d.get(), refused));
+    CHECK_FALSE(hasUrgencyHint(d.get(), refused));
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
 }
