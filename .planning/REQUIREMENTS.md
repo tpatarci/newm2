@@ -91,6 +91,10 @@
 - [x] **TEST-02**: Catch2 test framework for unit and integration tests
 - [x] **TEST-03**: Core WM operations tested: window map, move, resize, hide/unhide, delete
 - [x] **TEST-04**: CI-ready (tests pass with cmake + ctest)
+- [ ] **TEST-05**: Process-level integration tests launch the compiled `wm2-born-again` binary under Xvfb/Xephyr, drive real X11 clients, and verify root/client ICCCM + EWMH properties after create, map, unmap, remap, hide/unhide, fullscreen, maximize, and destroy
+- [ ] **TEST-06**: Release signoff requires Debug, Release, and ASan/UBSan builds plus full `ctest --output-on-failure`; sanitizer findings block completion
+- [ ] **TEST-07**: Environment preflight verifies pkg-config dependencies (`x11`, `xext`, `xft`, `fontconfig`), X11 tools, Xvfb/Xephyr availability, and fontconfig fallback resolution before behavioral claims are accepted
+- [ ] **TEST-08**: Runtime smoke evidence is captured for nested/headless X11 and supported remote desktop targets, including `xprop -root`, `xwininfo -root -tree`, interaction checklist results, and accepted deviations
 
 ## v2 Requirements
 
@@ -187,13 +191,17 @@
 | TEST-02 | Phase 1 | Complete |
 | TEST-03 | Phase 3 | Complete |
 | TEST-04 | Phase 1 | Complete |
+| TEST-05 | Phase 8 | Pending |
+| TEST-06 | Phase 8 | Pending |
+| TEST-07 | Phase 8 | Pending |
+| TEST-08 | Phase 8 | Pending |
 
 **Coverage:**
 
-- v1 requirements: 49 total
-- Mapped to phases: 49
+- v1 requirements: 53 total
+- Mapped to phases: 53
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-05-06*
-*Last updated: 2026-05-06 after initial definition*
+*Last updated: 2026-07-08 after compiled behavior checklist insertion*
