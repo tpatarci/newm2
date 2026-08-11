@@ -82,3 +82,42 @@ out of scope for this plan, which builds gates rather than fixing findings.
 
 **Disposition:** deferred. `build-all.sh` records warnings without failing on
 them, so this is visible in `build/release/build.log` rather than silent.
+
+## 5. Bare `ctest --test-dir build/asan` is red (PRE-EXISTING); the gate is green
+
+**Found during:** 08-02 Task 3, running the plan's verification commands.
+
+`ctest --test-dir build/asan --output-on-failure --no-tests=error` fails 3 xft
+tests (#49 shaped-window text, #50 UTF-8 rendering, #51 rotated font):
+
+```
+==...==ERROR: LeakSanitizer: detected memory leaks
+SUMMARY: AddressSanitizer: 288 byte(s) leaked in 2 allocation(s).
+```
+
+**Cause:** the fontconfig process-lifetime cache leak that `tests/lsan.supp`
+exists to suppress. 08-01 wired those suppressions into the *forked WM child*
+only (`WmFixture::sanitizerEnv`), never into the ASan-instrumented Catch2 test
+binaries themselves. Nothing had surfaced it because 08-01 only ever ran the
+asan tree with `-L '^wm_process$'`, and those tests do not touch Xft directly.
+
+Confirmed to be the whole story: re-running the same test with
+`LSAN_OPTIONS=suppressions=tests/lsan.supp:fast_unwind_on_malloc=0` passes.
+The 288 bytes / 2 allocations match the `libfontconfig` suppression that
+`build-all.sh` reports as matched on every asan run.
+
+**Pre-existing:** yes. Independent of the 08-02 Task 3 `_exit()` change, which
+touches only `spawn()`, `spawnArgv()` and `launchApp()`.
+
+**Why not fixed in 08-02:** the fix is to attach `LSAN_OPTIONS` to the test
+binaries, which means either 12 `catch_discover_tests(... PROPERTIES ...)`
+edits in `CMakeLists.txt` (5 of which already carry other properties) or a
+`__lsan_default_suppressions()` translation unit linked into every test target.
+Both are non-trivial edits to a shared build file that the remaining twelve
+Phase 8 plans will also be editing, for a condition this plan did not cause.
+
+**Workaround in place:** `scripts/gates/build-all.sh asan` exports the declared
+suppressions itself, so the sanitizer gate is green and reports the matched
+suppression counts. Run the asan tree through the gate, not through bare ctest.
+
+**Disposition:** deferred to the test-infrastructure work (08-11 … 08-13).
