@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 08
 current_phase_name: xrandr-vnc-compatibility-focus-rules
 status: executing
-stopped_at: Completed 08-02-PLAN.md
-last_updated: "2026-08-11T13:01:16.654Z"
+stopped_at: Completed 08-03-PLAN.md
+last_updated: "2026-08-11T13:17:55.182Z"
 last_activity: 2026-08-11
 last_activity_desc: gathered Phase 8 context across 8 gray areas (32 decisions captured)
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 36
-  completed_plans: 24
+  completed_plans: 25
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 08 (xrandr-vnc-compatibility-focus-rules) — EXECUTING
-Plan: 3 of 14
+Plan: 4 of 14
 Status: Ready to execute
 Last activity: 2026-08-11 — Phase 08 execution started
 
-Progress: [███████░░░] 67% (7/9 phases complete)
+Progress: [███████░░░] 69% (7/9 phases complete)
 
 ## Performance Metrics
 
@@ -79,6 +79,7 @@ Progress: [███████░░░] 67% (7/9 phases complete)
 |------|----------|-------|-------|
 | Phase 08 P01 | 103min | 3 tasks | 7 files |
 | Phase 08 P02 | 68min | 3 tasks | 6 files |
+| Phase 08 P03 | 39min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -117,6 +118,9 @@ Recent decisions affecting current work:
 - [Phase 08]: 08-01: D-33 tag-selection convention established -- Catch2 tags as ctest labels, anchored -L, --no-tests=error on every gate; CMake floor raised to 3.20
 - [Phase ?]: cppcheck 2.7's CLI never computes a per-finding hash, so the static-analysis baseline is anchored on hashes the gate computes itself and cppcheck consumes a derived hash-free suppression file generated at run time
 - [Phase ?]: clang-tidy's fatal list contains only families already clean on this tree (bugprone-dangling-handle, clang-analyzer-core.*); the three families that fire today are reported-only with a documented promotion path
+- [Phase ?]: 08-03: routing the rectangular fallback helpers through combineShape() makes them emit nothing on Shape-less servers -- that silence IS the correct fallback, since an unshaped window is already rectangular
+- [Phase ?]: 08-03: capability triple documented in include/Manager.h (negative member sentinel + has*Extension() predicate + one no-op-when-absent funnel); 08-05/08-06 copy it
+- [Phase ?]: 08-03: bugprone-branch-clone true pre-existing count is 6, not the 5 recorded by 08-02 (missed src/Client.cpp:1415); re-measured at 08-02's own commit
 
 ### Pending Todos
 
@@ -142,6 +146,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-11T13:01:09.863Z
-Stopped at: Completed 08-02-PLAN.md
+Last session: 2026-08-11T13:17:55.161Z
+Stopped at: Completed 08-03-PLAN.md
 Resume file: None
