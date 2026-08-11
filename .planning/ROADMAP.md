@@ -213,7 +213,7 @@ Plans:
   6. COMPILED_CODE_BEHAVIOR_CHECKLIST.md gates pass or have explicit accepted exceptions: dependency preflight, Debug/Release builds, full CTest, ASan/UBSan, runtime Xvfb/Xephyr smoke, and release evidence
   7. Current behavior-scan findings are resolved or explicitly accepted: missing xft/fontconfig build preflight, eventDestroy client lifetime hazard, no-Shape fallback proof, and focus config wiring proof
 
-**Plans**: 3/14 plans executed
+**Plans**: 4/14 plans executed
 
 > **Plan-count revision (2026-08-11).** The original 3-plan skeleton is superseded. D-09 requires all 13 "Missing Automated Coverage To Add" checklist items to land in this phase, and D-04 makes four build/sanitizer/static-analysis/evidence gates unwaivable. The original 08-01 alone expands into six plans (harness, gates, and three coverage plans plus the evidence bundle). Scope is unchanged -- nothing was dropped or deferred; the same work is sliced into executable 2-4 task units. The three original plan themes map to: 08-01/02/11/12/13 (verification gate), 08-03/04/05/06/14 (Xrandr + remote desktop), 08-07/08/09/10 (focus + rules).
 
@@ -235,7 +235,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 08-04-PLAN.md -- Screen-geometry accessor refactor: `screenWidth()`/`screenHeight()` as single source of truth, 16 direct reads rerouted, pre-refactor values pinned by tests (XDIS-01 foundation)
+- [x] 08-04-PLAN.md -- Screen-geometry accessor refactor: `screenWidth()`/`screenHeight()` as single source of truth, 16 direct reads rerouted, pre-refactor values pinned by tests (XDIS-01 foundation)
 
 **Wave 5** *(blocked on Wave 4)*
 
@@ -311,5 +311,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 5. Configuration System | 0/3 | Planned | - |
 | 6. EWMH Compliance | 0/3 | Planned | - |
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
-| 8. Xrandr + VNC + Focus/Rules | 3/14 | In Progress|  |
+| 8. Xrandr + VNC + Focus/Rules | 4/14 | In Progress|  |
 | 9. Config GUI + IPC | 0/3 | Not started | - |

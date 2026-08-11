@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 08
 current_phase_name: xrandr-vnc-compatibility-focus-rules
 status: executing
-stopped_at: Completed 08-03-PLAN.md
-last_updated: "2026-08-11T13:17:55.182Z"
+stopped_at: Completed 08-04-PLAN.md
+last_updated: "2026-08-11T14:13:09.581Z"
 last_activity: 2026-08-11
 last_activity_desc: gathered Phase 8 context across 8 gray areas (32 decisions captured)
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 36
-  completed_plans: 25
+  completed_plans: 26
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 08 (xrandr-vnc-compatibility-focus-rules) — EXECUTING
-Plan: 4 of 14
+Plan: 5 of 14
 Status: Ready to execute
 Last activity: 2026-08-11 — Phase 08 execution started
 
-Progress: [███████░░░] 69% (7/9 phases complete)
+Progress: [███████░░░] 72% (7/9 phases complete)
 
 ## Performance Metrics
 
@@ -80,6 +80,7 @@ Progress: [███████░░░] 69% (7/9 phases complete)
 | Phase 08 P01 | 103min | 3 tasks | 7 files |
 | Phase 08 P02 | 68min | 3 tasks | 6 files |
 | Phase 08 P03 | 39min | 3 tasks | 8 files |
+| Phase 08 P04 | 52min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -121,6 +122,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 08-03: routing the rectangular fallback helpers through combineShape() makes them emit nothing on Shape-less servers -- that silence IS the correct fallback, since an unshaped window is already rectangular
 - [Phase ?]: 08-03: capability triple documented in include/Manager.h (negative member sentinel + has*Extension() predicate + one no-op-when-absent funnel); 08-05/08-06 copy it
 - [Phase ?]: 08-03: bugprone-branch-clone true pre-existing count is 6, not the 5 recorded by 08-02 (missed src/Client.cpp:1415); re-measured at 08-02's own commit
+- [Phase ?]: D-27 geometry funnel: screenWidth()/screenHeight() over a manager-owned cache seeded in initialiseScreen(); all 16 direct DisplayWidth/DisplayHeight reads routed through it
+- [Phase ?]: Geometry tests pin exact values and are each negative-tested; fullscreen POSITION is deliberately not pinned because the value the WM produces today is a defect (deferred item 8)
 
 ### Pending Todos
 
@@ -135,6 +138,7 @@ Recent decisions affecting current work:
 - Phase 8 (Behavior Verification): Static scan found eventDestroy use-after-free risk, incomplete no-Shape fallback proof, and parsed focus config that needs runtime behavior tests
 - Phase 9 (Config GUI): GTK3 performance over SSH X forwarding is unvalidated
 - Bare 'ctest --test-dir build/asan' fails 3 xft tests on a pre-existing fontconfig cache leak: tests/lsan.supp is wired only into the forked WM child, not the Catch2 test binaries. Run the asan tree via scripts/gates/build-all.sh until fixed (deferred-items.md item 5).
+- PRE-EXISTING: WindowManager::circulate() spins at 100% CPU forever when no client is Normal (root right-click on a fresh WM freezes it). deferred-items.md item 6; 08-05 must not drive the clamp on a non-Normal client.
 
 ## Deferred Items
 
@@ -146,6 +150,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-11T13:17:55.161Z
-Stopped at: Completed 08-03-PLAN.md
+Last session: 2026-08-11T14:12:56.820Z
+Stopped at: Completed 08-04-PLAN.md
 Resume file: None
