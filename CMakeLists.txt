@@ -61,6 +61,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     PkgConfig::XFT
     PkgConfig::FONTCONFIG
     PkgConfig::XRANDR
+    PkgConfig::XRENDER
     m
 )
 

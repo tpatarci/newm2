@@ -59,10 +59,37 @@ public:
 private:
     void fatal(const char *m);
 
+    // XDIS-04: which rung of the tab-font degradation ladder this process
+    // landed on. Established once, at the first Border construction, and never
+    // revisited -- font availability is fixed for the lifetime of the X
+    // connection, exactly like the extension sentinels in include/Manager.h.
+    //
+    // Rung 1 is the normal path and the only one that prints nothing; every
+    // other rung announces itself on stderr so a release-evidence transcript
+    // records the degradation instead of leaving it to be inferred from a
+    // screenshot.
+    enum class TabFontRung {
+        RotatedPreferred,   // 1 -- sideways labels from the preferred chain
+        RotatedGeneric,     // 2 -- sideways labels from the generic sans chain
+        Unrotated,          // 3 -- horizontal labels, truncated to the tab width
+        NoFont              // 4 -- no label at all; frames are still drawn (None is an Xlib macro)
+    };
+
     std::string m_label;
 
+    void loadTabFont();
     void fixTabHeight(int h);
     void drawLabel();
+    void drawLabelHorizontal();
+
+    // Predicates over the rung, in the same shape as the capability predicates
+    // in include/Manager.h: consumers branch on these, never on the enumerator.
+    static bool hasTabFont()    { return m_tabFont != nullptr; }
+    static bool tabFontRotated() {
+        return m_tabFont != nullptr &&
+               (m_tabFontRung == TabFontRung::RotatedPreferred ||
+                m_tabFontRung == TabFontRung::RotatedGeneric);
+    }
 
     void setFrameVisibility(bool, int, int);
     void setTransientFrameVisibility(bool, int, int);
@@ -97,6 +124,13 @@ private:
     // Static resources shared across all Border instances
     static int m_tabWidth;
     static XftFont *m_tabFont;         // raw pointer, managed via static refcount
+    static TabFontRung m_tabFontRung;
+
+    // The statics below used to be initialised on "m_tabFont is still null",
+    // which stops working the moment a null font becomes a legitimate outcome
+    // (rung 4): every subsequent Border would re-run the whole block and leak a
+    // GC per frame. The guard is therefore explicit rather than inferred.
+    static bool m_staticsInitialised;
     static x11::GCPtr m_drawGC;
     static unsigned long m_frameBackgroundPixel;
     static unsigned long m_buttonBackgroundPixel;

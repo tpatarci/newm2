@@ -11,6 +11,8 @@
 int FRAME_WIDTH = 7;  // Default, overwritten in constructor from config
 int Border::m_tabWidth = -1;
 XftFont *Border::m_tabFont = nullptr;
+Border::TabFontRung Border::m_tabFontRung = Border::TabFontRung::NoFont;
+bool Border::m_staticsInitialised = false;
 x11::GCPtr Border::m_drawGC;
 unsigned long Border::m_frameBackgroundPixel = 0;
 unsigned long Border::m_buttonBackgroundPixel = 0;
@@ -32,37 +34,15 @@ Border::Border(Client *client, Window child)
     , m_prevH(-1)
     , m_tabHeight(-1)
 {
-    if (m_tabFont == nullptr) {
+    if (!m_staticsInitialised) {
+        m_staticsInitialised = true;
+
         // Initialize FRAME_WIDTH from config (runtime, replaces constexpr)
         FRAME_WIDTH = windowManager()->config().frameThickness;
 
-        // Load rotated tab font via FcMatrix (D-04) with fallback chain (D-02)
-        x11::XftFontPtr rotatedFont = x11::make_xft_font_rotated(
-            display(), "Noto Sans,DejaVu Sans,Sans:bold:size=12");
-
-        if (!rotatedFont) {
-            // Fallback to generic sans-serif
-            rotatedFont = x11::make_xft_font_rotated(
-                display(), "sans-serif:bold:size=12");
-        }
-        if (!rotatedFont) {
-            windowManager()->fatal("couldn't load default rotated font, bailing out");
-        }
-
-        // Transfer ownership from RAII to raw static pointer
-        // (managed via m_borderCount refcount in destructor)
-        m_tabFont = rotatedFont.release();
-
-        // Rotated Xft fonts have zero height (Plan 01 finding).
-        // Use XftTextExtentsUtf8 to measure the actual glyph extent.
-        XGlyphInfo extents;
-        const char* sample = "M";
-        XftTextExtentsUtf8(display(), m_tabFont,
-            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
-        m_tabWidth = extents.height + 4;
-        if (m_tabWidth < TAB_TOP_HEIGHT * 2 + 8) {
-            m_tabWidth = TAB_TOP_HEIGHT * 2 + 8;
-        }
+        // XDIS-04: the tab font is loaded through a degradation ladder that
+        // cannot terminate the process. See loadTabFont().
+        loadTabFont();
 
         m_frameBackgroundPixel = windowManager()->allocateColour(windowManager()->config().frameBackground.c_str(), "frame background");
         m_buttonBackgroundPixel = windowManager()->allocateColour(windowManager()->config().buttonBackground.c_str(), "button background");
@@ -110,10 +90,18 @@ Border::~Border()
     if (--m_borderCount == 0) {
         m_drawGC.reset();
 
+        // Null is a legitimate outcome of the ladder's last rung, so the
+        // teardown asks rather than assumes.
         if (m_tabFont) {
             XftFontClose(display(), m_tabFont);
             m_tabFont = nullptr;
         }
+        m_tabFontRung = TabFontRung::NoFont;
+
+        // Every static the constructor established has now been released, so
+        // the next Border must build them again. Without this the block would
+        // be skipped forever and the WM would run with a destroyed GC.
+        m_staticsInitialised = false;
 
         if (m_xftColorsAllocated) {
             Display* d = display();
@@ -123,6 +111,135 @@ Border::~Border()
             XftColorFree(d, visual, cmap, &m_xftBackground);
             m_xftColorsAllocated = false;
         }
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// XDIS-04 / XDIS-05: the tab-font degradation ladder
+//
+// No rung here may terminate the process. Before this existed, a failure to
+// produce the rotated tab font took the unrecoverable-initialisation exit path
+// -- which on a degraded remote display means the user gets no window manager
+// at all rather than one with plainer labels. That is precisely the outcome
+// XDIS-04 and XDIS-05 exist to forbid, so the rungs below cover every failure
+// with something still usable.
+//
+// XDIS-04 is satisfied at the FONTCONFIG-FALLBACK level, deliberately: the
+// preferred chain already names three families and fontconfig substitutes
+// further, the generic sans chain is a second net under it, and an unrotated
+// face is a third. Reviving core X server fonts as a fourth would undo Phase 4,
+// which removed them and the bundled rotation library by decision, and would
+// reintroduce a font model that modern remote servers ship without. The 08-06
+// spike ([xft_norender_spike]) measured the reason that trade is safe: with
+// XRender absent, libXft renders the rotated face through its core X11 glyph
+// path with identical metrics, so a RENDER-less remote server still gets the
+// sideways tab.
+//
+// The two levers read below are internal test levers in the same shape as the
+// extension levers in src/Manager.cpp -- read exactly once, never documented
+// for users, no config key and no command-line flag. They exist because rungs
+// 3 and 4 cannot otherwise be reached on any host where fontconfig resolves a
+// font, which would leave them as untested code claiming to be a fallback.
+// ---------------------------------------------------------------------------
+
+void Border::loadTabFont()
+{
+    const char *forceNoFont = std::getenv("WM2_FORCE_NO_TAB_FONT");
+    const char *forceNoRotated = std::getenv("WM2_FORCE_NO_ROTATED_TAB_FONT");
+
+    const bool skipEveryRung =
+        (forceNoFont != nullptr && std::strcmp(forceNoFont, "1") == 0);
+    const bool skipRotatedRungs = skipEveryRung ||
+        (forceNoRotated != nullptr && std::strcmp(forceNoRotated, "1") == 0);
+
+    // Worded distinctly from the genuine-degradation lines further down, so a
+    // captured transcript can tell "we forced it" apart from "this display
+    // could not produce it" -- the same discrimination the Shape and RANDR
+    // levers provide.
+    if (skipEveryRung) {
+        std::fprintf(stderr, "wm2: warning: tab font forced off, "
+                             "frames will be drawn without labels\n");
+    } else if (skipRotatedRungs) {
+        std::fprintf(stderr, "wm2: warning: rotated tab font forced off, "
+                             "tab labels will read horizontally\n");
+    }
+
+    x11::XftFontPtr font;
+
+    // Rung 1 -- the normal path (D-04 rotation, D-02 preferred chain). Silent
+    // on success: this is what every healthy display does.
+    if (!skipRotatedRungs) {
+        font = x11::make_xft_font_rotated(
+            display(), "Noto Sans,DejaVu Sans,Sans:bold:size=12");
+        if (font) m_tabFontRung = TabFontRung::RotatedPreferred;
+    }
+
+    // Rung 2 -- still sideways, but from the generic sans chain.
+    if (!font && !skipRotatedRungs) {
+        font = x11::make_xft_font_rotated(display(), "sans-serif:bold:size=12");
+        if (font) {
+            m_tabFontRung = TabFontRung::RotatedGeneric;
+            std::fprintf(stderr, "wm2: warning: preferred rotated tab font "
+                                 "unavailable, using the generic sans chain\n");
+        }
+    }
+
+    // Rung 3 -- an unrotated face from the same preferred chain. Labels read
+    // horizontally across the tab instead of running down it: degraded, but
+    // present and readable.
+    if (!font && !skipEveryRung) {
+        font = x11::make_xft_font_name(
+            display(), "Noto Sans,DejaVu Sans,Sans:bold:size=12");
+        if (font) {
+            m_tabFontRung = TabFontRung::Unrotated;
+            std::fprintf(stderr, "wm2: warning: no rotated tab font on this "
+                                 "display, tab labels will read horizontally\n");
+        }
+    }
+
+    // Rung 4 -- no font at all. The WM keeps running with unlabelled tabs.
+    if (!font) {
+        m_tabFontRung = TabFontRung::NoFont;
+        std::fprintf(stderr, "wm2: warning: no usable tab font on this display, "
+                             "frames will be drawn without labels\n");
+    }
+
+    // Transfer ownership from RAII to the raw static pointer
+    // (managed via m_borderCount refcount in the destructor). Releasing a null
+    // holder yields a null pointer, which is exactly rung 4's state.
+    m_tabFont = font.release();
+
+    if (!hasTabFont()) {
+        // Nothing to measure. Fall back to the minimum width the code already
+        // derives from the tab-top-height constant, so frames still get a
+        // sensibly proportioned tab.
+        m_tabWidth = TAB_TOP_HEIGHT * 2 + 8;
+        return;
+    }
+
+    XGlyphInfo extents;
+    if (tabFontRotated()) {
+        // Rotated Xft fonts have zero height (Plan 01 finding).
+        // Use XftTextExtentsUtf8 to measure the actual glyph extent.
+        // Unchanged from the pre-ladder code: this is the normal path and its
+        // rendered result must not move.
+        const char* sample = "M";
+        XftTextExtentsUtf8(display(), m_tabFont,
+            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
+        m_tabWidth = extents.height + 4;
+    } else {
+        // Rung 3: the tab has to be wide enough to read a few characters
+        // ACROSS, not one glyph deep, so it is sized from a short sample
+        // string. drawLabelHorizontal() truncates the title to fit.
+        const char* sample = "MMMM";
+        XftTextExtentsUtf8(display(), m_tabFont,
+            reinterpret_cast<const FcChar8*>(sample), 4, &extents);
+        m_tabWidth = extents.width + 4;
+    }
+
+    if (m_tabWidth < TAB_TOP_HEIGHT * 2 + 8) {
+        m_tabWidth = TAB_TOP_HEIGHT * 2 + 8;
     }
 }
 
@@ -261,6 +378,13 @@ void Border::expose(XExposeEvent *e)
 
 void Border::drawLabel()
 {
+    // Rung 4: there is nothing to draw the label WITH. Return before anything
+    // touches the font, leaving the tab itself drawn but blank -- the tab
+    // window carries the label background as its own background pixel, so the
+    // server keeps it painted. The surrounding frame drawing is not on this
+    // path and is unaffected.
+    if (!hasTabFont()) return;
+
     if (m_label.empty()) return;
 
     // Create XftDraw lazily on first use, bound to this tab window (Pitfall 2)
@@ -276,6 +400,14 @@ void Border::drawLabel()
     XftDrawRect(m_tabDraw.get(), &m_xftBackground, 0, 0,
                 m_tabWidth, m_tabHeight + m_tabWidth);
 
+    // Rung 3: an unrotated face cannot be drawn down the tab, so it is drawn
+    // across it instead. Split out rather than branched inline so the rotated
+    // path below stays byte-for-byte what it was.
+    if (!tabFontRotated()) {
+        drawLabelHorizontal();
+        return;
+    }
+
     // Rotated fonts have zero ascent -- use extent-based measurement for x offset
     XGlyphInfo extents;
     XftTextExtentsUtf8(display(), m_tabFont,
@@ -288,6 +420,41 @@ void Border::drawLabel()
                        2 + extents.height, m_tabHeight - 1,
                        reinterpret_cast<const FcChar8*>(m_label.c_str()),
                        static_cast<int>(m_label.size()));
+}
+
+
+// Rung 3 only. The label reads across the tab, so it is trimmed to what fits
+// in the tab's width -- on a UTF-8 character boundary, never mid-sequence.
+void Border::drawLabelHorizontal()
+{
+    if (!hasTabFont()) return;
+
+    const int available = m_tabWidth - 4;
+    if (available <= 0) return;
+
+    std::string::size_type bytes = m_label.size();
+    XGlyphInfo extents;
+
+    while (bytes > 0) {
+        XftTextExtentsUtf8(display(), m_tabFont,
+            reinterpret_cast<const FcChar8*>(m_label.c_str()),
+            static_cast<int>(bytes), &extents);
+        if (static_cast<int>(extents.width) <= available) break;
+
+        --bytes;
+        while (bytes > 0 &&
+               (static_cast<unsigned char>(m_label[bytes]) & 0xC0) == 0x80) {
+            --bytes;
+        }
+    }
+
+    if (bytes == 0) return;
+
+    XftDrawStringUtf8(m_tabDraw.get(), &m_xftForeground,
+                      m_tabFont,
+                      2, m_tabFont->ascent + 2,
+                      reinterpret_cast<const FcChar8*>(m_label.c_str()),
+                      static_cast<int>(bytes));
 }
 
 
@@ -323,6 +490,33 @@ void Border::fixTabHeight(int maxHeight)
     maxHeight -= m_tabWidth; // for diagonal
 
     m_label = m_client->label();
+
+    // Rung 4: nothing to measure with. Keep a stub tab of the same order as the
+    // transient tab (configure() pins that one at a fixed 10) so the frame
+    // still has a grabbable tab, and blank the label so drawLabel() has nothing
+    // to draw. No Xft call is reachable from here.
+    if (!hasTabFont()) {
+        m_label.clear();
+        m_tabHeight = m_tabWidth * 2;
+        if (m_tabHeight > maxHeight) m_tabHeight = maxHeight;
+        if (m_tabHeight < 10) m_tabHeight = 10;
+        return;
+    }
+
+    // Rung 3: a horizontal label does not run DOWN the tab, so the shortening
+    // loop below -- which trims the title until it fits the tab's length -- is
+    // measuring the wrong axis. The tab keeps a fixed length here and
+    // drawLabelHorizontal() trims to the tab's width instead.
+    if (!tabFontRotated()) {
+        if (m_label.empty()) {
+            m_label = m_client->iconName().empty() ? std::string("incognito")
+                                                   : m_client->iconName();
+        }
+        m_tabHeight = m_tabWidth * 2;
+        if (m_tabHeight > maxHeight) m_tabHeight = maxHeight;
+        if (m_tabHeight < 10) m_tabHeight = 10;
+        return;
+    }
 
     if (!m_label.empty()) {
         XGlyphInfo extents;

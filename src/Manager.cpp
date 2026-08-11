@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include <X11/Xproto.h>
 #include <X11/extensions/Xrandr.h>
+#include <X11/extensions/Xrender.h>
 #include <algorithm>
 #include <map>
 #include "Cursors.h"
@@ -232,6 +233,26 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
         std::fprintf(stderr, "wm2: warning: no xrandr extension, "
                              "screen geometry will track resolution changes via the root window only\n");
         m_randrEventBase = -1;
+    }
+
+    // XDIS-04/XDIS-05: XRender, queried in the same style as the two blocks
+    // above but WITHOUT a sentinel, because unlike Shape and RANDR nothing in
+    // the WM branches on it. 08-06's spike measured why: with the extension
+    // absent, libXft renders the rotated tab face through its core X11 glyph
+    // path with identical metrics and no protocol error, so there is no
+    // behaviour to degrade -- the tab-font ladder in src/Border.cpp keys on
+    // whether a FONT could be produced, which is the thing that can actually
+    // fail. The probe is here because the capability is a fact the release
+    // evidence for XDIS-05 has to state per target, and because it is what
+    // lets a RENDER-less end-to-end run prove it really was RENDER-less rather
+    // than passing for the ordinary reason.
+    int renderEventBase = 0;
+    int renderErrorBase = 0;
+    if (XRenderQueryExtension(display(), &renderEventBase, &renderErrorBase)) {
+        std::fprintf(stderr, "  XRender extension available.\n");
+    } else {
+        std::fprintf(stderr, "wm2: warning: no xrender extension, "
+                             "tab labels will be drawn through the core X11 glyph path\n");
     }
 
     initialiseScreen();
