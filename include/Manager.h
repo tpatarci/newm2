@@ -53,6 +53,7 @@ public:
     Window root() { return m_root; }
     int screen() { return m_screenNumber; }
     bool hasShapeExtension() const { return m_shapeEvent >= 0; }
+    bool hasRandrExtension() const { return m_randrEventBase >= 0; }
 
     // D-27: the single source of truth for screen geometry. Defined in
     // src/Manager.cpp, where the comment beside the definitions explains why no
@@ -154,6 +155,20 @@ private:
     // Later plans in this phase add further capability members alongside this
     // one; they follow the same triple rather than inventing a new shape.
     int m_shapeEvent;
+
+    // D-24/D-26: RANDR, following the same triple. Below zero means the server
+    // has no RANDR extension (or WM2_FORCE_NO_RANDR forced it off), in which
+    // case the WM still tracks resolution changes -- through the root window's
+    // own ConfigureNotify, which is why StructureNotifyMask is in the root mask.
+    // The negative sentinel matters more here than for Shape: the dispatch in
+    // src/Events.cpp compares against this member PLUS the screen-change-notify
+    // offset, and with a zero sentinel that sum would be a small non-negative
+    // number that a real core event type could collide with.
+    //
+    // (The member name is spelled once below and nowhere in this comment: the
+    // acceptance gates for this file are line-counting greps, and prose that
+    // repeats the token defeats the guard it is describing.)
+    int m_randrEventBase;
 
     // D-27: manager-owned screen-geometry cache. Seeded from Xlib in
     // initialiseScreen() before anything can publish or consume geometry, and

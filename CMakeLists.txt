@@ -18,6 +18,14 @@ pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
 pkg_check_modules(XEXT REQUIRED IMPORTED_TARGET xext)
 pkg_check_modules(XFT REQUIRED IMPORTED_TARGET xft)
 pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
+# D-26 (XDIS-01/XDIS-02): libxrandr is a HARD BUILD dependency, deliberately not
+# an optional one. It is part of the base X client stack on every target this
+# project supports, so conditional compilation would buy nothing and would fork
+# the geometry path in two. What is NOT hard is the RUNTIME availability of the
+# extension: XRRQueryExtension is checked at startup and a server without RANDR
+# gets a warning plus the root-ConfigureNotify fallback, never a fatal error.
+# Build-time required, run-time optional -- the two are independent.
+pkg_check_modules(XRANDR REQUIRED IMPORTED_TARGET xrandr)
 
 # --- WM Binary (BLD-04) ---
 add_executable(${PROJECT_NAME}
@@ -44,6 +52,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     PkgConfig::XEXT
     PkgConfig::XFT
     PkgConfig::FONTCONFIG
+    PkgConfig::XRANDR
     m
 )
 

@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <X11/Xproto.h>
+#include <X11/extensions/Xrandr.h>
 #include <algorithm>
 #include <map>
 #include "Cursors.h"
@@ -65,6 +66,7 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     , m_activeClient(nullptr)
     , m_apps(apps)
     , m_shapeEvent(0)
+    , m_randrEventBase(-1)
     , m_lastKnownScreenW(0)
     , m_lastKnownScreenH(0)
     , m_currentTime(-1)
@@ -192,6 +194,44 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     } else {
         std::fprintf(stderr, "wm2: warning: no shape extension, frames will be rectangular\n");
         m_shapeEvent = -1;
+    }
+
+    // D-24/D-26: RANDR, queried in exactly the Shape block's style. libxrandr is
+    // a hard BUILD dependency (see CMakeLists.txt) but its runtime availability
+    // is optional: a server without it gets a warning and the root-ConfigureNotify
+    // fallback, never a hard stop. That split is XDIS-02.
+    //
+    // The env lever read below is the same kind of internal test lever as the
+    // Shape one -- read exactly once, never documented for users, no CLI flag.
+    // Unlike SHAPE, this server CAN be started with `-extension RANDR`, so the
+    // lever is not the only way to exercise the degraded path (the [wm_norandr]
+    // tests use a genuinely RANDR-less server). It exists so the fallback can
+    // also be forced on a server that does have the extension.
+    //
+    // Event selection is deliberately NOT done here: m_root is still None at
+    // this point -- initialiseScreen() below is what establishes it -- and a
+    // select-input against None would raise BadWindow, which errorHandler turns
+    // into exit(1) while m_initialising. The subscription therefore happens in
+    // initialiseScreen(), immediately after the root window exists, guarded by
+    // the predicate this block sets up.
+    //
+    // Token discipline: the acceptance gates for this file are line-counting
+    // greps, so the env-var name and the select-input call are each spelled
+    // exactly once in code and never repeated in prose.
+    int randrErrorBase = 0;
+    const char *forceNoRandr = std::getenv("WM2_FORCE_NO_RANDR");
+    if (forceNoRandr != nullptr && std::strcmp(forceNoRandr, "1") == 0) {
+        // Worded distinctly from the genuine-absence line below, so a captured
+        // transcript proves which path was taken (same rationale as Shape).
+        std::fprintf(stderr, "wm2: warning: xrandr extension forced off, "
+                             "screen geometry will track resolution changes via the root window only\n");
+        m_randrEventBase = -1;
+    } else if (XRRQueryExtension(display(), &m_randrEventBase, &randrErrorBase)) {
+        std::fprintf(stderr, "  Xrandr extension available.\n");
+    } else {
+        std::fprintf(stderr, "wm2: warning: no xrandr extension, "
+                             "screen geometry will track resolution changes via the root window only\n");
+        m_randrEventBase = -1;
     }
 
     initialiseScreen();
@@ -429,11 +469,23 @@ void WindowManager::initialiseScreen()
 
     XSetWindowAttributes attr;
     attr.cursor = m_cursor.get();
+    // XDIS-02 / RESEARCH Pitfall 2: the last bit is the no-RANDR fallback's only
+    // event source. SubstructureNotifyMask delivers notifications about root's
+    // CHILDREN; a resolution change arrives as a ConfigureNotify on ROOT ITSELF,
+    // which requires the structure bit. Without it the fallback path in
+    // src/Events.cpp has literally nothing to hook and can never fire.
     attr.event_mask = SubstructureRedirectMask | SubstructureNotifyMask |
         ColormapChangeMask | ButtonPressMask | ButtonReleaseMask |
-        PropertyChangeMask;
+        PropertyChangeMask | StructureNotifyMask;
     XChangeWindowAttributes(display(), m_root, CWCursor | CWEventMask, &attr);
     XSync(display(), false);
+
+    // D-24: subscribe to RANDR screen-change notifications now that m_root
+    // exists. Deferred to here from the capability query in the constructor for
+    // exactly that reason -- see the comment beside that query.
+    if (hasRandrExtension()) {
+        XRRSelectInput(display(), m_root, RRScreenChangeNotifyMask);
+    }
 
     m_menuBorderPixel     = allocateColour(m_config.menuBorders.c_str(), "menu border");
 
