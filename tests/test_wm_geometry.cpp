@@ -432,30 +432,44 @@ std::string describe(const std::vector<unsigned long>& v)
 // makes this the right way to establish a precondition the WM would never have
 // produced itself -- such as a window deliberately parked off the screen.
 //
-// "Settled" means: the requested SIZE has taken, and two consecutive reads agree
-// on the position. The second half matters because the WM defers its X output
-// until its loop wakes (deferred item 9), so a single read can catch a partially
-// applied configure.
-bool placeClient(Display* d, Window client, int x, int y, int w, int h, Rect& out)
+// "Settled" is keyed on the FRAME reaching the requested coordinates, not on the
+// client rectangle going quiet.
+//
+// The obvious version -- poll the client until the requested size has taken and
+// two consecutive reads agree -- is racy, and it bit this suite intermittently
+// (about one run in ten) before being fixed. Every call site here moves a window
+// WITHOUT changing its size, so the requested size is already satisfied the
+// instant the move is issued; if both reads land before the WM has processed the
+// ConfigureRequest, the helper reports the window "settled" at its OLD position
+// and the caller derives every expectation from the wrong rectangle. The
+// observed failure was a window still at x=325 being treated as though it had
+// been parked at 900.
+//
+// The frame is the reliable signal because its settled position is exact:
+// eventConfigureRequest() re-gravitates and hands the requested coordinates
+// straight to Border::configure(), so the frame lands on exactly what was asked
+// for while the child sits inside it by the border indents (measured: request
+// 900,700 -> frame 900,700, client 925,708). Waiting on a value that must
+// CHANGE removes the race rather than making it less likely.
+bool placeClient(Display* d, Window client, Window frame,
+                 int x, int y, int w, int h, Rect& out)
 {
     XMoveResizeWindow(d, client, x, y,
                       static_cast<unsigned>(w), static_cast<unsigned>(h));
     XSync(d, False);
 
-    Rect previous;
-    bool havePrevious = false;
+    return WmFixture::pollUntil([&] {
+        Rect frameRect;
+        if (!pumpedRect(d, frame, frameRect)) return false;
+        if (frameRect.x != x || frameRect.y != y) return false;
 
-    const bool settled = WmFixture::pollUntil([&] {
-        Rect got;
-        if (!pumpedRect(d, client, got)) return false;
-        if (got.w != w || got.h != h) { havePrevious = false; return false; }
-        if (havePrevious && got == previous) { out = got; return true; }
-        previous = got;
-        havePrevious = true;
-        return false;
+        Rect clientRect;
+        if (!serverRect(d, client, clientRect)) return false;
+        if (clientRect.w != w || clientRect.h != h) return false;
+
+        out = clientRect;
+        return true;
     }, 8000);
-
-    return settled;
 }
 
 // Poll until the server reports `w` at exactly `expected`, then return the final
@@ -853,7 +867,7 @@ TEST_CASE("A window left offscreen by a shrink is moved back into view, not resi
     REQUIRE(frame != None);
 
     Rect placed;
-    REQUIRE(placeClient(d.get(), client, 900, 700, kW, kH, placed));
+    REQUIRE(placeClient(d.get(), client, frame, 900, 700, kW, kH, placed));
     INFO("placed at: " << describe(placed));
 
     // Precondition, asserted rather than assumed: fully visible at 1280x1024,
@@ -912,7 +926,7 @@ TEST_CASE("A window that still fits after a shrink is not moved", "[wm_geometry]
     REQUIRE(frame != None);
 
     Rect placed;
-    REQUIRE(placeClient(d.get(), client, 120, 90, kW, kH, placed));
+    REQUIRE(placeClient(d.get(), client, frame, 120, 90, kW, kH, placed));
     INFO("placed at: " << describe(placed));
 
     // Precondition: comfortably inside the SMALL screen already.
@@ -1011,7 +1025,7 @@ TEST_CASE("Redelivered screen-change notifications carrying stale dimensions cha
     // Park the window where the reflow would definitely not leave it, so a
     // handler that ran again would visibly move it.
     Rect offscreen;
-    REQUIRE(placeClient(d.get(), client, 900, 700, kW, kH, offscreen));
+    REQUIRE(placeClient(d.get(), client, frame, 900, 700, kW, kH, offscreen));
     INFO("parked at: " << describe(offscreen));
     REQUIRE(offscreen.x + offscreen.w > kSmallMaxX);
     REQUIRE(offscreen.y + offscreen.h > kSmallMaxY);
@@ -1118,7 +1132,7 @@ TEST_CASE("A fullscreen client is not repositioned by the resolution-change refl
     // Park it where the clamp would definitely act, so the guard has something
     // real to prevent.
     Rect parked;
-    REQUIRE(placeClient(d.get(), client, 900, 700, 240, 180, parked));
+    REQUIRE(placeClient(d.get(), client, frame, 900, 700, 240, 180, parked));
     INFO("parked at: " << describe(parked));
     REQUIRE(parked.x + parked.w > kSmallMaxX);
     REQUIRE(parked.y + parked.h > kSmallMaxY);
@@ -1332,7 +1346,7 @@ TEST_CASE("With RANDR inert the root-ConfigureNotify fallback still reflows",
     REQUIRE(frame != None);
 
     Rect placed;
-    REQUIRE(placeClient(d.get(), client, 900, 700, kW, kH, placed));
+    REQUIRE(placeClient(d.get(), client, frame, 900, 700, kW, kH, placed));
     INFO("placed at: " << describe(placed));
     REQUIRE(placed.x + placed.w > kSmallMaxX);
     REQUIRE(placed.y + placed.h > kSmallMaxY);
