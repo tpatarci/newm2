@@ -344,6 +344,46 @@ if(BUILD_TESTS)
             PROPERTIES
                 FIXTURES_REQUIRED preflight_ok
         )
+
+        # --- Screen-geometry tests (XDIS-01, D-27) ---
+        #
+        # Same shape as the two targets above -- own display per fixture
+        # instance, so deliberately NO shared-display binding and NO
+        # `FIXTURES_REQUIRED xvfb_display`. Unlike test_wm_fallbacks this one
+        # needs no extra X extension library: every assertion is core-protocol
+        # geometry read back from the server.
+        #
+        # The suite runs its server at 1280x1024 (requested from the test file
+        # through the fixture's extra-Xvfb-argument hook, not from here), which
+        # is the largest geometry any Phase 8 test needs. Plan 08-05 shrinks
+        # from that size to observe a resolution change; this server's RANDR
+        # maximum equals the size it was started with, so it can never grow.
+        add_executable(test_wm_geometry tests/test_wm_geometry.cpp)
+        target_link_libraries(test_wm_geometry PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+        )
+        target_include_directories(test_wm_geometry PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/tests
+            ${XFT_INCLUDE_DIRS}
+        )
+
+        target_compile_definitions(test_wm_geometry PRIVATE
+            WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
+            WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
+            WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+        )
+
+        # The tests exec the binary, so it must exist before they run.
+        add_dependencies(test_wm_geometry wm2-born-again)
+
+        # ADD_TAGS_AS_LABELS is required by D-33, or the tag this file carries
+        # is not selectable by the anchored label gates the phase uses.
+        catch_discover_tests(test_wm_geometry ADD_TAGS_AS_LABELS
+            PROPERTIES
+                FIXTURES_REQUIRED preflight_ok
+        )
     endif()
 
     # Config parsing unit tests (pure data transformation, no X11 needed)

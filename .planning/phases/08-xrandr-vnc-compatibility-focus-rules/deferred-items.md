@@ -121,3 +121,137 @@ suppressions itself, so the sanitizer gate is green and reports the matched
 suppression counts. Run the asan tree through the gate, not through bare ctest.
 
 **Disposition:** deferred to the test-infrastructure work (08-11 … 08-13).
+
+## 6. `WindowManager::circulate()` spins forever when no client is in Normal state (PRE-EXISTING, severe)
+
+**Found during:** 08-04 Task 2, while building the geometry suite's clamp trigger.
+
+**Symptom:** a Button3 press on the root window freezes the WM at 100% CPU,
+permanently. **Measured:** 299 CPU ticks of user time over 3 seconds of wall
+clock on a WM with no Normal client, immediately after a synthetic root Button3.
+
+**Cause:** `src/Buttons.cpp:55-60`.
+
+```
+for (j = i + 1; ; ++j) {
+    if (static_cast<size_t>(j) >= m_clients.size()) j = 0;
+    if (j == i) return;
+    if (m_clients[j]->isNormal() && !m_clients[j]->isTransient()) break;
+}
+```
+
+The loop's only exit besides the `break` is `j == i`. When `m_activeClient` is
+null, `i` is `-1`, and `j` — being an index that is wrapped into
+`[0, m_clients.size())` — can never equal `-1`. So if no entry satisfies the
+`break` condition, the loop is unbounded. The `m_clients.empty()` guard above it
+does not help: the list only has to be non-empty, not to contain a *Normal*
+client.
+
+**Reachability is not exotic.** `m_clients` is never empty in practice, because
+the WM's own menu, submenu and WM-check windows are picked up by
+`scanInitialWindows()` and managed as clients (see item 7), and those are always
+Withdrawn. So a right-click on the root of a freshly started WM with no windows
+open freezes it. The same happens after any transition that leaves the only real
+client non-Normal — which is how this was found: the EWMH fullscreen path
+(item 8) leaves the client Withdrawn, and the geometry suite's clamp trigger then
+wedged the WM.
+
+**Pre-existing:** yes. `src/Buttons.cpp` is touched by plan 08-04 only at the six
+`DisplayWidth`/`DisplayHeight` call sites (lines 119-120, 361-362, 556-557); the
+`circulate()` loop is untouched, and the `CR-01/CR-03` comment above it shows the
+bounds work predates this phase.
+
+**Why not fixed here:** 08-04 is a declared behaviour-preserving refactor
+("Do not add ... any resolution-change behaviour in this plan"), and the fix is a
+behaviour change to an unrelated subsystem (deviation Rule 4). It needs its own
+decision about what a circulate with no eligible client should do — return, or
+fall through to the first client regardless of state.
+
+**Disposition:** deferred, recommended for the focus/rules work (08-07 … 08-10),
+which is the phase's next scheduled visit to `src/Buttons.cpp`. Until then,
+`tests/test_wm_geometry.cpp` deliberately never drives the clamp on a client that
+is not Normal, and says so at the point where it declines to.
+
+## 7. The WM manages its own menu/submenu/WM-check windows as clients (PRE-EXISTING)
+
+**Found during:** 08-04 Task 2, reading `_NET_CLIENT_LIST` from the geometry suite.
+
+**Symptom:** on a WM with no real clients at all, `_NET_CLIENT_LIST` on root
+contains three windows, each 1x1, all owned by the WM's own connection — the
+menu window, the submenu window and the EWMH WM-check window.
+
+**Cause:** `initialiseScreen()` creates those three with plain
+`XCreateSimpleWindow`, which leaves `override_redirect` false, and
+`scanInitialWindows()` then adopts every non-override-redirect child of root.
+They stay Withdrawn (never mapped through a MapRequest), so nothing visible
+breaks — but they are published to every EWMH-aware client as managed windows,
+and they are what makes `m_clients` non-empty in item 6.
+
+**Pre-existing:** yes; untouched by plan 08-04.
+
+**Disposition:** deferred. Two candidate fixes, both out of scope here: set
+`override_redirect` on the three WM-internal windows at creation, or filter them
+out in `updateClientList()`. The EWMH work (Phase 6) is the natural owner.
+
+## 8. EWMH fullscreen sizes the window correctly but leaves it at its old position and Withdrawn (PRE-EXISTING)
+
+**Found during:** 08-04 Task 2, writing the fullscreen geometry case.
+
+**Symptom:** after `_NET_WM_STATE_ADD _NET_WM_STATE_FULLSCREEN`, the client
+window is resized to exactly the screen (1280x1024 on the fixture) — correct —
+but sits at the coordinates its frame had before, not at the screen origin.
+**Measured:** a client mapped at 1100,900 became `1280x1024+1100+900`, parented
+to root. It is also no longer in Normal state.
+
+**Cause (traced):** `Border::stripForFullscreen()` reparents the child to root.
+`XReparentWindow` implicitly unmaps and remaps a mapped window, so the WM
+receives an `UnmapNotify` for its own reparent. `Client::eventUnmap()` sees a
+Normal client with `m_reparenting` false and calls `withdraw()`, which does
+`gravitate(true)` and reparents the window to root **at the pre-fullscreen
+coordinates**, undoing the placement `setFullscreen()` had just made and leaving
+the state Withdrawn. The `XMoveResizeWindow(m_window, 0, 0, sw, sh)` size
+survives because only the position is rewritten.
+
+**Pre-existing:** yes. Plan 08-04 changed only the two screen-dimension reads
+inside `setFullscreen()`, and the size half — the part those reads feed — is
+demonstrably correct.
+
+**Why not fixed here:** behaviour change, unrelated subsystem, deviation Rule 4.
+The likely fix is to set `m_reparenting` around the strip/restore reparents the
+same way `Client::manage()` does, but that is a decision for the owner of the
+fullscreen path.
+
+**Disposition:** deferred. `tests/test_wm_geometry.cpp` pins the size (which is
+the D-27 accessor claim) and deliberately does NOT pin the position, so the
+correct fix will not have to fight a test that cemented the defect.
+
+## 9. The WM does not flush its X output until its event loop wakes again (PRE-EXISTING)
+
+**Found during:** 08-04 Task 2; it made three of the five new geometry cases fail
+against a correct implementation.
+
+**Symptom:** a client that moves itself with `XMoveResizeWindow` and then goes
+quiet does not visibly move. **Measured:** the WM handled the `ConfigureRequest`
+and issued `XConfigureWindow(frame, CWX|CWY|CWWidth|CWHeight, ...)` with the
+right coordinates (confirmed by instrumenting `Border::configure()`), yet the
+server still reported the frame at its old position after 8 seconds of polling
+with no other X traffic. The move appeared the instant any unrelated event
+reached the WM — reproduced deterministically by creating one throwaway window.
+
+**Not yet explained.** `WindowManager::nextEvent()` does call
+`XFlush(display())` before `poll()` (`src/Events.cpp:147`), so on a reading of
+the code the buffer should already be on the wire. Something between that flush
+and the server is holding the request; this was not chased further because the
+plan in progress was a behaviour-preserving refactor. It is worth chasing: for a
+user it means a self-repositioning application appears frozen in place until
+something else happens on the desktop.
+
+**Pre-existing:** yes; reproduced with `src/Border.cpp`, `src/Events.cpp` and
+`src/Client.cpp` at their pre-08-04 state.
+
+**Workaround in place:** `tests/test_wm_geometry.cpp` wakes the WM with an inert
+override-redirect 1x1 window before every geometry read (`pumpWm()`), and
+documents that it is a workaround rather than a convention to copy.
+
+**Disposition:** deferred to the test-infrastructure / diagnostics work
+(08-11 … 08-13), or to whoever next touches the event loop.

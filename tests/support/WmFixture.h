@@ -298,7 +298,9 @@ public:
         m_wm.shutdown();
         collectStderr();
         m_asanReports = globAsanReports();
-        m_keepAlive.reset();   // drop before killing the server it talks to
+        // Drop every connection before killing the server they talk to.
+        m_readyConn.reset();
+        m_keepAlive.reset();
         m_xvfb.shutdown();
         m_reservation.release();
     }
@@ -494,11 +496,33 @@ private:
 
     ReadyResult waitForWmReadyStaged()
     {
-        x11::DisplayPtr d = openDisplay();
+        // XID-reuse hazard -- this connection is deliberately RETAINED for the
+        // fixture's whole lifetime rather than closed when readiness is proven.
+        //
+        // An X connection owns a resource-id range, and closing it returns that
+        // whole range to the server, which hands it straight to the next client.
+        // The readiness probe below creates and destroys a window on this
+        // connection; if the connection then closed, the test's own connection
+        // would be given the same base and its FIRST window would come back with
+        // the probe's exact id. The WM is still unwinding the probe's Client at
+        // that moment, and that teardown issues XReparentWindow(<that id>, root,
+        // 0, 0) for a window it believes is already gone -- BadWindow is
+        // suppressed for precisely that reason (src/Events.cpp:270). Against a
+        // recycled id the request SUCCEEDS, silently moving the test's brand-new
+        // window to the origin. It reads as "the WM placed my window at 0,0" and
+        // quietly falsifies any geometry assertion, which is exactly how it was
+        // found.
+        //
+        // Holding the connection open makes the collision impossible rather than
+        // unlikely: the test's connection is guaranteed a different resource
+        // base. No timing assumption, and nothing to observe about how fast the
+        // WM processes a destroy.
+        m_readyConn = openDisplay();
+        Display* d = m_readyConn.get();
         if (!d) return ReadyResult::NoConnection;
 
-        Atom check = XInternAtom(d.get(), "_NET_SUPPORTING_WM_CHECK", False);
-        Window root = DefaultRootWindow(d.get());
+        Atom check = XInternAtom(d, "_NET_SUPPORTING_WM_CHECK", False);
+        Window root = DefaultRootWindow(d);
 
         const bool published = pollUntil([&] {
             if (m_wm.tryReap()) return false;             // WM died during startup
@@ -507,7 +531,7 @@ private:
             int actualFormat = 0;
             unsigned long nItems = 0, bytesAfter = 0;
             unsigned char* raw = nullptr;
-            int status = XGetWindowProperty(d.get(), root, check, 0, 1, False, XA_WINDOW,
+            int status = XGetWindowProperty(d, root, check, 0, 1, False, XA_WINDOW,
                                             &actualType, &actualFormat,
                                             &nItems, &bytesAfter, &raw);
             bool ok = (status == Success && raw != nullptr && nItems == 1);
@@ -522,7 +546,7 @@ private:
         // reparented away from root by the WM. The property alone is not enough
         // -- setupEwmhProperties() runs at src/Manager.cpp:174, before loop() at
         // 184, so the property appears while the loop is still not pumping.
-        if (!proveEventLoopLive(d.get())) return ReadyResult::EventLoopNotPumping;
+        if (!proveEventLoopLive(d)) return ReadyResult::EventLoopNotPumping;
         return ReadyResult::Ready;
     }
 
@@ -679,13 +703,23 @@ private:
     WmFixtureOptions m_options;
     DisplayReservation m_reservation;
     std::string m_display;
-    x11::DisplayPtr m_keepAlive;   // held open so Xvfb never sees zero clients
     ChildProcess m_xvfb;
     ChildProcess m_wm;
     std::string m_stderrPath;
     std::string m_stderr;
     std::string m_asanLogPrefix;
     std::vector<std::string> m_asanReports;
+
+    // Declared LAST so they are destroyed FIRST. Members are destroyed in
+    // reverse declaration order, and that path is what runs when start() throws
+    // out of the constructor -- the explicit ordering in ~WmFixture() never gets
+    // a chance. With these declared before m_xvfb, a failed startup killed Xvfb
+    // while these connections were still open, Xlib's default IO-error handler
+    // called exit(1), and the whole process died before Catch2 could print the
+    // staged diagnostics that exist precisely to explain such a failure. The
+    // symptom was a bare "X connection to :120 broken" and no test output at all.
+    x11::DisplayPtr m_keepAlive;   // held open so Xvfb never sees zero clients
+    x11::DisplayPtr m_readyConn;   // retained: see waitForWmReadyStaged()
 };
 
 // ---------------------------------------------------------------------------
