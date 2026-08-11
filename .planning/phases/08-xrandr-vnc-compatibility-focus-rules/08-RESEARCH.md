@@ -104,7 +104,9 @@
 
 ## Summary
 
-Phase 8 is three different kinds of work wearing one hat. **08-01 is a test-infrastructure phase** that happens to also fix bugs; **08-02 is greenfield feature work** (there is literally zero Xrandr code in the tree today); **08-03 is wiring dead config to live behaviour** plus a new rules subsystem. The single most important planning fact is that **the project does not currently build on this host** — `pkg-config` cannot find `xft` or `fontconfig` because `libxft-dev` and `libfontconfig1-dev` are not installed (the runtime `.so` files are). A stale `build/wm2-born-again` binary from 2026-07-08 exists and a stale `CMakeCache.txt` still records `XFT_FOUND:INTERNAL=1`, so a naive `cmake --build build` may appear to succeed while a fresh configure fails. Task 1 of the phase must install those two packages and configure clean build trees from scratch.
+> **Plan-numbering note (added during plan revision).** This document was written against a provisional three-plan skeleton and refers to workstreams as "08-01 / 08-02 / 08-03". The phase was subsequently sliced into **14 plans** (`08-01` … `08-14`, one per wave, a single `depends_on` chain). Where this document names a plan number, read it as the *workstream* unless the reference carries a `RESOLVED:` marker or an explicit correction — those name real plans. `08-VALIDATION.md`'s per-task map is the authoritative plan→requirement mapping.
+
+Phase 8 is three different kinds of work wearing one hat. The **test-infrastructure workstream** (now plans 08-01 to 08-03, 08-11 to 08-13) happens to also fix bugs; the **display-capability workstream** is greenfield feature work (now plans 08-04 to 08-06 — there is literally zero Xrandr code in the tree today); the **focus-and-rules workstream** is wiring dead config to live behaviour plus a new rules subsystem (now plans 08-07 to 08-10), with 08-14 carrying signoff. The single most important planning fact is that **the project does not currently build on this host** — `pkg-config` cannot find `xft` or `fontconfig` because `libxft-dev` and `libfontconfig1-dev` are not installed (the runtime `.so` files are). A stale `build/wm2-born-again` binary from 2026-07-08 exists and a stale `CMakeCache.txt` still records `XFT_FOUND:INTERNAL=1`, so a naive `cmake --build build` may appear to succeed while a fresh configure fails. Task 1 of the phase must install those two packages and configure clean build trees from scratch.
 
 The three capability-detection problems (Xrandr, Shape, XRender) turn out to have **three different** correct test strategies, and this research resolved which is which by direct experiment on this machine. RANDR *can* be disabled at the X server (`Xvfb -extension RANDR`), so XDIS-02 is fully automatable and hermetic. RENDER *can* also be disabled, so XDIS-04 is testable more strongly than D-13's fc-match-only reading assumed. But **SHAPE cannot be disabled** — the X server refuses with `Extension "SHAPE" can not be disabled` and prints the exact list of run-time-toggleable extensions, which omits SHAPE. That independently validates D-12: the `WM2_FORCE_NO_SHAPE=1` env var is not a shortcut, it is the only lever available. Plan the three fallbacks with three different harness mechanisms, not one.
 
@@ -464,7 +466,7 @@ The "last user interaction" clock is a new `WindowManager` member updated from r
 
 ### Anti-Patterns to Avoid
 
-- **Trusting `DisplayWidth`/`DisplayHeight` after a resize.** They are cached in the `Display` struct. Without `XRRUpdateConfiguration` they never change. See Pitfall 1 — this is the single highest-risk item in 08-02.
+- **Trusting `DisplayWidth`/`DisplayHeight` after a resize.** They are cached in the `Display` struct. Without `XRRUpdateConfiguration` they never change. See Pitfall 1 — this is the single highest-risk item in the display-capability workstream, handled by plans **08-04** (route the 16 cached reads through `screenWidth()`/`screenHeight()`) and **08-05** (the `XRRUpdateConfiguration` refresh and the idempotent geometry-change handler).
 - **Reading `ev.width`/`ev.height` from one `RRScreenChangeNotify` and treating it as the final geometry.** Multiple events arrive per logical resize and intermediates can carry the *old* size (observed directly). Call `XRRUpdateConfiguration` then re-read the accessor.
 - **Running the process-level WM tests on the shared `:99` fixture.** See Pitfall 3.
 - **`sleep()`-based synchronisation in the harness.** Poll for a property with a deadline. Sleeps are the standard source of flaky WM tests and will be far worse under ASan (which slows the WM ~2x).
@@ -860,7 +862,7 @@ The three capability lines to extract per target for the XDIS-05 matrix are `SHA
 
 | # | Claim | Section | Risk if Wrong |
 |---|-------|---------|---------------|
-| A1 | Xft's non-RENDER core path renders `FcMatrix`-rotated glyphs correctly (only "started without error" was observed, not glyph output) | Pitfall / XDIS-04 | XDIS-04 fails on a RENDER-less target and, worse, `src/Border.cpp:49` `fatal()`s — the WM exits rather than degrading. **Spike this before planning 08-02 tasks.** |
+| A1 | Xft's non-RENDER core path renders `FcMatrix`-rotated glyphs correctly (only "started without error" was observed, not glyph output) | Pitfall / XDIS-04 | XDIS-04 fails on a RENDER-less target and, worse, `src/Border.cpp:49` `fatal()`s — the WM exits rather than degrading. **Spiked as 08-06 Task 1; the fatal call is removed by 08-06 Task 2 regardless of the spike's outcome.** |
 | A2 | TigerVNC's Xvnc advertises SHAPE and RANDR; TightVNC historically lacks RENDER | XDIS-05 | Not installed on this host; from community reports, not first-party docs. The capture script (Example 5) turns this into fact on first run — run it early. |
 | A3 | X2Go's NX-based agent (`nxagent`) supports SHAPE and RENDER but has historically limited RANDR | XDIS-05 | Same as A2 — resolve empirically. X2Go is the least-certain of the three targets and the most likely source of an accepted deviation. |
 | A4 | Adding `StructureNotifyMask` to the root mask introduces no unwanted event traffic | Pitfall 2 | Extra events would be root-only `ConfigureNotify`/`MapNotify`, already discarded by the loop — low risk, but verify no CPU-spin regression against the checklist's idle-CPU item. |
@@ -869,34 +871,42 @@ The three capability lines to extract per target for the XDIS-05 matrix are `SHA
 | A7 | Changing `autoRaise`/`raiseOnFocus` defaults to `true` (D-17) requires editing existing `tests/test_config.cpp` default assertions | Pattern 3 | If the tests are structured differently than expected, the edit is smaller. Either way this is a deliberate change, not a regression. |
 | A8 | X timestamp wraparound (~49.7 days) matters for the FOCUS-01 comparison | Code Example 3 | Unlikely to bite in practice on a rebooted VPS, but signed-delta comparison costs nothing and a bare `<` produces a total focus outage once per wrap. |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+All six questions below were resolved during planning; each carries a `RESOLVED:` line naming the plan and task that acts on the recommendation. Nothing here is live uncertainty — the residual *empirical* unknowns (does a rotated font actually load without RENDER; what are the real RSS numbers) are carried as executable spikes and measurements inside those plans, not as planning gaps.
 
 1. **Does the rotated Xft tab font load and render on a server without RENDER?**
    - What we know: `Xvfb -extension RENDER` produces a genuinely RENDER-less server `[VERIFIED]`; `xclock -face "DejaVu Sans-12"` (which links libXft) starts and maps a window there `[VERIFIED]`; `XftDefaultHasRender()` is exported by libXft `[VERIFIED]`; the tab font is opened with `FcMatrixRotate` at `include/x11wrap.h:296-306`, and a load failure calls `fatal()` at `src/Border.cpp:49`.
    - What's unclear: whether a *rotated* font pattern survives the core path, and whether `XftTextExtentsUtf8` returns sane extents there (`src/Border.cpp:56-60` already notes "Rotated Xft fonts have zero height").
-   - Recommendation: **Spike this first in 08-02** — a ~30-line program on `:N -extension RENDER` that opens the rotated font, measures extents, and draws into a pixmap. Regardless of the outcome, make the `Border.cpp:49` path non-fatal (fall back to an unrotated font, then to no label) — a WM that exits on a degraded remote server fails XDIS-05 outright.
+   - Recommendation: **Spike this first in 08-06** — a Catch2 case on `:N -extension RENDER` that opens the rotated font, measures extents, and draws into a pixmap. Regardless of the outcome, make the `Border.cpp:49` path non-fatal (fall back to an unrotated font, then to no label) — a WM that exits on a degraded remote server fails XDIS-05 outright.
+   - **RESOLVED: 08-06.** Task 1 is the spike, tagged `[xft_norender_spike]`, kept in-tree so the answer stays reproducible. Task 2 replaces the fatal call with the four-rung ladder unconditionally, so the fix does not depend on the spike's outcome. Task 3 proves it end-to-end against a RENDER-less server.
 
 2. **Where exactly does `WM2_FORCE_NO_SHAPE` get read?**
    - What we know: forcing `m_shapeEvent = -1` in the constructor is one line and makes every `hasShapeExtension()` consumer correct at once.
    - What's unclear: whether the test also wants to force it *after* startup (it does not — resolution/extension capability is fixed per connection).
    - Recommendation: read it once, immediately after `XShapeQueryExtension`, alongside the existing warning at `src/Manager.cpp:170`. Log a distinct message so the evidence transcript shows the forced path was actually taken.
+   - **RESOLVED: 08-03.** Task 2 reads the lever once at the capability query and forces the `-1` sentinel there, mirroring the RANDR sentinel shape.
 
 3. **How is "no Shape requests were issued" positively proven?**
    - What we know: the greppable single-call-site invariant plus `XShapeQueryExtents` on the frame is a good proxy.
    - What's unclear: whether the phase wants protocol-level proof (an `xtrace`/`x11trace` capture).
    - Recommendation: the invariant + unshaped-frame assertion is sufficient and hermetic; note `x11trace` as a manual escalation only if a reviewer disputes it. `xtrace` is not installed here.
+   - **RESOLVED: 08-03.** Task 1 collapses the call sites into the single `combineShape()` funnel; Task 3 asserts the greppable single-funnel invariant plus the unshaped-frame check. No protocol-level trace is planned.
 
 4. **Does the process-level harness get its own display, or is `:99` retained with locks?**
-   - What we know: sharing is genuinely unsafe (Pitfall 3), and `:99` is hardcoded at `CMakeLists.txt:88, 100, 143, 162, 178`.
-   - Recommendation: **allocate dynamically for the new WM tests**, leave `:99` for the five legacy display-backed targets, and add `RESOURCE_LOCK` so `ctest -j` can never interleave the two groups. This is the smallest change that is actually correct.
+   - What we know: sharing is genuinely unsafe (Pitfall 3). `:99` appears at `CMakeLists.txt:88, 100, 143, 162, 178` — five lines, but only **four** of them are `DISPLAY=:99` test-environment assignments (100, 143, 162, 178, one each for `test_smoke`, `test_client`, `test_xft_poc`, `test_ewmh`). Line 88 is the `Xvfb :99 -screen ...` server-launch command, not a target binding. So there are **four legacy display-backed targets**, not five `[VERIFIED: grep -c 'DISPLAY=:99' CMakeLists.txt → 4]`.
+   - Recommendation: **allocate dynamically for the new WM tests**, leave `:99` for the four legacy display-backed targets, and add `RESOURCE_LOCK` so `ctest -j` can never interleave the two groups. This is the smallest change that is actually correct.
+   - **RESOLVED: 08-01.** Task 1's `WmFixture` allocates a free display per instance and the `test_wm_process` target deliberately gets no `DISPLAY=:99` binding; Task 3 adds `RESOURCE_LOCK "x_display_99"` to the four legacy targets. The `DISPLAY=:99` count therefore stays at 4 for the whole phase — every plan that touches `CMakeLists.txt` re-asserts that, so an accidental fifth binding fails immediately.
 
 5. **What are the D-32 RSS and idle-CPU numbers?**
    - What we know: the constraint is a 512MB VPS running a VNC server *and* the WM; the current stale binary is 583,696 bytes.
    - Recommendation: measure baseline RSS with 0/1/5/20 mapped `xclock` clients first, then set the budget at roughly 2x the measured 20-client figure and record the measurement in the evidence directory. Do not invent a number before measuring. Idle CPU should assert `< 1%` over a 30s window, which also covers the checklist's "no steady CPU spin" item.
+   - **RESOLVED: 08-14.** Task 1 measures first and derives the budget from the measurement; the plan carries an explicit prohibition against inventing a number before measuring.
 
 6. **Is `--help` expected to work?**
    - What we know: it does not. `[VERIFIED: ./build/wm2-born-again --help → "unrecognized option '--help'" then "Try './build/wm2-born-again --help' for more information."]` — `getopt_long` rejects it and `src/Config.cpp:298-302` prints a message pointing at the very option that just failed, then `exit(2)`.
    - Recommendation: out of scope for the requirement IDs, but it is a 10-line fix that makes every piece of release evidence and every manual smoke run less confusing. Worth one task or an explicit deferral note.
+   - **RESOLVED: 08-13.** Folded into Task 2 ("Terminating X11 error paths and the help flag") rather than deferred — it is in the same file and the same commit as the exit-path coverage.
 
 ## Environment Availability
 
