@@ -43,6 +43,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -79,6 +80,51 @@ inline bool pathExists(const std::string& p)
 {
     struct stat st;
     return ::stat(p.c_str(), &st) == 0;
+}
+
+// Total CPU time (user + system) a process has consumed, in clock ticks, read
+// from /proc/<pid>/stat. Returns false if the process is gone or /proc cannot
+// be read.
+//
+// This is the only way to assert "the WM is IDLE" as opposed to "the WM is
+// still alive". A wedged event loop and a healthy blocked one are
+// indistinguishable from the outside -- both answer no X requests and both keep
+// their process alive -- but one of them burns a core. Two samples with a known
+// wall-clock gap between them separate the two cases with no ambiguity.
+//
+// Field parsing starts after the LAST ')' rather than at a fixed token offset:
+// the comm field is parenthesised and may itself contain spaces and
+// parentheses, which is the classic way naive /proc/stat parsers go wrong.
+// Between comm and utime lie eleven fields (state, ppid, pgrp, session, tty_nr,
+// tpgid, flags, minflt, cminflt, majflt, cmajflt).
+inline bool processCpuTicks(pid_t pid, unsigned long long& ticks)
+{
+    if (pid <= 0) return false;
+
+    const std::string path = "/proc/" + std::to_string(pid) + "/stat";
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+
+    std::string content;
+    char buf[1024];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) content.append(buf, n);
+    std::fclose(f);
+
+    const size_t close = content.find_last_of(')');
+    if (close == std::string::npos) return false;
+
+    std::istringstream in(content.substr(close + 1));
+    std::string token;
+    for (int i = 0; i < 11; ++i) {
+        if (!(in >> token)) return false;
+    }
+
+    unsigned long long utime = 0, stime = 0;
+    if (!(in >> utime >> stime)) return false;
+
+    ticks = utime + stime;
+    return true;
 }
 
 // Move-only fd handle, same shape as FdGuard in include/Manager.h:20-33.

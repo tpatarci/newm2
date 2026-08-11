@@ -314,9 +314,17 @@ if(BUILD_TESTS)
         # The tests exec the binary, so it must exist before they run.
         add_dependencies(test_wm_process wm2-born-again)
 
+        # TIMEOUT is a structural backstop, not the primary mechanism: every
+        # case here is already deadline-bounded internally, and the [wm_circulate]
+        # case additionally has to prove a WEDGED WM fails rather than hangs.
+        # If a future edit ever loses one of those internal deadlines, ctest kills
+        # the case instead of stalling the whole suite. Generous against the
+        # observed per-case cost (~11s here, more under ASan) so it can never be
+        # the thing that reddens a healthy run.
         catch_discover_tests(test_wm_process ADD_TAGS_AS_LABELS
             PROPERTIES
                 FIXTURES_REQUIRED preflight_ok
+                TIMEOUT 240
         )
 
         # --- Degraded-capability tests (XDIS-03, TEST-05) ---
