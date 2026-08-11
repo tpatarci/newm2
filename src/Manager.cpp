@@ -65,6 +65,8 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     , m_activeClient(nullptr)
     , m_apps(apps)
     , m_shapeEvent(0)
+    , m_lastKnownScreenW(0)
+    , m_lastKnownScreenH(0)
     , m_currentTime(-1)
     , m_looping(false)
     , m_returnCode(0)
@@ -352,6 +354,33 @@ static Cursor makeCursor(Display *d, Window w,
 }
 
 
+// D-27: these two accessors are the single source of truth for screen geometry
+// in this codebase. Every menu placement, window clamp, fullscreen geometry and
+// workarea computation goes through them, and no other translation unit is
+// permitted to read Xlib's cached screen dimensions directly.
+//
+// The cache they return is seeded once from Xlib in initialiseScreen() below.
+// Plan 08-05 of this phase refreshes it from a live root-geometry query, driven
+// by either a RANDR screen-change notification or a root ConfigureNotify.
+// Direct reads elsewhere are forbidden precisely because Xlib's own cache does
+// not self-update: on a server without RANDR nothing can refresh it at all, so
+// a direct reader would keep returning the pre-resize size forever.
+//
+// This deliberately mirrors the Shape funnel (Border::combineShape()): one
+// place to consult, one owner of the state, one place a later plan has to
+// change to make every consumer correct at once.
+int WindowManager::screenWidth() const
+{
+    return m_lastKnownScreenW;
+}
+
+
+int WindowManager::screenHeight() const
+{
+    return m_lastKnownScreenH;
+}
+
+
 void WindowManager::initialiseScreen()
 {
     int i = 0;
@@ -359,6 +388,13 @@ void WindowManager::initialiseScreen()
 
     m_root = RootWindow(display(), i);
     m_defaultColormap = DefaultColormap(display(), i);
+
+    // D-27: seed the manager-owned geometry cache immediately after the root
+    // window is established, and BEFORE setupEwmhProperties() -- called at the
+    // end of this function -- publishes the initial workarea from it. This is
+    // the only place in the codebase that reads Xlib's cached screen size.
+    m_lastKnownScreenW = DisplayWidth(display(), m_screenNumber);
+    m_lastKnownScreenH = DisplayHeight(display(), m_screenNumber);
 
     XColor black, white, temp;
 
@@ -524,8 +560,8 @@ void WindowManager::setupEwmhProperties()
 
     // Set _NET_WORKAREA to full screen geometry initially (docks not yet known)
     long workarea[4] = { 0, 0,
-        static_cast<long>(DisplayWidth(display(), m_screenNumber)),
-        static_cast<long>(DisplayHeight(display(), m_screenNumber)) };
+        static_cast<long>(screenWidth()),
+        static_cast<long>(screenHeight()) };
     XChangeProperty(display(), m_root, Atoms::net_workarea,
                     XA_CARDINAL, 32, PropModeReplace,
                     reinterpret_cast<unsigned char*>(workarea), 4);
@@ -667,8 +703,8 @@ void WindowManager::updateActiveWindow(Window w)
 
 void WindowManager::updateWorkarea()
 {
-    int screenW = DisplayWidth(display(), m_screenNumber);
-    int screenH = DisplayHeight(display(), m_screenNumber);
+    int screenW = screenWidth();
+    int screenH = screenHeight();
     int left = 0, right = 0, top = 0, bottom = 0;
 
     // Iterate all clients (both normal and hidden) for dock struts

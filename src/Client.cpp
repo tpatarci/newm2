@@ -169,7 +169,7 @@ void Client::manage(bool mapped)
     // Act
     gravitate(false);
 
-    int dw = DisplayWidth(display(), 0), dh = DisplayHeight(display(), 0);
+    int dw = windowManager()->screenWidth(), dh = windowManager()->screenHeight();
 
     if (m_w < m_minWidth) {
         m_w = m_minWidth; m_fixedSize = false; reshape = true;
@@ -282,8 +282,8 @@ void Client::setFullscreen(bool fullscreen)
 
         // Per D-05: strip border, cover full screen geometry INCLUDING dock areas
         m_border->stripForFullscreen();
-        int sw = DisplayWidth(display(), 0);
-        int sh = DisplayHeight(display(), 0);
+        int sw = windowManager()->screenWidth();
+        int sh = windowManager()->screenHeight();
         XMoveResizeWindow(display(), m_window, 0, 0, sw, sh);
         XRaiseWindow(display(), m_window);
     } else {
@@ -842,8 +842,8 @@ void Client::ensureVisible()
     // Fullscreen and maximized windows should not be repositioned
     if (m_isFullscreen || (m_isMaximizedVert && m_isMaximizedHorz)) return;
 
-    int mx = DisplayWidth(display(), 0) - 1;
-    int my = DisplayHeight(display(), 0) - 1;
+    int mx = windowManager()->screenWidth() - 1;
+    int my = windowManager()->screenHeight() - 1;
     int px = m_x;
     int py = m_y;
 

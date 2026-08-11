@@ -116,8 +116,8 @@ void WindowManager::menu(XButtonEvent *e)
     int numCategories = static_cast<int>(m_appCategories.size());
     int n = static_cast<int>(clients.size()) + 1 + numCategories;
 
-    int mx = DisplayWidth(display(), m_screenNumber) - 1;
-    int my = DisplayHeight(display(), m_screenNumber) - 1;
+    int mx = screenWidth() - 1;
+    int my = screenHeight() - 1;
 
     allowExit = ((e->x > mx - 3) && (e->y > my - 3));
     if (allowExit) n += 1;
@@ -358,8 +358,8 @@ void WindowManager::openCategorySubmenu(const std::pair<std::string, std::vector
         return;
     }
 
-    int mx = DisplayWidth(display(), m_screenNumber) - 1;
-    int my = DisplayHeight(display(), m_screenNumber) - 1;
+    int mx = screenWidth() - 1;
+    int my = screenHeight() - 1;
 
     // Measure submenu width exactly as the outer menu does, but over the
     // category's app names instead of menuLabelFn().
@@ -553,8 +553,8 @@ void WindowManager::showGeometry(int x, int y)
         reinterpret_cast<const FcChar8*>(string), len, &extents);
     int width = extents.width + 8;
     int height = m_menuFont->ascent + m_menuFont->descent + 8;
-    int mx = DisplayWidth(display(), m_screenNumber) - 1;
-    int my = DisplayHeight(display(), m_screenNumber) - 1;
+    int mx = screenWidth() - 1;
+    int my = screenHeight() - 1;
 
     XMoveResizeWindow(display(), m_menuWindow,
                       (mx - width) / 2, (my - height) / 2, width, height);

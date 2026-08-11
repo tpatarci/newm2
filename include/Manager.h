@@ -54,6 +54,14 @@ public:
     int screen() { return m_screenNumber; }
     bool hasShapeExtension() const { return m_shapeEvent >= 0; }
 
+    // D-27: the single source of truth for screen geometry. Defined in
+    // src/Manager.cpp, where the comment beside the definitions explains why no
+    // other translation unit may read Xlib's cached screen dimensions directly.
+    // Placed beside the capability predicate above deliberately: both are
+    // funnels, and the phase's later work hangs off each of them.
+    int screenWidth() const;
+    int screenHeight() const;
+
     enum class RootCursor {
         Normal, Delete, Down, Right, DownRight
     };
@@ -146,6 +154,16 @@ private:
     // Later plans in this phase add further capability members alongside this
     // one; they follow the same triple rather than inventing a new shape.
     int m_shapeEvent;
+
+    // D-27: manager-owned screen-geometry cache. Seeded from Xlib in
+    // initialiseScreen() before anything can publish or consume geometry, and
+    // read only through the two public accessors declared above -- which are
+    // the only readers of these members anywhere in the codebase. A later plan
+    // in this phase refreshes them from a live root-geometry query after a
+    // resolution change; nothing else may write them.
+    int m_lastKnownScreenW;
+    int m_lastKnownScreenH;
+
     int m_currentTime;
 
     bool m_looping;
