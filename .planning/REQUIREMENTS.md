@@ -81,7 +81,7 @@
 ### Focus & Window Rules
 
 - [ ] **FOCUS-01**: Focus stealing prevention using _NET_WM_USER_TIME timestamps
-- [ ] **FOCUS-02**: Configurable focus policy (click-to-focus, focus-follows-pointer, auto-raise)
+- [x] **FOCUS-02**: Configurable focus policy (click-to-focus, focus-follows-pointer, auto-raise)
 - [ ] **RULES-01**: Window matching rules in config file (match by WM_CLASS, WM_NAME, window type)
 - [ ] **RULES-02**: Per-rule actions: no-decorate, specific position/size, specific workspace, skip-taskbar
 
@@ -179,7 +179,7 @@
 | XDIS-04 | Phase 8 | Complete |
 | XDIS-05 | Phase 8 | Pending |
 | FOCUS-01 | Phase 8 | Pending |
-| FOCUS-02 | Phase 8 | Pending |
+| FOCUS-02 | Phase 8 | Complete |
 | RULES-01 | Phase 8 | Pending |
 | RULES-02 | Phase 8 | Pending |
 | CGUI-01 | Phase 9 | Pending |

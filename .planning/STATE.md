@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 08
 current_phase_name: xrandr-vnc-compatibility-focus-rules
 status: executing
-stopped_at: Completed 08-06-PLAN.md
-last_updated: "2026-08-11T15:53:14.054Z"
+stopped_at: Completed 08-07-PLAN.md
+last_updated: "2026-08-11T16:37:59.321Z"
 last_activity: 2026-08-11
 last_activity_desc: gathered Phase 8 context across 8 gray areas (32 decisions captured)
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 36
-  completed_plans: 28
+  completed_plans: 29
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 08 (xrandr-vnc-compatibility-focus-rules) — EXECUTING
-Plan: 7 of 14
+Plan: 8 of 14
 Status: Ready to execute
 Last activity: 2026-08-11 — Phase 08 execution started
 
-Progress: [████████░░] 78% (7/9 phases complete)
+Progress: [████████░░] 81% (7/9 phases complete)
 
 ## Performance Metrics
 
@@ -83,6 +83,7 @@ Progress: [████████░░] 78% (7/9 phases complete)
 | Phase 08 P04 | 52min | 2 tasks | 7 files |
 | Phase 08 P05 | 78min | 3 tasks | 7 files |
 | Phase 08 P06 | 71min | 3 tasks | 9 files |
+| Phase 08 P07 | 55min | 4 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -133,6 +134,13 @@ Recent decisions affecting current work:
 - [Phase ?]: The XRender capability probe carries no sentinel and drives no behaviour -- it exists for the XDIS-05 evidence transcript and as the discriminator for the RENDER-less tests
 - [Phase ?]: Deferred item 10's XMaskEvent hypothesis is refuted; the rare startup wedge is deferred item 9 (unflushed WM output), cured by retrying the readiness probe with a fresh window
 - [Phase ?]: XDIS-04's requirement text amended (D-14) to state fontconfig-level degradation and record why core X font revival is excluded
+- [Phase ?]: 08-07: FOCUS-02 was unimplemented, not merely unproven -- the three focus booleans had zero runtime consumers; each now reaches a real branch (D-15)
+- [Phase ?]: 08-07: the auto-raise gate sits where the deadline is ARMED, not in the expiry branches, so computePollTimeout() reports no deadline and the loop blocks indefinitely
+- [Phase ?]: 08-07: D-17 resolved in favour of behaviour -- raiseOnFocus and autoRaise now default TRUE, which is what users already got; the all-false defaults never described the binary
+- [Phase ?]: 08-07: the WM startup banner now reports the running focus policy instead of claiming 'Focus follows pointer' unconditionally -- that transcript is the XDIS-05 evidence artefact
+- [Phase ?]: 08-07: deferred item 6 (circulate() 100%-CPU spin) fixed with a bounded scan; the regression test creates its own transient client so it cannot go vacuous when item 7 is fixed
+- [Phase ?]: 08-07: a settle before a non-event assertion must be REPEATED AND SPACED -- 15 pumps back to back left a deleted production gate green; the same 15 at 20ms intervals redden it
+- [Phase ?]: 08-07: gating auto-raise at the expiry site was implemented and measured -- it does NOT spin (0 CPU ticks), so the idle-CPU case is not evidence for the gate's placement
 
 ### Pending Todos
 
@@ -162,6 +170,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-11T15:52:59.887Z
-Stopped at: Completed 08-06-PLAN.md
+Last session: 2026-08-11T16:37:32.372Z
+Stopped at: Completed 08-07-PLAN.md
 Resume file: None

@@ -304,6 +304,34 @@ documents that it is a workaround rather than a convention to copy.
 **Disposition:** deferred to the test-infrastructure / diagnostics work
 (08-11 … 08-13), or to whoever next touches the event loop.
 
+### UPDATE (08-07): this now makes NEGATIVE TESTS LIE — priority up
+
+08-06 recorded item 9 as a harness inconvenience with a known workaround. 08-07
+found it is worse than that: **two of that plan's three gate negative-tests
+failed to fail because of it.** Deleting the production click-to-focus gate left
+`tests/test_wm_focus.cpp` fully green — the WM had processed the crossing event,
+fired its timer and published `_NET_ACTIVE_WINDOW`, and the test still read the
+previous value. A test suite that stays green with a gate deleted is worth
+nothing, and nothing about the symptom announces itself.
+
+Two facts measured while chasing it, both now encoded in `settleWm()`:
+
+- **One nudge is not enough** before a non-event read; the WM's output is still
+  in its buffer.
+- **N nudges back to back are not N wake-ups.** A ten-pump tight loop still read
+  the stale value. The WM is not necessarily scheduled between two nudges issued
+  microseconds apart. Fifteen pumps at 20 ms intervals read the true value every
+  time, and reddened the deleted gate every time.
+
+So every future "the WM did not do X" assertion in this phase has to carry a
+repeated, *spaced* settle, or it is not an assertion at all. That is a workaround
+being copied into more places rather than a defect getting smaller.
+
+Worth checking when this is fixed, or before: `tests/test_wm_geometry.cpp` case 9
+uses a ten-pump TIGHT loop before its own "the WM did nothing" assertions. Its
+negative tests were recorded red at the time it was written, so it is probably
+fine — but it is the same shape that failed here.
+
 ## 10. Rare WM startup hang before the event loop begins (PRE-EXISTING, unconfirmed cause)
 
 **Found during:** 08-05 Task 3, running the combined
