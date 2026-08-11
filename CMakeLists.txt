@@ -63,6 +63,26 @@ if(BUILD_TESTS)
     list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
     include(Catch)
 
+    # --- Environment preflight fixture (D-01, D-02, TEST-07) ---
+    #
+    # Setup-only ctest fixture: fails with a named cause before any behavioral
+    # assertion runs. Deliberately NOT a CMake configure-time check -- that would
+    # block plain binary builds on machines that never run tests.
+    #
+    # The explicit LABELS keeps the phase on ONE selection mechanism. This is a
+    # hand-written add_test, not a Catch2 case, so the tags-as-labels option does
+    # not reach it; without the manual label the only way to select it would be
+    # by name, reintroducing the exact name-vs-label split D-33 exists to remove.
+    # Labelling a fixture test does not change fixture semantics: ctest still
+    # pulls this setup test in automatically for any -L-selected test that
+    # declares FIXTURES_REQUIRED preflight_ok, whether or not this test itself
+    # matched the filter.
+    add_test(NAME preflight COMMAND ${CMAKE_SOURCE_DIR}/scripts/preflight.sh --quiet)
+    set_tests_properties(preflight PROPERTIES
+        FIXTURES_SETUP preflight_ok
+        LABELS "preflight"
+    )
+
     # RAII unit tests (X11 linked for inline deleter calls, but no display needed)
     add_executable(test_raii tests/test_raii.cpp)
     target_link_libraries(test_raii PRIVATE
@@ -133,7 +153,7 @@ if(BUILD_TESTS)
         catch_discover_tests(test_smoke ADD_TAGS_AS_LABELS
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
-                FIXTURES_REQUIRED xvfb_display
+                FIXTURES_REQUIRED "xvfb_display;preflight_ok"
         )
     else()
         message(WARNING "Xvfb not found -- smoke tests disabled")
@@ -176,7 +196,7 @@ if(BUILD_TESTS)
         catch_discover_tests(test_client ADD_TAGS_AS_LABELS
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
-                FIXTURES_REQUIRED xvfb_display
+                FIXTURES_REQUIRED "xvfb_display;preflight_ok"
         )
 
         # Xft PoC test (need Xvfb display + Xft/fontconfig)
@@ -195,7 +215,7 @@ if(BUILD_TESTS)
         catch_discover_tests(test_xft_poc ADD_TAGS_AS_LABELS
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
-                FIXTURES_REQUIRED xvfb_display
+                FIXTURES_REQUIRED "xvfb_display;preflight_ok"
         )
 
         # EWMH compliance tests (need Xvfb display)
@@ -211,7 +231,7 @@ if(BUILD_TESTS)
         catch_discover_tests(test_ewmh ADD_TAGS_AS_LABELS
             PROPERTIES
                 ENVIRONMENT "DISPLAY=:99"
-                FIXTURES_REQUIRED xvfb_display
+                FIXTURES_REQUIRED "xvfb_display;preflight_ok"
         )
 
         # --- Process-level WM tests (D-07, TEST-05) ---
@@ -248,7 +268,10 @@ if(BUILD_TESTS)
         # The tests exec the binary, so it must exist before they run.
         add_dependencies(test_wm_process wm2-born-again)
 
-        catch_discover_tests(test_wm_process ADD_TAGS_AS_LABELS)
+        catch_discover_tests(test_wm_process ADD_TAGS_AS_LABELS
+            PROPERTIES
+                FIXTURES_REQUIRED preflight_ok
+        )
     endif()
 
     # Config parsing unit tests (pure data transformation, no X11 needed)
