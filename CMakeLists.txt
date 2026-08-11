@@ -27,6 +27,14 @@ pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
 # Build-time required, run-time optional -- the two are independent.
 pkg_check_modules(XRANDR REQUIRED IMPORTED_TARGET xrandr)
 
+# XDIS-04: libxrender follows exactly the same build-time-required /
+# run-time-optional split as libxrandr above. It is pulled in transitively by
+# libXft today, but the capability probe calls a public XRender entry point
+# directly, so the dependency is declared here rather than being relied on by
+# accident. A server without the extension is a warning and a degraded font
+# ladder, never a build failure and never a fatal error.
+pkg_check_modules(XRENDER REQUIRED IMPORTED_TARGET xrender)
+
 # --- WM Binary (BLD-04) ---
 add_executable(${PROJECT_NAME}
     src/main.cpp
@@ -332,11 +340,21 @@ if(BUILD_TESTS)
             Catch2::Catch2WithMain
             PkgConfig::X11
             PkgConfig::XEXT
+            # XDIS-04: the [xft_norender_spike] group opens the same rotated
+            # FcMatrix pattern the production loader opens and asks the public
+            # XRender entry point whether the extension is there. Both are
+            # linked explicitly rather than leaning on libXft's transitive
+            # dependencies, so the spike cannot start answering a different
+            # question if that transitive edge ever changes.
+            PkgConfig::XFT
+            PkgConfig::FONTCONFIG
+            PkgConfig::XRENDER
         )
         target_include_directories(test_wm_fallbacks PRIVATE
             ${CMAKE_SOURCE_DIR}/include
             ${CMAKE_SOURCE_DIR}/tests
             ${XFT_INCLUDE_DIRS}
+            ${FONTCONFIG_INCLUDE_DIRS}
         )
 
         target_compile_definitions(test_wm_fallbacks PRIVATE

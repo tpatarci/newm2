@@ -7,8 +7,9 @@
 // unrelated tag groups can share one target here.
 //
 // Tags in this file:
-//   [wm_noshape]       -- the WM runs correctly with Shape forced unavailable
-//   [shape_invariant]  -- source-level guard: one and only one Shape call site
+//   [wm_noshape]          -- the WM runs correctly with Shape forced unavailable
+//   [shape_invariant]     -- source-level guard: one and only one Shape call site
+//   [xft_norender_spike]  -- 08-RESEARCH Open Question 1, answered in-tree
 //
 // Why an environment variable rather than a server without the extension: the X
 // server refuses to turn SHAPE off, answering `Extension "SHAPE" can not be
@@ -26,7 +27,12 @@
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/extensions/shape.h>
+// Xrender.h, not render.h: the latter is the protocol/type header and declares
+// no entry points, so the capability probe below would not compile against it.
+#include <X11/extensions/Xrender.h>
 
+#include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -49,6 +55,20 @@ WmFixtureOptions forcedNoShape()
 {
     WmFixtureOptions o;
     o.childEnv["WM2_FORCE_NO_SHAPE"] = "1";
+    return o;
+}
+
+// A genuinely capability-less server, not a lever: unlike SHAPE, the X server
+// is willing to turn RENDER off. WmFixture appends xvfbArgs AFTER its own
+// defaults (which include "+render"), and the later argument wins -- measured
+// on this host, the XRender capability query answers False with both present
+// in that order. (Named in prose, not in code: an acceptance criterion counts
+// the literal entry point and a comment must not be able to break it -- the
+// exact failure 08-01, 08-02, 08-03 and 08-05 each recorded.)
+WmFixtureOptions noRenderServer()
+{
+    WmFixtureOptions o;
+    o.xvfbArgs = {"-extension", "RENDER"};
     return o;
 }
 
@@ -123,6 +143,22 @@ bool listContains(const std::vector<Window>& list, Window w)
 {
     for (Window entry : list) if (entry == w) return true;
     return false;
+}
+
+// --- X protocol error trap, used by the spike's drawing fact ----------------
+//
+// Xlib reports protocol errors asynchronously through a global handler, so
+// "the draw completed without an X error" can only be asserted by installing
+// one, round-tripping with XSync, and reading the counter afterwards.
+
+int g_xErrors = 0;
+char g_xErrorText[256] = {0};
+
+int countingErrorHandler(Display* d, XErrorEvent* e)
+{
+    ++g_xErrors;
+    XGetErrorText(d, e->error_code, g_xErrorText, sizeof g_xErrorText);
+    return 0;
 }
 
 } // namespace
@@ -351,4 +387,143 @@ TEST_CASE("src/Border.cpp names the Xlib rectangle-combining call exactly once",
          "extension. Route the new call through the funnel instead.");
 
     REQUIRE(occurrences == 1);
+}
+
+// ---------------------------------------------------------------------------
+// Open Question 1 (08-RESEARCH.md): does the rotated FcMatrix tab font survive
+// on a server with the XRender extension disabled?
+//
+// ANSWER, measured by this case on this host: YES, completely. libXft falls
+// back to its core-X11 glyph path, the rotated pattern loads, XftTextExtentsUtf8
+// returns the same numbers it returns with RENDER present, and drawing into a
+// pixmap raises no protocol error. The rotated tab -- the project's
+// non-negotiable visual identity -- is therefore NOT lost on a RENDER-less
+// remote server.
+//
+// This case exists so that answer stays reproducible by re-running one ctest
+// filter rather than by trusting a sentence in a summary. It is deliberately a
+// pure font/extension spike: it asserts nothing about the WM's own font ladder,
+// which the [wm_norender] group below covers.
+//
+// The answer does NOT make the ladder in src/Border.cpp optional. It narrows
+// which rung is taken here, not whether a font failure may kill the WM: the
+// four rungs also cover a target with no usable font file at all, which no
+// amount of RENDER availability protects against.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Spike: a rotated Xft font loads, measures and draws with XRender disabled",
+          "[xft_norender_spike]")
+{
+    WmFixture fixture(noRenderServer());
+
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    g_xErrors = 0;
+    g_xErrorText[0] = '\0';
+    XErrorHandler previous = XSetErrorHandler(countingErrorHandler);
+
+    // --- Fact 1: is the extension actually absent on this connection? -------
+    //
+    // Asked through the public XRender entry point. Deliberately NOT
+    // XftDefaultHasRender (exported by libXft but declared in no installed
+    // header, so using it would mean hand-declaring a private symbol) and
+    // deliberately NOT parsing xdpyinfo output.
+    int renderEventBase = 0, renderErrorBase = 0;
+    const bool renderPresent =
+        (XRenderQueryExtension(d, &renderEventBase, &renderErrorBase) == True);
+
+    std::printf("[spike] fact 1  XRender present on this connection: %s\n",
+                renderPresent ? "YES" : "NO");
+    INFO("wm stderr: " << fixture.wmStderr());
+    // If this ever goes green with RENDER present, the whole spike is
+    // measuring the ordinary path and its answer means nothing.
+    REQUIRE_FALSE(renderPresent);
+
+    // --- Fact 2: does the rotated pattern load at all? ----------------------
+    //
+    // Built through the SAME factory the production loader uses, with the SAME
+    // preferred chain, because a differently-constructed pattern would answer a
+    // different question.
+    x11::XftFontPtr rotated = x11::make_xft_font_rotated(
+        d, "Noto Sans,DejaVu Sans,Sans:bold:size=12");
+
+    std::printf("[spike] fact 2  rotated preferred-chain font loaded: %s\n",
+                rotated ? "YES" : "NO");
+
+    if (!rotated) {
+        // Recorded rather than assumed: if this host ever answers NO, the next
+        // reader sees which rung of the Border ladder becomes load-bearing.
+        std::printf("[spike] fact 2b rotated generic-sans font loaded: ");
+        x11::XftFontPtr generic =
+            x11::make_xft_font_rotated(d, "sans-serif:bold:size=12");
+        std::printf("%s\n", generic ? "YES" : "NO");
+        std::printf("[spike] CONCLUSION: rotated fonts do NOT survive without "
+                    "XRender on this host; Border rungs 3/4 carry the tab.\n");
+    }
+    REQUIRE(rotated);
+    std::printf("[spike] CONCLUSION: rotated fonts DO survive without XRender; "
+                "libXft's core path renders the sideways tab.\n");
+
+    // --- Fact 3: are the extents usable? ------------------------------------
+    //
+    // Border sizes the tab from these numbers, so a zero or nonsensical value
+    // would break the layout even though the load succeeded.
+    XGlyphInfo oneGlyph;
+    std::memset(&oneGlyph, 0, sizeof oneGlyph);
+    XftTextExtentsUtf8(d, rotated.get(),
+                       reinterpret_cast<const FcChar8*>("M"), 1, &oneGlyph);
+
+    XGlyphInfo fiveGlyphs;
+    std::memset(&fiveGlyphs, 0, sizeof fiveGlyphs);
+    XftTextExtentsUtf8(d, rotated.get(),
+                       reinterpret_cast<const FcChar8*>("Hello"), 5, &fiveGlyphs);
+
+    std::printf("[spike] fact 3  extents \"M\": w=%d h=%d   \"Hello\": w=%d h=%d\n",
+                oneGlyph.width, oneGlyph.height,
+                fiveGlyphs.width, fiveGlyphs.height);
+
+    REQUIRE(oneGlyph.width > 0);
+    REQUIRE(oneGlyph.height > 0);
+    // Rotated: the string grows along the HEIGHT axis while the width stays at
+    // the single-line thickness. That asymmetry is what proves the FcMatrix
+    // rotation was honoured rather than silently dropped.
+    REQUIRE(fiveGlyphs.height > oneGlyph.height);
+    REQUIRE(fiveGlyphs.width == oneGlyph.width);
+
+    // --- Fact 4: does drawing it raise a protocol error? --------------------
+    const int screen = DefaultScreen(d);
+    Pixmap pixmap = XCreatePixmap(d, DefaultRootWindow(d), 120, 200,
+                                  static_cast<unsigned int>(DefaultDepth(d, screen)));
+    REQUIRE(pixmap != None);
+
+    XftDraw* rawDraw = XftDrawCreate(d, pixmap, DefaultVisual(d, screen),
+                                     DefaultColormap(d, screen));
+    REQUIRE(rawDraw != nullptr);
+    x11::XftDrawPtr draw(rawDraw);
+
+    x11::XftColorWrap ink(d, DefaultVisual(d, screen),
+                          DefaultColormap(d, screen), "black");
+    REQUIRE(ink);
+
+    XftDrawStringUtf8(draw.get(), ink.get(), rotated.get(), 10, 20,
+                      reinterpret_cast<const FcChar8*>("Hello"), 5);
+    XSync(d, False);
+
+    std::printf("[spike] fact 4  X protocol errors during rotated draw: %d%s%s\n",
+                g_xErrors,
+                g_xErrors ? "  last: " : "",
+                g_xErrors ? g_xErrorText : "");
+    std::fflush(stdout);
+
+    INFO("last X error: " << g_xErrorText);
+    REQUIRE(g_xErrors == 0);
+
+    draw.reset();
+    XFreePixmap(d, pixmap);
+    XSync(d, False);
+    XSetErrorHandler(previous);
+
+    REQUIRE(fixture.wmAlive());
 }
