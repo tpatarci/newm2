@@ -49,8 +49,8 @@
 
 ### Xrandr & VNC
 
-- [ ] **XDIS-01**: Xrandr support for display configuration and resolution changes
-- [ ] **XDIS-02**: Graceful fallback when Xrandr unavailable (VNC)
+- [x] **XDIS-01**: Xrandr support for display configuration and resolution changes
+- [x] **XDIS-02**: Graceful fallback when Xrandr unavailable (VNC)
 - [x] **XDIS-03**: Graceful fallback when Shape extension unavailable (rectangular frames)
 - [ ] **XDIS-04**: Graceful fallback when XRender unavailable (core X font fallback)
 - [ ] **XDIS-05**: Compatible with TigerVNC, TightVNC, XRDP, X2Go out of the box
@@ -173,8 +173,8 @@
 | APPS-03 | Phase 7 | Complete |
 | APPS-04 | Phase 7 | Complete |
 | APPS-05 | Phase 7 | Complete |
-| XDIS-01 | Phase 8 | Pending |
-| XDIS-02 | Phase 8 | Pending |
+| XDIS-01 | Phase 8 | Complete |
+| XDIS-02 | Phase 8 | Complete |
 | XDIS-03 | Phase 8 | Complete |
 | XDIS-04 | Phase 8 | Pending |
 | XDIS-05 | Phase 8 | Pending |
