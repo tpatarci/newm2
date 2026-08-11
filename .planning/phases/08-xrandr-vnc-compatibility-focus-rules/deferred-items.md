@@ -122,7 +122,7 @@ suppression counts. Run the asan tree through the gate, not through bare ctest.
 
 **Disposition:** deferred to the test-infrastructure work (08-11 … 08-13).
 
-## 6. `WindowManager::circulate()` spins forever when no client is in Normal state (PRE-EXISTING, severe)
+## 6. `WindowManager::circulate()` spins forever when no client is in Normal state — RESOLVED in 08-07 (`62e9c0d`)
 
 **Found during:** 08-04 Task 2, while building the geometry suite's clamp trigger.
 
@@ -167,10 +167,58 @@ behaviour change to an unrelated subsystem (deviation Rule 4). It needs its own
 decision about what a circulate with no eligible client should do — return, or
 fall through to the first client regardless of state.
 
-**Disposition:** deferred, recommended for the focus/rules work (08-07 … 08-10),
-which is the phase's next scheduled visit to `src/Buttons.cpp`. Until then,
-`tests/test_wm_geometry.cpp` deliberately never drives the clamp on a client that
-is not Normal, and says so at the point where it declines to.
+**Disposition:** ~~deferred, recommended for the focus/rules work (08-07 … 08-10),
+which is the phase's next scheduled visit to `src/Buttons.cpp`.~~ **RESOLVED** —
+see below.
+
+### RESOLVED (08-07): bounded scan, `62e9c0d`
+
+Fixed in plan 08-07 at the user's explicit direction, as additional in-scope work
+alongside the focus-policy tasks — 08-07 opens `src/Buttons.cpp` anyway and the
+defect is focus-adjacent.
+
+**Regression test first.** `tests/test_wm_process.cpp` gained a `[wm_circulate]`
+case that reproduces the freeze and fails against the unfixed code. Measured RED:
+**595 CPU ticks burned during a 6-second responsiveness probe**, and a window
+mapped after the root Button3 was never framed. Both assertions go green after the
+fix, and the case now completes in 2.2 s.
+
+The case asserts **two** things, because "alive" and "working" are different
+claims and the defect satisfies the first:
+
+- **responsiveness** — a window mapped after the click is still framed, on a 6 s
+  deadline, so a regression *fails* rather than hanging the suite. A `TIMEOUT` was
+  also added to the `test_wm_process` ctest registration as a structural backstop.
+- **idleness** — the WM's CPU time over a quiet 2 s interval, read from
+  `/proc/<pid>/stat` through the new `wm2test::processCpuTicks()` helper, must stay
+  under 20 ticks. A wedged WM accrues roughly 200 over the same interval. This is
+  the assertion that separates "blocked in `poll()`" from "burning a core", and the
+  one that would catch a "fix" that merely relocated the busy-wait.
+
+**The test does not depend on item 7.** The obvious precondition — start the WM
+with no clients and rely on the adopted menu/WM-check windows to keep `m_clients`
+non-empty — would go silently vacuous the day item 7 is fixed. The case instead
+maps its **own transient** window: `Normal` but `isTransient()`, which is exactly
+what the break condition rejects, so the list is non-empty and eligible-free under
+the test's own control whichever way item 7 goes.
+
+**The fix** replaces the unbounded loop with a scan bounded by `m_clients.size()`
+that visits each entry at most once and returns when nothing is eligible. It is
+behaviour-preserving where eligible clients exist: with `i >= 0` the step range
+`1..n` visits `i+1 … i+n-1` and then hits `j == i`, which is precisely the set the
+old loop examined before its `j == i` return. Confirmed by the `[wm_geometry]`
+clamp cases, which reach `ensureVisible()` through this same call and still pass.
+
+**Verified:** `[wm_circulate]` green in debug and through
+`scripts/gates/build-all.sh asan` (0 sanitizer findings);
+`scripts/analysis/run-static-analysis.sh` exit 0 with cppcheck back at its
+18-finding baseline.
+
+**Note for whoever revisits `tests/test_wm_geometry.cpp`:** its case 5 comment
+still explains that it declines to drive the clamp on a non-Normal client because
+circulate would wedge the WM. The wedge is gone; the comment is now history rather
+than a live constraint. Left in place because rewriting that file is not 08-07's
+job, but it should not be read as a standing restriction.
 
 ## 7. The WM manages its own menu/submenu/WM-check windows as clients (PRE-EXISTING)
 
