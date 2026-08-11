@@ -4,17 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 8
 current_phase_name: Xrandr + VNC Compatibility + Focus/Rules
-status: verifying
-stopped_at: Completed 07-06-PLAN.md — Phase 7 complete
-last_updated: "2026-07-08T10:07:38.913Z"
+status: planning
+stopped_at: Phase 8 context gathered
+last_updated: "2026-08-11T06:59:48.709Z"
 last_activity: 2026-07-08
-last_activity_desc: Phase 07 complete, transitioned to Phase 8
+last_activity_desc: Inserted compiled behavior checklist into Phase 8 milestone scope
 progress:
-  total_phases: 9
+  total_phases: 8
   completed_phases: 7
   total_plans: 22
   completed_plans: 22
-  percent: 78
 ---
 
 # Project State
@@ -24,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** A lightweight, visually distinctive window manager that works well on resource-constrained VPS instances via remote desktop -- simple enough for non-programmers to configure, reliable enough for daily use.
-**Current focus:** Phase 07 — root-menu-application-discovery
+**Current focus:** Phase 08 — Xrandr + VNC Compatibility + Focus/Rules
 
 ## Current Position
 
 Phase: 8 — Xrandr + VNC Compatibility + Focus/Rules
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-07-08 — Phase 07 complete, transitioned to Phase 8
+Plan: 08-01 — Compiled behavior verification gate
+Status: Planning updated — compiled-code behavior checklist is now a Phase 8 gate
+Last activity: 2026-07-08 — inserted compiled behavior checklist into Phase 8 milestone scope
 
-Progress: [██████████] 100%
+Progress: 78% (7/9 phases complete)
 
 ## Performance Metrics
 
@@ -104,15 +103,19 @@ Recent decisions affecting current work:
 - [Phase 07]: openCategorySubmenu() signature extended with outerX/outerY/outerMaxWidth/rowIndex params beyond the plan's literal 2-param declaration, since the outer menu's position/hover-row-index are menu()'s local variables not otherwise recoverable
 - [Phase ?]: 07-06: wm2-born-again CMake target was missing AppCache.cpp/DesktopEntry.cpp/BinaryScanner.cpp source entries -- fixed in Task 1
 - [Phase ?]: 07-06: D-02 wording fix scoped strictly to PROJECT.md/ROADMAP.md's 5 flagged AI-powered occurrences -- AI showcase framing preserved
+- [Phase 8]: COMPILED_CODE_BEHAVIOR_CHECKLIST.md is routed into Phase 8 as the first verification/hardening gate rather than a standalone milestone, because its findings overlap XDIS, FOCUS, remote-display compatibility, and runtime proof requirements
 
 ### Pending Todos
 
-None yet.
+- Phase 8 08-01: Turn COMPILED_CODE_BEHAVIOR_CHECKLIST.md into executable process-level Xvfb/Xephyr tests, sanitizer/static-analysis gates, and release evidence capture.
+- Phase 8 08-01: Resolve or explicitly accept current scan findings: missing xft/fontconfig build preflight on this host, eventDestroy client lifetime hazard, no-Shape fallback proof, and focus policy config wiring proof.
 
 ### Blockers/Concerns
 
 - Phase 4 (Border/Xft): Xft rendering inside shaped windows is poorly documented; build a PoC first
 - Phase 7 (App Scanner): Binary scan heuristics for identifying GUI apps are novel
+- Phase 8 (Behavior Verification): Current host cannot configure until pkg-config sees xft/fontconfig; do not claim compiled behavior coverage until dependency preflight passes
+- Phase 8 (Behavior Verification): Static scan found eventDestroy use-after-free risk, incomplete no-Shape fallback proof, and parsed focus config that needs runtime behavior tests
 - Phase 9 (Config GUI): GTK3 performance over SSH X forwarding is unvalidated
 
 ## Deferred Items
@@ -125,6 +128,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-08T09:53:41.537Z
-Stopped at: Completed 07-06-PLAN.md — Phase 7 complete
-Resume file: None
+Last session: 2026-08-11T06:59:48.665Z
+Stopped at: Phase 8 context gathered
+Resume file: .planning/phases/08-xrandr-vnc-compatibility-focus-rules/08-CONTEXT.md
