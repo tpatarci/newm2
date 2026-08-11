@@ -93,7 +93,15 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
                  "  Parts derived from 9wm Copyright (c) 1994-96 David Hogan\n"
                  "  Copying and redistribution encouraged.  No warranty.\n\n");
 
-    std::fprintf(stderr, "  Focus follows pointer.  Hidden clients only on menu.\n\n");
+    // FOCUS-02: the banner used to claim "Focus follows pointer" unconditionally.
+    // That was true of every build until this plan wired the booleans up, and is
+    // a lie the moment a user sets click-to-focus. The startup transcript is the
+    // per-target evidence artefact for XDIS-05, so it has to describe the policy
+    // this process is actually running, not the one the source once hardcoded.
+    std::fprintf(stderr, "  %s  %s  %s  Hidden clients only on menu.\n\n",
+                 m_config.clickToFocus ? "Click to focus." : "Focus follows pointer.",
+                 m_config.autoRaise    ? "Auto-raise on."   : "Auto-raise off.",
+                 m_config.raiseOnFocus ? "Raise on focus."  : "No raise on focus.");
 
     // Group the merged AppEntry list into category buckets for menu rendering.
     // Pure data grouping, no X11 dependency -- safe to run before the display opens.

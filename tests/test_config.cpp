@@ -47,10 +47,17 @@ TEST_CASE("Config defaults match upstream Config.h", "[config]") {
     REQUIRE(cfg.menuHighlight == "gray60");
     REQUIRE(cfg.menuBorders == "black");
 
-    // Focus policy - 3 settings
+    // Focus policy - 3 settings.
+    //
+    // D-17: raiseOnFocus and autoRaise assert TRUE deliberately. They read false
+    // until plan 08-07, but nothing in the runtime consulted them, so those
+    // assertions were pinning values the WM ignored -- it did pointer focus with
+    // auto-raise and fused raising into focusing regardless. The defaults were
+    // corrected to describe the shipped binary; these assertions follow, and are
+    // stated explicitly rather than loosened.
     REQUIRE(cfg.clickToFocus == false);
-    REQUIRE(cfg.raiseOnFocus == false);
-    REQUIRE(cfg.autoRaise == false);
+    REQUIRE(cfg.raiseOnFocus == true);
+    REQUIRE(cfg.autoRaise == true);
 
     // Timing (milliseconds) - 3 settings
     REQUIRE(cfg.autoRaiseDelay == 400);
@@ -86,9 +93,9 @@ TEST_CASE("applyFile parses key=value and overrides defaults", "[config]") {
     REQUIRE(cfg.clickToFocus == true);
     REQUIRE(cfg.newWindowCommand == "alacritty");
 
-    // Unset keys retain defaults
+    // Unset keys retain defaults (D-17: auto-raise defaults to true)
     REQUIRE(cfg.tabBackground == "gray80");
-    REQUIRE(cfg.autoRaise == false);
+    REQUIRE(cfg.autoRaise == true);
 
     removeTempFile(path);
 }
@@ -283,7 +290,10 @@ TEST_CASE("Config load precedence: user config overrides system config", "[confi
     {
         std::ofstream out(userSubdir + "/config");
         out << "tab-foreground = user-color\n";
-        out << "auto-raise = true\n";
+        // Written FALSE against a true default (D-17), so this assertion keeps
+        // discriminating. `auto-raise = true` would now agree with the default
+        // and would pass whether the file was read or ignored.
+        out << "auto-raise = false\n";
     }
 
     setenv("XDG_CONFIG_DIRS", sysDir.c_str(), 1);
@@ -297,8 +307,8 @@ TEST_CASE("Config load precedence: user config overrides system config", "[confi
     REQUIRE(cfg.tabForeground == "user-color");
     // System config value preserved (not overridden by user)
     REQUIRE(cfg.frameThickness == 15);
-    // User config adds new setting
-    REQUIRE(cfg.autoRaise == true);
+    // User config adds new setting, overriding the built-in default
+    REQUIRE(cfg.autoRaise == false);
     // Defaults preserved where neither config sets
     REQUIRE(cfg.tabBackground == "gray80");
 
@@ -337,7 +347,9 @@ TEST_CASE("Config load with no config files returns pure defaults", "[config]") 
     REQUIRE(cfg.frameThickness == 7);
     REQUIRE(cfg.autoRaiseDelay == 400);
     REQUIRE(cfg.newWindowCommand == "xterm");
-    REQUIRE(cfg.autoRaise == false);
+    REQUIRE(cfg.autoRaise == true);          // D-17
+    REQUIRE(cfg.raiseOnFocus == true);       // D-17
+    REQUIRE(cfg.clickToFocus == false);
 
     // Restore
     if (origDirsStr.empty()) unsetenv("XDG_CONFIG_DIRS");
@@ -599,6 +611,9 @@ TEST_CASE("CLI --frame-thickness sets integer value", "[config][cli]") {
 // Test 22: CLI --auto-raise sets autoRaise to true
 TEST_CASE("CLI --auto-raise enables boolean", "[config][cli]") {
     Config cfg;
+    // Forced off first: the built-in default is now TRUE (D-17), so without
+    // this the case would pass whether or not the flag did anything.
+    cfg.autoRaise = false;
     REQUIRE(cfg.autoRaise == false);
     char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--auto-raise"), nullptr };
     cfg.applyCliArgs(2, argv);
@@ -629,6 +644,101 @@ TEST_CASE("CLI --no-click-to-focus disables boolean", "[config][cli]") {
     char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--no-click-to-focus"), nullptr };
     cfg.applyCliArgs(2, argv);
     REQUIRE(cfg.clickToFocus == false);
+}
+
+// Test 25a: CLI --raise-on-focus sets raiseOnFocus to true
+//
+// FOCUS-02: raise-on-focus was the one focus boolean with no CLI coverage in
+// either direction. Both flags existed and dispatched correctly, but nothing
+// asserted it -- so the pair could have been broken (or removed) without a
+// single test noticing, on the boolean whose default this plan changes.
+TEST_CASE("CLI --raise-on-focus enables boolean", "[config][cli]") {
+    Config cfg;
+    // Forced off first: the built-in default is now TRUE (D-17).
+    cfg.raiseOnFocus = false;
+    REQUIRE(cfg.raiseOnFocus == false);
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--raise-on-focus"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.raiseOnFocus == true);
+}
+
+// Test 25b: CLI --no-raise-on-focus sets raiseOnFocus to false
+TEST_CASE("CLI --no-raise-on-focus disables boolean", "[config][cli]") {
+    Config cfg;
+    cfg.raiseOnFocus = true;
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--no-raise-on-focus"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.raiseOnFocus == false);
+}
+
+// Test 25c: the full precedence chain, all three focus booleans, both directions
+//
+// Default -> config file -> CLI, asserted end to end in one case per direction,
+// because that ordering is what the three gates added in this plan actually
+// consume. The pieces were covered separately; the chain was not.
+//
+// Direction 1: a CLI negation beats a config-file enable.
+TEST_CASE("A CLI negation overrides a config-file enable for every focus boolean",
+          "[config][cli]") {
+    std::string path = writeTempConfig(
+        "click-to-focus = true\n"
+        "raise-on-focus = true\n"
+        "auto-raise = true\n"
+    );
+
+    Config cfg;
+    cfg.applyFile(path);
+    REQUIRE(cfg.clickToFocus == true);
+    REQUIRE(cfg.raiseOnFocus == true);
+    REQUIRE(cfg.autoRaise == true);
+
+    char* argv[] = {
+        const_cast<char*>("wm2"),
+        const_cast<char*>("--no-click-to-focus"),
+        const_cast<char*>("--no-raise-on-focus"),
+        const_cast<char*>("--no-auto-raise"),
+        nullptr
+    };
+    cfg.applyCliArgs(4, argv);
+
+    REQUIRE(cfg.clickToFocus == false);
+    REQUIRE(cfg.raiseOnFocus == false);
+    REQUIRE(cfg.autoRaise == false);
+
+    removeTempFile(path);
+}
+
+// Direction 2: a CLI enable beats a config-file disable.
+TEST_CASE("A CLI enable overrides a config-file disable for every focus boolean",
+          "[config][cli]") {
+    std::string path = writeTempConfig(
+        "click-to-focus = false\n"
+        "raise-on-focus = false\n"
+        "auto-raise = false\n"
+    );
+
+    Config cfg;
+    cfg.applyFile(path);
+    // Non-vacuous for all three: two of these disagree with the built-in
+    // default (D-17), and the third agrees with it but is flipped below.
+    REQUIRE(cfg.clickToFocus == false);
+    REQUIRE(cfg.raiseOnFocus == false);
+    REQUIRE(cfg.autoRaise == false);
+
+    char* argv[] = {
+        const_cast<char*>("wm2"),
+        const_cast<char*>("--click-to-focus"),
+        const_cast<char*>("--raise-on-focus"),
+        const_cast<char*>("--auto-raise"),
+        nullptr
+    };
+    cfg.applyCliArgs(4, argv);
+
+    REQUIRE(cfg.clickToFocus == true);
+    REQUIRE(cfg.raiseOnFocus == true);
+    REQUIRE(cfg.autoRaise == true);
+
+    removeTempFile(path);
 }
 
 // Test 26: Multiple CLI options on same command line all applied
@@ -804,7 +914,7 @@ TEST_CASE("CLI no args leaves config unchanged", "[config][cli]") {
 
     REQUIRE(cfg.tabForeground == "black");
     REQUIRE(cfg.frameThickness == 7);
-    REQUIRE(cfg.autoRaise == false);
+    REQUIRE(cfg.autoRaise == true);          // D-17: unchanged means the default
     REQUIRE(cfg.newWindowCommand == "xterm");
 }
 

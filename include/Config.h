@@ -19,9 +19,21 @@ struct Config {
     std::string menuHighlight   = "gray60";
     std::string menuBorders     = "black";
     // Focus policy
+    //
+    // D-17: these three values were CORRECTED to describe what the binary
+    // actually does. Until FOCUS-02 wired them up (plan 08-07) nothing in the
+    // runtime read them, so the shipped defaults could say all-false while the
+    // WM unconditionally performed pointer focus with auto-raise, and raising
+    // was fused into focusing. The literal previous values had never reflected
+    // reality; resolving that contradiction in their favour would have silently
+    // changed behaviour for every existing user the moment the gates landed.
+    //
+    // So: pointer focus (click-to-focus off), auto-raise on, raise-on-focus on
+    // -- which is exactly what a user with no config file got before, and gets
+    // now.
     bool clickToFocus = false;
-    bool raiseOnFocus = false;
-    bool autoRaise    = false;
+    bool raiseOnFocus = true;
+    bool autoRaise    = true;
     // Timing (milliseconds)
     int autoRaiseDelay      = 400;
     int pointerStoppedDelay = 80;
