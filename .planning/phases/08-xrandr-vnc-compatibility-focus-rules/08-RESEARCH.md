@@ -954,41 +954,43 @@ Audited on this host, 2026-08-11. Ubuntu 22.04.5 LTS, g++ 11.4.0, CMake 3.22.1, 
 | Property | Value |
 |----------|-------|
 | Framework | Catch2 v3.14.0 via `FetchContent` (`CMakeLists.txt:48-58`) |
-| Config file | `CMakeLists.txt` (no separate config); `catch_discover_tests` per target |
-| Quick run command | `ctest --test-dir build/debug -R 'config\|rules\|autoraise\|raii' --output-on-failure` (display-free targets, sub-second) |
-| Full suite command | `ctest --test-dir build/debug --output-on-failure` |
-| Current surface | **135 `TEST_CASE`s across 11 files** — `config` 40, `ewmh` 16, `raii` 16, `desktopentry` 12, `client` 11, `appcache` 8, `binaryscanner` 8, `smoke` 7, `autoraise` 6, `xft_poc` 6, `eventloop` 5 `[VERIFIED: grep -c '^TEST_CASE' tests/*.cpp]` |
+| Config file | `CMakeLists.txt` (no separate config); `catch_discover_tests(<target> ADD_TAGS_AS_LABELS)` per target |
+| Quick run command | `ctest --test-dir build/debug -L '^(config\|rules\|autoraise\|raii)$' --output-on-failure --no-tests=error` (display-free targets, sub-second) |
+| Full suite command | `ctest --test-dir build/debug --output-on-failure --no-tests=error` |
+| Current surface | **135 `TEST_CASE`s across 11 files** — `config` 40, `ewmh` 16, `raii` 16, `desktopentry` 12, `client` 11, `appcache` 8, `binaryscanner` 8, `smoke` 7, `autoraise` 6, `xft` 6, `eventloop` 5 `[VERIFIED: grep -c '^TEST_CASE' tests/*.cpp]` |
+
+> **Selection convention (D-33, added during plan revision).** The commands in this section originally read `ctest -R <catch2-tag>`. That is wrong and silently so: `catch_discover_tests` registers each ctest test under its `TEST_CASE` *name*, so a tag-shaped `-R` expression matches zero of the registered tests, and ctest exits 0 on zero matches — every such gate would have been green without running anything. The corrected form uses per-test labels (`catch_discover_tests(<target> ADD_TAGS_AS_LABELS)`, Catch2 v3.14) selected with an anchored `ctest -L '^<tag>$'`, plus `--no-tests=error` on every invocation so a future zero-match fails loudly. Anchoring matters: `-L` is an unanchored regex, so a bare `-L config` would also drag in `wm_config_runtime`. Also note the tag in `tests/test_xft_poc.cpp` is `[xft][poc]` — there is no `xft_poc` tag, so that token became `^xft$`.
 
 ### Phase Requirements → Test Map
 
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| XDIS-01 | Resolution change repositions offscreen windows; visible ones untouched | integration (process) | `ctest --test-dir build/debug -R wm_geometry --output-on-failure` | ❌ Wave 0 |
+| XDIS-01 | Resolution change repositions offscreen windows; visible ones untouched | integration (process) | `ctest --test-dir build/debug -L '^wm_geometry$' --output-on-failure --no-tests=error` | ❌ Wave 0 |
 | XDIS-01 | `XRRUpdateConfiguration` refreshes `screenWidth()/Height()`; handler is idempotent across duplicate events | integration | same | ❌ Wave 0 |
-| XDIS-02 | WM starts and manages windows on `Xvfb -extension RANDR` | integration | `ctest -R wm_norandr` (fixture `xvfb_norandr`) | ❌ Wave 0 |
-| XDIS-03 | `WM2_FORCE_NO_SHAPE=1` → rectangular frame, zero Shape requests, single call site | integration + guard | `ctest -R 'wm_noshape\|shape_invariant'` | ❌ Wave 0 |
-| XDIS-04 | Fonts resolve and the WM does not `fatal()` on `Xvfb -extension RENDER` | integration | `ctest -R wm_norender` (fixture `xvfb_norender`) | ❌ Wave 0 |
+| XDIS-02 | WM starts and manages windows on `Xvfb -extension RANDR` | integration | `ctest -L '^wm_norandr$' --no-tests=error` (fixture `xvfb_norandr`) | ❌ Wave 0 |
+| XDIS-03 | `WM2_FORCE_NO_SHAPE=1` → rectangular frame, zero Shape requests, single call site | integration + guard | `ctest -L '^(wm_noshape\|shape_invariant)$' --no-tests=error` | ❌ Wave 0 |
+| XDIS-04 | Fonts resolve and the WM does not `fatal()` on `Xvfb -extension RENDER` | integration | `ctest -L '^wm_norender$' --no-tests=error` (fixture `xvfb_norender`) | ❌ Wave 0 |
 | XDIS-04 | fontconfig fallback chains resolve (`fc-match`) | preflight | `scripts/preflight.sh` (ctest fixture, D-02) | ❌ Wave 0 |
 | XDIS-05 | Capability + EWMH evidence captured per target | **manual** | `scripts/capture-display-capabilities.sh` — real VNC/XRDP/X2Go sessions per D-31 | ❌ Wave 0 |
-| FOCUS-01 | Stale `_NET_WM_USER_TIME` → mapped unfocused + `DEMANDS_ATTENTION` set | integration | `ctest -R wm_focus` | ❌ Wave 0 |
+| FOCUS-01 | Stale `_NET_WM_USER_TIME` → mapped unfocused + `DEMANDS_ATTENTION` set | integration | `ctest -L '^wm_focus$' --no-tests=error` | ❌ Wave 0 |
 | FOCUS-01 | `_NET_WM_USER_TIME == 0` → not focused; property absent → focused (D-19) | integration | same | ❌ Wave 0 |
 | FOCUS-01 | `_NET_ACTIVE_WINDOW` source=2 granted, source=1 arbitrated | integration | same | ❌ Wave 0 |
 | FOCUS-02 | Each of the three booleans changes observable runtime behavior | integration | same | ❌ Wave 0 |
-| FOCUS-02 | Config parsing + CLI precedence for the booleans and the new off switch | unit | `ctest -R config` | ✅ extend `tests/test_config.cpp` |
-| RULES-01 | `rule-*` repeated-group parsing, ordering, malformed input, orphan keys | unit | `ctest -R rules` | ❌ Wave 0 |
+| FOCUS-02 | Config parsing + CLI precedence for the booleans and the new off switch | unit | `ctest -L '^config$' --no-tests=error` | ✅ extend `tests/test_config.cpp` |
+| RULES-01 | `rule-*` repeated-group parsing, ordering, malformed input, orphan keys | unit | `ctest -L '^rules$' --no-tests=error` | ❌ Wave 0 |
 | RULES-01 | Exact vs substring, AND across criteria, all 4 window types | unit | same | ❌ Wave 0 |
-| RULES-02 | `no-decorate` / `position`+`size` / `skip-taskbar` applied at map; later-wins ordering | integration | `ctest -R wm_rules` | ❌ Wave 0 |
-| TEST-05 | 13 checklist coverage items (destroy, dock destroy, hide/unhide, config→runtime, X11 error paths, no-Shape, size hints, all gravities, EWMH client messages, fullscreen/maximize restore, malformed properties, 100-window stress) | integration | `ctest -R wm_` | ❌ Wave 0 |
+| RULES-02 | `no-decorate` / `position`+`size` / `skip-taskbar` applied at map; later-wins ordering | integration | `ctest -L '^wm_rules$' --no-tests=error` | ❌ Wave 0 |
+| TEST-05 | 13 checklist coverage items (destroy, dock destroy, hide/unhide, config→runtime, X11 error paths, no-Shape, size hints, all gravities, EWMH client messages, fullscreen/maximize restore, malformed properties, 100-window stress) | integration | `ctest -L '^wm_' --no-tests=error` (prefix, deliberately not `$`-anchored — this row spans every `wm_*` label) | ❌ Wave 0 |
 | TEST-06 | Debug + Release + ASan/UBSan builds all green | build gate | `scripts/gates/build-all.sh` | ❌ Wave 0 |
 | TEST-06 | No new cppcheck/clang-tidy findings vs baseline | static gate | `scripts/analysis/run-static-analysis.sh` | ❌ Wave 0 |
 | TEST-07 | Preflight fails loudly before any behavioral test | fixture | `scripts/preflight.sh` as `FIXTURES_SETUP` | ❌ Wave 0 |
 | TEST-08 | `xprop -root` / `xwininfo -root -tree` transcripts + interaction results committed | **manual + script** | `scripts/capture-display-capabilities.sh` → `evidence/` | ❌ Wave 0 |
-| D-32 | RSS and idle CPU within documented budget under multi-window load | integration | `ctest -R wm_resource_budget` | ❌ Wave 0 |
+| D-32 | RSS and idle CPU within documented budget under multi-window load | integration | `ctest -L '^wm_resource_budget$' --no-tests=error` | ❌ Wave 0 |
 
 ### Sampling Rate
 
-- **Per task commit:** `ctest --test-dir build/debug -R 'config|rules|autoraise|raii|eventloop' --output-on-failure` — the display-free targets, fast enough to run on every commit.
-- **Per wave merge:** `ctest --test-dir build/debug --output-on-failure` — full suite including all Xvfb-backed and process-level tests.
+- **Per task commit:** `ctest --test-dir build/debug -L '^(config|rules|autoraise|raii|eventloop)$' --output-on-failure --no-tests=error` — the display-free targets, fast enough to run on every commit.
+- **Per wave merge:** `ctest --test-dir build/debug --output-on-failure --no-tests=error` — full suite including all Xvfb-backed and process-level tests.
 - **Phase gate (D-04, all four mandatory):** Debug full ctest green **and** Release full ctest green **and** ASan/UBSan full ctest with zero actionable reports **and** static analysis with no new findings — then the runtime smoke transcript, then `/gsd-verify-work`.
 
 ### Wave 0 Gaps
