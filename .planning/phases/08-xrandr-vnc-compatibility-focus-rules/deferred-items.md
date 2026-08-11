@@ -58,3 +58,27 @@ content hash and derives a hash-free suppression file for cppcheck at run time
 archive version — a newer release that emits finding hashes would let layer 2
 be replaced by cppcheck's own mechanism. Not a blocker; the current two-layer
 design is strictly more precise than cppcheck's `(id, fileName)` matching.
+
+## 4. Pre-existing `-Wunused-result` warning in `sigHandler` (Release only)
+
+**Found during:** 08-02 Task 3, once `scripts/gates/build-all.sh` started recording
+per-tree build logs and the Manager.cpp edit forced a Release recompile.
+
+```
+src/Manager.cpp:311:20: warning: ignoring return value of 'ssize_t write(int, const void*, size_t)'
+                       declared with attribute 'warn_unused_result' [-Wunused-result]
+  311 |         (void)write(s_pipeWriteFd, &c, 1);
+```
+
+**Pre-existing:** yes. `git diff -U0 src/Manager.cpp` for 08-02 Task 3 touches
+only `spawn()`, `spawnArgv()` and `launchApp()` (lines 844+); `sigHandler` is
+untouched. It appears only in the Release tree because `_FORTIFY_SOURCE` is
+active at -O2, and it had never been surfaced before because the Release object
+for `Manager.cpp` was already up to date.
+
+**Note:** the `(void)` cast does not suppress `warn_unused_result` in GCC. The
+usual fix is to consume the result (`if (write(...) < 0) { }`). Not fixed here:
+out of scope for this plan, which builds gates rather than fixing findings.
+
+**Disposition:** deferred. `build-all.sh` records warnings without failing on
+them, so this is visible in `build/release/build.log` rather than silent.

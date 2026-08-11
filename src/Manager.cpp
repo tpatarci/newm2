@@ -841,11 +841,20 @@ void WindowManager::spawn()
             }
             std::fprintf(stderr, "wm2: exec %s failed", m_config.newWindowCommand.c_str());
             perror(" ");
-            std::exit(1);
+            // _exit(), not std::exit(): this is a forked copy of the WM, and
+            // running its atexit handlers and static destructors here would
+            // tear down state the real process still owns. Under ASan it also
+            // triggers a leak check in the child, which reports allocations
+            // that belong to the parent.
+            _exit(1);
         }
-        std::exit(0);
+        // Same reasoning as above -- the intermediate child must not run the
+        // forked copy's atexit handlers or static destructors.
+        _exit(0);
     }
 
+    // Reaps only the intermediate child, which exits immediately. The
+    // grandchild is orphaned to init on purpose, so it can never be a zombie.
     int status;
     wait(&status);
 }
@@ -868,7 +877,9 @@ void WindowManager::spawnArgv(const std::vector<std::string>& argv)
 
             if (argv.empty()) {
                 // No-op guard: avoids execvp(nullptr, ...) undefined behavior.
-                std::exit(1);
+                // _exit(), not std::exit(): a forked copy must not run the
+                // atexit handlers or static destructors it inherited.
+                _exit(1);
             }
 
             std::vector<char*> argvPointers;
@@ -882,11 +893,14 @@ void WindowManager::spawnArgv(const std::vector<std::string>& argv)
 
             std::fprintf(stderr, "wm2: exec %s failed", argv[0].c_str());
             perror(" ");
-            std::exit(1);
+            // _exit(): forked copy, see spawn().
+            _exit(1);
         }
-        std::exit(0);
+        // _exit(): forked copy, see spawn().
+        _exit(0);
     }
 
+    // Reaps only the intermediate child; the grandchild is orphaned to init.
     int status;
     wait(&status);
 }
@@ -919,11 +933,14 @@ void WindowManager::launchApp(const AppEntry& entry)
 
                 std::fprintf(stderr, "wm2: exec %s failed", joined.c_str());
                 perror(" ");
-                std::exit(1);
+                // _exit(): forked copy, see spawn().
+                _exit(1);
             }
-            std::exit(0);
+            // _exit(): forked copy, see spawn().
+            _exit(0);
         }
 
+        // Reaps only the intermediate child; the grandchild is orphaned to init.
         int status;
         wait(&status);
         return;
