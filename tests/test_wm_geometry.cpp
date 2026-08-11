@@ -901,29 +901,49 @@ TEST_CASE("A window that still fits after a shrink is not moved", "[wm_geometry]
 }
 
 // ---------------------------------------------------------------------------
-// Case 9: replaying the resize at the same geometry does nothing
+// Case 9: redelivered screen-change notifications settle to one result
 //
-// The idempotence claim, and the one case here that had to be designed rather
-// than merely written. A naive version -- resize twice, check nothing broke --
-// is green whether or not the coalescing guard exists, because the second pass
-// would clamp an already-visible window to where it already is.
+// The idempotence claim, and the case that had to be designed rather than
+// merely written. Two earlier designs were discarded for being hollow, and both
+// discards are worth recording because the obvious version of this test is one
+// of them.
 //
-// So the window is deliberately pushed OFF the small screen between the two
-// resizes, using the unclamped configure-request path. The guard's whole job is
-// to notice that the geometry has not changed and return before touching any
-// client, which leaves the window where the test put it. Without the guard the
-// replay reflows and drags it back on screen -- so this case is red exactly
-// when the guard is absent, which is what a test for a guard has to be.
+// DISCARDED 1 -- "resize twice, check nothing broke". Green whether or not the
+// coalescing guard exists: the second pass would clamp an already-visible window
+// to where it already is.
 //
-// This also covers the stale-intermediate hazard by the same mechanism: the
-// probe transcript in 08-RESEARCH shows the server delivering four events for
-// one logical resize, two of them carrying the PRE-resize dimensions. A handler
-// that trusted event fields would reflow against 1280x1024 partway through.
-// Only the settled result is asserted, and it is the settled result that must
-// be right.
+// DISCARDED 2 -- "park the window offscreen, then re-run the same xrandr resize
+// and check it stayed". This looks discriminating and is not, because re-running
+// the resize at an unchanged geometry produces NO EVENTS AT ALL. Measured with a
+// listening probe on this host: the first `--fb 1024x768` delivers four events
+// (RRScreenChangeNotify and root ConfigureNotify, each once carrying the stale
+// 1280x1024 and once carrying the real 1024x768), and an identical second
+// invocation delivers nothing whatsoever -- RRSetScreenSize at the current size
+// is a server-side no-op. The WM was never asked anything, so the guard was
+// never consulted, so the case passed without testing it. Confirmed by deleting
+// the guard: still green.
+//
+// What is used instead is the duplicate delivery ITSELF, synthesised. The four
+// events above are the real hazard: two of them carry the pre-resize dimensions
+// and arrive after the screen has already changed. This case reproduces exactly
+// that shape by sending root ConfigureNotify events that claim the OLD 1280x1024
+// while the server is genuinely at 1024x768, which lets one case pin both
+// halves of the truth:
+//
+//   * The workarea does not revert to the stale dimensions -- so the handler
+//     re-reads the geometry from the server and does not take it off the event.
+//   * A window deliberately parked offscreen is not dragged back -- so the
+//     coalescing guard returns before touching any client.
+//
+// Synthetic events are legitimate on this specific path for the same reason
+// 08-04's triggerClamp() gave: WindowManager::loop() applies no send_event guard
+// to ConfigureNotify, so the branch under test is reached identically to how the
+// server would reach it. Nothing is being faked past a check. Both halves are
+// negative-tested (see the summary): deleting the guard reddens the position
+// assertions, and reading the dimensions off the event reddens the workarea one.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Replaying a resolution change at the same geometry moves nothing",
+TEST_CASE("Redelivered screen-change notifications carrying stale dimensions change nothing",
           "[wm_geometry]")
 {
     WmFixture fixture(geometryFixture());
@@ -939,40 +959,61 @@ TEST_CASE("Replaying a resolution change at the same geometry moves nothing",
     REQUIRE(client != None);
     REQUIRE(frame != None);
 
-    // First resize: the real one.
+    // The real resize, settled.
     REQUIRE(resizeScreenTo(fixture.display(), kSmallW, kSmallH));
     const std::vector<unsigned long> settled =
         awaitWorkarea(d.get(), { 0, 0, kSmallW, kSmallH });
     REQUIRE(settled == std::vector<unsigned long>{ 0, 0, kSmallW, kSmallH });
 
-    // Now put the window somewhere the reflow would definitely not leave it.
+    // Park the window where the reflow would definitely not leave it, so a
+    // handler that ran again would visibly move it.
     Rect offscreen;
     REQUIRE(placeClient(d.get(), client, 900, 700, kW, kH, offscreen));
     INFO("parked at: " << describe(offscreen));
     REQUIRE(offscreen.x + offscreen.w > kSmallMaxX);
     REQUIRE(offscreen.y + offscreen.h > kSmallMaxY);
 
-    // Second resize: same geometry, so every event it produces must coalesce
-    // away.
-    REQUIRE(resizeScreenTo(fixture.display(), kSmallW, kSmallH));
+    // Redeliver the notification, repeatedly, with the PRE-resize dimensions in
+    // the event -- the stale intermediate the real server sends.
+    Window root = DefaultRootWindow(d.get());
+    for (int i = 0; i < 5; ++i) {
+        XEvent stale;
+        std::memset(&stale, 0, sizeof(stale));
+        stale.type = ConfigureNotify;
+        stale.xconfigure.display = d.get();
+        stale.xconfigure.event = root;
+        stale.xconfigure.window = root;      // the branch keys on this
+        stale.xconfigure.x = 0;
+        stale.xconfigure.y = 0;
+        stale.xconfigure.width  = kScreenW;  // deliberately WRONG: the old size
+        stale.xconfigure.height = kScreenH;
+        stale.xconfigure.border_width = 0;
+        stale.xconfigure.above = None;
+        stale.xconfigure.override_redirect = False;
+        XSendEvent(d.get(), root, False, StructureNotifyMask, &stale);
+        XSync(d.get(), False);
+    }
 
-    // Give the WM real opportunities to misbehave before concluding it did not:
-    // several pump cycles, each of which wakes its event loop.
+    // Give the WM real opportunities to misbehave before concluding it did not.
     for (int i = 0; i < 10; ++i) pumpWm(d.get());
 
     Rect got;
     REQUIRE(pumpedRect(d.get(), client, got));
     INFO("wm stderr: " << fixture.wmStderr());
-    INFO("after replay: " << describe(got) << "  placed " << describe(offscreen));
+    INFO("after replay: " << describe(got) << "  parked " << describe(offscreen));
     CHECK(got.x == offscreen.x);              // untouched: the guard returned early
     CHECK(got.y == offscreen.y);
     CHECK(got.w == offscreen.w);
     CHECK(got.h == offscreen.h);
 
+    // ...and the workarea still describes the REAL screen, not the size the
+    // events claimed. This is the assertion that fails if anyone ever reaches
+    // for ev.xconfigure.width instead of asking the server.
     std::vector<unsigned long> workarea;
     Atom wa = XInternAtom(d.get(), "_NET_WORKAREA", False);
     REQUIRE(readCardinals(d.get(), DefaultRootWindow(d.get()), wa, workarea));
-    INFO("workarea after replay: " << describe(workarea));
+    INFO("workarea after replay: " << describe(workarea)
+         << "  events claimed " << kScreenW << "x" << kScreenH);
     CHECK(workarea == std::vector<unsigned long>{ 0, 0, kSmallW, kSmallH });
 
     REQUIRE(fixture.wmAlive());
@@ -983,18 +1024,38 @@ TEST_CASE("Replaying a resolution change at the same geometry moves nothing",
 // ---------------------------------------------------------------------------
 // Case 10: a fullscreen client is not repositioned by the reflow
 //
-// Plan 08-04 could not assert this and said so: its only route to the clamp was
-// circulate(), which never reaches a non-Normal client and wedges the WM trying.
-// The resolution-change handler calls ensureVisible() directly, so the guard at
-// the top of that function is finally on a live path.
+// Plan 08-04 recorded this behaviour as UNCOVERED and explained why: its only
+// route to the clamp was circulate(), which never reaches a non-Normal client
+// and wedges the WM at 100% CPU trying (deferred item 6). The resolution-change
+// handler calls ensureVisible() directly on every managed client, so the guard
+// at the top of that function is on a live path here for the first time.
 //
-// Position is what is asserted, and only position. The fullscreen client sits at
-// its PRE-fullscreen coordinates rather than at the origin -- a real defect
-// (deferred item 8, the implicit unmap from stripForFullscreen()'s reparent
-// being turned into a withdraw()) that this plan does not fix. Pinning the
-// specific wrong coordinate would cement it; what is pinned instead is that the
-// reflow does not move the window, whatever the window's position happens to be
-// when the reflow runs. That claim stays true after item 8 is fixed.
+// Read the two assertions at the end carefully, because they are not
+// interchangeable and only one of them is load-bearing.
+//
+//   * The CLIENT window not moving is the user-facing claim, and it is true --
+//     but it is overdetermined today, so on its own it proves nothing about the
+//     guard. Deferred item 8 leaves a fullscreen client reparented to root and
+//     detached from its frame, so ensureVisible()'s move (which acts on the
+//     FRAME) cannot reach the client whether the guard is there or not.
+//     Measured: deleting the guard leaves the client at 900,700 either way.
+//
+//   * The FRAME not moving is what actually pins the guard, and it is exactly
+//     what the guard prevents. Measured on this host with the client parked at
+//     900,700 before going fullscreen: with the guard the frame stays at
+//     900,700; with the guard deleted the reflow clamps it to 758,579
+//     (783 - xIndent 25, 587 - yIndent 8). This case is red precisely when the
+//     guard is absent, which is the whole point of testing a guard.
+//
+// The client is deliberately parked off the SMALL screen before the transition,
+// because a fullscreen client that was already near the origin would be left
+// alone by the clamp arithmetic anyway and the case would be hollow again.
+//
+// No absolute coordinate is pinned as a contract: both assertions compare
+// against what was observed immediately before the resize. That matters because
+// the fullscreen client sitting at its pre-fullscreen coordinates instead of the
+// origin is itself the defect in item 8 -- writing CHECK(after.x == 900) would
+// cement it, and would make the eventual fix fail a test for being correct.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("A fullscreen client is not repositioned by the resolution-change reflow",
@@ -1010,6 +1071,14 @@ TEST_CASE("A fullscreen client is not repositioned by the resolution-change refl
     Window frame = mapClientAndAwaitFrame(d.get(), 300, 220, 240, 180, client);
     REQUIRE(client != None);
     REQUIRE(frame != None);
+
+    // Park it where the clamp would definitely act, so the guard has something
+    // real to prevent.
+    Rect parked;
+    REQUIRE(placeClient(d.get(), client, 900, 700, 240, 180, parked));
+    INFO("parked at: " << describe(parked));
+    REQUIRE(parked.x + parked.w > kSmallMaxX);
+    REQUIRE(parked.y + parked.h > kSmallMaxY);
 
     Atom netWmState = XInternAtom(d.get(), "_NET_WM_STATE", False);
     Atom fullscreen = XInternAtom(d.get(), "_NET_WM_STATE_FULLSCREEN", False);
@@ -1039,10 +1108,14 @@ TEST_CASE("A fullscreen client is not repositioned by the resolution-change refl
     REQUIRE(sized);
 
     // The window is now larger than the screen it is about to be given, which is
-    // precisely the shape ensureVisible() would drag to the origin if the
+    // precisely the shape ensureVisible() would drag towards the origin if the
     // fullscreen guard were not there.
     REQUIRE(full.w > kSmallMaxX);
     REQUIRE(full.h > kSmallMaxY);
+
+    Rect frameBefore;
+    REQUIRE(pumpedRect(d.get(), frame, frameBefore));
+    INFO("frame before resize: " << describe(frameBefore));
 
     REQUIRE(resizeScreenTo(fixture.display(), kSmallW, kSmallH));
 
@@ -1053,12 +1126,22 @@ TEST_CASE("A fullscreen client is not repositioned by the resolution-change refl
         awaitWorkarea(d.get(), { 0, 0, kSmallW, kSmallH });
     REQUIRE(workarea == std::vector<unsigned long>{ 0, 0, kSmallW, kSmallH });
 
+    // The user-facing claim: true, but overdetermined -- see the header comment.
     Rect after;
     REQUIRE(pumpedRect(d.get(), client, after));
     INFO("wm stderr: " << fixture.wmStderr());
-    INFO("fullscreen after resize: " << describe(after) << "  before " << describe(full));
-    CHECK(after.x == full.x);                 // the guard held
+    INFO("client after resize: " << describe(after) << "  before " << describe(full));
+    CHECK(after.x == full.x);
     CHECK(after.y == full.y);
+
+    // The assertion that actually pins the guard: the reflow issued no move for
+    // this client at all. Red at 758,579 if the guard is deleted.
+    Rect frameAfter;
+    REQUIRE(pumpedRect(d.get(), frame, frameAfter));
+    INFO("frame after resize: " << describe(frameAfter)
+         << "  before " << describe(frameBefore));
+    CHECK(frameAfter.x == frameBefore.x);
+    CHECK(frameAfter.y == frameBefore.y);
 
     REQUIRE(fixture.wmAlive());
     XDestroyWindow(d.get(), client);

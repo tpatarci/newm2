@@ -245,6 +245,12 @@ private:
 
     void nextEvent(XEvent *ev);
 
+    // XDIS-01 / D-25: the single settling point for a resolution change, shared
+    // by the RANDR notification and the root-ConfigureNotify fallback. Both
+    // entry points live in src/Events.cpp; the definition is in src/Manager.cpp
+    // beside the geometry cache it owns.
+    void handleScreenGeometryChange();
+
     // Event handlers
     void eventButton(XButtonEvent*);
     void eventMapRequest(XMapRequestEvent*);

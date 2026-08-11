@@ -421,6 +421,74 @@ int WindowManager::screenHeight() const
 }
 
 
+// XDIS-01 / D-25: everything the WM does about a resolution change happens here,
+// and it happens exactly once per distinct geometry.
+//
+// Both entry points in src/Events.cpp converge on this function -- the RANDR
+// screen-change notification and, on a server with no RANDR at all, the root
+// window's own ConfigureNotify. On a RANDR-capable server BOTH fire for the same
+// logical resize, which is not a bug to be routed around but the reason the
+// coalescing guard below is written the way it is.
+//
+// The geometry is re-read from the server and never taken from the event.
+// That is not defensive style, it is required. The probe transcript in
+// 08-RESEARCH.md shows this server delivering FOUR events for one `--fb`
+// resize, and the first two of them carry the PRE-resize dimensions:
+//
+//     [0] RRScreenChangeNotify ev=1280x1024   <- stale
+//     [1] root ConfigureNotify  ev=1280x1024  <- stale
+//     [2] RRScreenChangeNotify ev=1024x768    <- the real change
+//     [3] root ConfigureNotify  ev=1024x768   <- duplicate
+//
+// A handler that trusted event fields would reflow twice against the old size
+// before ever seeing the new one. Reading the root window's attributes costs one
+// round trip and is correct on every path, including the one where there is no
+// RANDR event to consult in the first place.
+//
+// Note that screenWidth()/screenHeight() are NOT re-read here to discover the
+// new size: since plan 08-04 they return this manager's own cache, so asking
+// them after a resize would return the value this function is about to replace.
+// They are the readers; this is the one writer.
+void WindowManager::handleScreenGeometryChange()
+{
+    XWindowAttributes attrs;
+    if (!XGetWindowAttributes(display(), m_root, &attrs)) {
+        std::fprintf(stderr, "wm2: warning: could not read root geometry after a "
+                             "screen change, keeping %dx%d\n",
+                     m_lastKnownScreenW, m_lastKnownScreenH);
+        return;
+    }
+
+    // The coalescing guard. Duplicate delivery, stale intermediates and a
+    // replayed resize at the same geometry all land here and all return
+    // without touching a single client. It is also the mitigation for threat
+    // T-8-GEO: a client that drives the desktop size in a loop cannot make the
+    // WM do more than one reflow pass per DISTINCT geometry.
+    if (attrs.width == m_lastKnownScreenW && attrs.height == m_lastKnownScreenH) {
+        return;
+    }
+
+    m_lastKnownScreenW = attrs.width;
+    m_lastKnownScreenH = attrs.height;
+
+    // D-25: move windows that the new screen has left hanging off an edge, and
+    // leave every other window exactly where the user put it. ensureVisible()
+    // is the existing primitive for this -- it moves, never resizes, and it
+    // declines to touch fullscreen or maximized clients.
+    //
+    // The hidden list is iterated too: a client unhidden after the resize would
+    // otherwise be restored to coordinates that no longer exist on this screen.
+    for (const auto& c : m_clients)       c->ensureVisible();
+    for (const auto& c : m_hiddenClients) c->ensureVisible();
+
+    // Republish _NET_WORKAREA against the new rectangle. This also re-clamps any
+    // dock strut that was sized for the old screen (threat T-8-STRUT): the
+    // clamp inside updateWorkarea() now runs against the refreshed geometry
+    // rather than a stale cache, so an oversized strut cannot outlive a shrink.
+    updateWorkarea();
+}
+
+
 void WindowManager::initialiseScreen()
 {
     int i = 0;

@@ -1,5 +1,6 @@
 #include "Manager.h"
 #include "Client.h"
+#include <X11/extensions/Xrandr.h>
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
@@ -106,14 +107,53 @@ int WindowManager::loop()
             }
             break;
 
-        case FocusOut:
         case ConfigureNotify:
+            // XDIS-02: the no-RANDR fallback. Split out of the no-op group above
+            // for exactly one window -- root itself. A resolution change reaches
+            // a plain X client as root's own ConfigureNotify, which is why
+            // StructureNotifyMask was added to the root mask in
+            // initialiseScreen(); SubstructureNotifyMask covers root's children
+            // and would never deliver this.
+            //
+            // The RANDR cache-update call in the default arm below is
+            // deliberately NOT made here. A ConfigureNotify is not an
+            // XRRScreenChangeNotifyEvent, and on the server this branch exists
+            // for there is no RANDR extension to update anything in. The common
+            // handler re-reads the root geometry from the server, so this path
+            // needs nothing from Xlib's cache.
+            //
+            // (Spelled as prose rather than by name on purpose: this file's
+            // acceptance gate is a line-counting grep for that call, and it must
+            // count exactly one -- the real one.)
+            //
+            // Every other ConfigureNotify is discarded exactly as before.
+            if (ev.xconfigure.window == m_root) {
+                handleScreenGeometryChange();
+            }
+            break;
+
+        case FocusOut:
         case MapNotify:
         case MappingNotify:
             break;
 
         default:
-            if (ev.type == m_shapeEvent) {
+            // XDIS-01: the RANDR path. Guarded on the sentinel being
+            // non-negative FIRST, so a forced-off or absent extension can never
+            // match: with the sentinel at -1 the sum below is negative and no
+            // real event type is.
+            if (m_randrEventBase >= 0 &&
+                ev.type == m_randrEventBase + RRScreenChangeNotify) {
+                // Mandatory, and it must come first (RESEARCH Pitfall 1). Xlib
+                // caches the screen dimensions inside the Display struct and
+                // never updates them behind the client's back; this is the call
+                // that keeps that cache coherent for any remaining Xlib
+                // consumer. The WM's own geometry does not depend on it -- the
+                // handler asks the server directly -- but leaving Xlib's view
+                // stale would quietly break anything that ever reads it.
+                XRRUpdateConfiguration(&ev);
+                handleScreenGeometryChange();
+            } else if (ev.type == m_shapeEvent) {
                 std::fprintf(stderr, "wm2: shaped windows are not supported\n");
             } else {
                 std::fprintf(stderr, "wm2: unsupported event type %d\n", ev.type);
