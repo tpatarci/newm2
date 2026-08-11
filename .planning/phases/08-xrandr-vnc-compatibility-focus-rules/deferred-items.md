@@ -406,3 +406,44 @@ before/after visual comparison to land safely, which is 08-14's evidence work.
 **Disposition:** deferred, recommended for 08-14 or a follow-up rendering plan.
 It is a two-line change plus screenshots; the risk is entirely in the review,
 not in the edit.
+
+## 12. The full process-level suite flakes at roughly one test per run (PRE-EXISTING, quantified)
+
+**Found during:** 08-06 Task 3, running `scripts/gates/build-all.sh` end to end
+for the first time since the suite reached 171 tests.
+
+**Symptom:** a full-suite run occasionally reports one or two failures, and a
+different test each time. Observed across `wm_process`, `wm_geometry`,
+`wm_noshape` and `xtest` groups; every one of them passes on its own, often
+dozens of times in a row.
+
+**Measured, both trees, same command (`ctest --test-dir build/<tree>` over 171
+tests):**
+
+| Tree | Runs | Failing test executions |
+|---|---|---|
+| pre-08-06 baseline `22a1ba8`, release | 4 | **8** |
+| post-08-06 `3f7c7fb`, release | 4 | **3** |
+| post-08-06 `3f7c7fb`, debug | 3 | **1** |
+
+So it is **pre-existing and not caused by this plan** — if anything 08-06's
+`proveEventLoopLive()` retry (see item 10's update) removed a share of it.
+Individually re-running the tests that failed passes every time: measured
+6/6 green for the two release failures and 3/3 for the ASan one.
+
+**Suspected cause:** the same unflushed-output stall as item 9. Every one of the
+observed failures is an assertion that polls the server for a geometry or
+property the WM has already issued a request for. `tests/test_wm_geometry.cpp`
+carries a `pumpWm()` workaround for exactly this; `tests/test_wm_process.cpp`
+and the others do not. Under full-suite load the WM sits idle longer between
+events, which is precisely when the stall is visible.
+
+**Impact:** a full-suite gate is not reliably green in one shot, which erodes
+the value of `build-all.sh` as a release signoff (TEST-06). It is a harness /
+event-loop timing problem, not a correctness problem in the assertions
+themselves.
+
+**Disposition:** deferred to the test-infrastructure work (08-11 … 08-13),
+together with items 9 and 10 — they are one defect wearing three hats. The
+likely fix is at the source (make the WM flush when it has issued requests and
+is about to block) rather than spreading `pumpWm()` to every suite.

@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 08
 current_phase_name: xrandr-vnc-compatibility-focus-rules
 status: executing
-stopped_at: Completed 08-05-PLAN.md
-last_updated: "2026-08-11T15:03:52.526Z"
+stopped_at: Completed 08-06-PLAN.md
+last_updated: "2026-08-11T15:53:14.054Z"
 last_activity: 2026-08-11
 last_activity_desc: gathered Phase 8 context across 8 gray areas (32 decisions captured)
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 36
-  completed_plans: 27
+  completed_plans: 28
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 08 (xrandr-vnc-compatibility-focus-rules) — EXECUTING
-Plan: 6 of 14
+Plan: 7 of 14
 Status: Ready to execute
 Last activity: 2026-08-11 — Phase 08 execution started
 
-Progress: [████████░░] 75% (7/9 phases complete)
+Progress: [████████░░] 78% (7/9 phases complete)
 
 ## Performance Metrics
 
@@ -82,6 +82,7 @@ Progress: [████████░░] 75% (7/9 phases complete)
 | Phase 08 P03 | 39min | 3 tasks | 8 files |
 | Phase 08 P04 | 52min | 2 tasks | 7 files |
 | Phase 08 P05 | 78min | 3 tasks | 7 files |
+| Phase 08 P06 | 71min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -127,6 +128,11 @@ Recent decisions affecting current work:
 - [Phase ?]: Geometry tests pin exact values and are each negative-tested; fullscreen POSITION is deliberately not pinned because the value the WM produces today is a defect (deferred item 8)
 - [Phase ?]: 08-05: the resolution-change handler re-reads root geometry with XGetWindowAttributes rather than re-reading screenWidth()/screenHeight() -- since 08-04 those return the manager's own cache, so re-reading them after a resize returns the value being replaced
 - [Phase ?]: 08-05: XDIS-02's reflow claim is proven with WM2_FORCE_NO_RANDR on a RANDR-capable server, because on a genuinely RANDR-less server no resolution change can be produced at all -- the only X resize mechanism is the missing extension
+- [Phase ?]: Open Question 1 answered: a rotated FcMatrix Xft font loads, measures identically and draws without protocol error on a RENDER-less server -- libXft's core X11 glyph path keeps the sideways tab, so XDIS-05 targets without XRender lose nothing
+- [Phase ?]: Border's tab-font load is a four-rung ladder (rotated preferred, rotated generic, unrotated, none) that cannot terminate the process; rung 1 is silent and every other rung prints one warning
+- [Phase ?]: The XRender capability probe carries no sentinel and drives no behaviour -- it exists for the XDIS-05 evidence transcript and as the discriminator for the RENDER-less tests
+- [Phase ?]: Deferred item 10's XMaskEvent hypothesis is refuted; the rare startup wedge is deferred item 9 (unflushed WM output), cured by retrying the readiness probe with a fresh window
+- [Phase ?]: XDIS-04's requirement text amended (D-14) to state fontconfig-level degradation and record why core X font revival is excluded
 
 ### Pending Todos
 
@@ -143,6 +149,8 @@ Recent decisions affecting current work:
 - Bare 'ctest --test-dir build/asan' fails 3 xft tests on a pre-existing fontconfig cache leak: tests/lsan.supp is wired only into the forked WM child, not the Catch2 test binaries. Run the asan tree via scripts/gates/build-all.sh until fixed (deferred-items.md item 5).
 - PRE-EXISTING: WindowManager::circulate() spins at 100% CPU forever when no client is Normal (root right-click on a fresh WM freezes it). deferred-items.md item 6; 08-05 must not drive the clamp on a non-Normal client.
 - 08-05 deferred item 10: rare WM startup hang between the EWMH publication and the event loop, suspected timestamp()'s unbounded XMaskEvent. Pre-existing code path; needs one backtrace from a hung child to confirm
+- Deferred item 11: the sideways tab does not grow with the window title (axis-swapped rotated extents) -- measured in 08-06, out of scope there, recommended for 08-14
+- Deferred item 12: the full process-level suite flakes at ~1 test per run on both this tree and the pre-08-06 baseline -- build-all.sh is not reliably green in one shot
 
 ## Deferred Items
 
@@ -154,6 +162,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-11T15:03:43.735Z
-Stopped at: Completed 08-05-PLAN.md
+Last session: 2026-08-11T15:52:59.887Z
+Stopped at: Completed 08-06-PLAN.md
 Resume file: None
