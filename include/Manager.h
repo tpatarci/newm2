@@ -77,6 +77,26 @@ public:
     void considerFocusChange(Client *c, Window w, Time timestamp);
     void stopConsideringFocus();
 
+    // FOCUS-01 (plan 08-08): the last-user-interaction clock, and the single
+    // timestamp comparison both arbitration entry points share.
+    //
+    // The clock is fed ONLY from real button presses (see the recording site in
+    // src/Buttons.cpp). It is deliberately NOT fed from pointer crossing events:
+    // moving the pointer across a window is not the kind of interaction the
+    // EWMH means by a user action, and feeding it from crossings would make
+    // every pop-up that appears under the pointer look user-initiated, which
+    // defeats the whole feature.
+    Time lastUserInteraction() const { return m_lastUserInteraction; }
+    void noteUserInteraction(Time t) { m_lastUserInteraction = t; }
+
+    // True when `userTime` is at least as recent as the last user interaction.
+    // Both arbitration sites (Client::shouldFocusOnMap() and the activation
+    // client-message branch in src/Events.cpp) call THIS rather than comparing
+    // timestamps themselves: X timestamps are 32-bit milliseconds and wrap
+    // roughly every 49.7 days, so a bare `a < b` produces a total focus outage
+    // once per wrap. Defined in src/Manager.cpp.
+    bool isUserTimeRecent(Time userTime) const;
+
     // Grab helpers
     int attemptGrab(Window, Window, int, int);
     void releaseGrab(XButtonEvent *e);
@@ -224,6 +244,13 @@ private:
     // EWMH setup (called internally)
     void setupEwmhProperties();
 
+    // FOCUS-01: when the user last actually did something. Initialised to the
+    // X "current time" sentinel (CurrentTime == 0), which is older than any real
+    // server timestamp -- so before the user has touched anything, every window
+    // that publishes a user-time is granted focus. That is the intended
+    // behaviour for a freshly started session, not an accident.
+    Time m_lastUserInteraction = CurrentTime;
+
     // Focus tracking
     bool m_focusChanging;
     Client *m_focusCandidate;
@@ -301,6 +328,24 @@ struct Atoms {
     static Atom net_currentDesktop;
     static Atom net_workarea;
     static Atom utf8_string;
+
+    // FOCUS-01 (plan 08-08). The first three drive focus-stealing prevention:
+    // a client publishes the timestamp of the user action that caused it to map
+    // a window, optionally on a proxy window so it can update the value without
+    // generating property events on the toplevel, and a refused window is marked
+    // as demanding attention rather than being silently denied. The last two are
+    // the skip-taskbar/skip-pager states that plan 08-10's rule actions need;
+    // they are interned here so the _NET_SUPPORTED array is written once.
+    //
+    // Advertising these in _NET_SUPPORTED is not optional decoration. A
+    // compliant client consults that array before deciding whether to set a
+    // property, so omitting them means clients never write the values the
+    // arbitration reads, and the feature silently degrades to always-grant.
+    static Atom net_wmUserTime;
+    static Atom net_wmUserTimeWindow;
+    static Atom net_wmStateDemandsAttention;
+    static Atom net_wmStateSkipTaskbar;
+    static Atom net_wmStateSkipPager;
 };
 
 extern bool ignoreBadWindowErrors;

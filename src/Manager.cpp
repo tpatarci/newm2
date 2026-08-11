@@ -13,6 +13,7 @@
 #include <X11/extensions/Xrandr.h>
 #include <X11/extensions/Xrender.h>
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include "Cursors.h"
 
@@ -50,6 +51,11 @@ Atom Atoms::net_numberOfDesktops = None;
 Atom Atoms::net_currentDesktop = None;
 Atom Atoms::net_workarea = None;
 Atom Atoms::utf8_string = None;
+Atom Atoms::net_wmUserTime = None;
+Atom Atoms::net_wmUserTimeWindow = None;
+Atom Atoms::net_wmStateDemandsAttention = None;
+Atom Atoms::net_wmStateSkipTaskbar = None;
+Atom Atoms::net_wmStateSkipPager = None;
 
 volatile std::sig_atomic_t WindowManager::m_signalled = 0;
 int  WindowManager::s_pipeWriteFd = -1;
@@ -173,6 +179,14 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     Atoms::net_numberOfDesktops   = XInternAtom(display(), "_NET_NUMBER_OF_DESKTOPS", false);
     Atoms::net_currentDesktop     = XInternAtom(display(), "_NET_CURRENT_DESKTOP", false);
     Atoms::net_workarea           = XInternAtom(display(), "_NET_WORKAREA", false);
+
+    // FOCUS-01 (plan 08-08): focus-stealing prevention reads the first two and
+    // publishes the third on refusal; the last two are 08-10's skip states.
+    Atoms::net_wmUserTime         = XInternAtom(display(), "_NET_WM_USER_TIME", false);
+    Atoms::net_wmUserTimeWindow   = XInternAtom(display(), "_NET_WM_USER_TIME_WINDOW", false);
+    Atoms::net_wmStateDemandsAttention = XInternAtom(display(), "_NET_WM_STATE_DEMANDS_ATTENTION", false);
+    Atoms::net_wmStateSkipTaskbar = XInternAtom(display(), "_NET_WM_STATE_SKIP_TASKBAR", false);
+    Atoms::net_wmStateSkipPager   = XInternAtom(display(), "_NET_WM_STATE_SKIP_PAGER", false);
     Atoms::utf8_string            = XInternAtom(display(), "UTF8_STRING", false);
 
     // Check Shape extension -- warn but continue if missing (graceful fallback)
@@ -691,6 +705,15 @@ void WindowManager::setupEwmhProperties()
         Atoms::net_wmStrut, Atoms::net_wmStrutPartial,
         Atoms::net_numberOfDesktops, Atoms::net_currentDesktop,
         Atoms::net_workarea,
+        // FOCUS-01 (plan 08-08). Skipping this advertisement would be fatal to
+        // the feature rather than merely untidy: a compliant client checks
+        // _NET_SUPPORTED before setting _NET_WM_USER_TIME, so an unadvertised
+        // atom means the property is never written, the arbitration always sees
+        // "absent", and focus-stealing prevention silently degrades to the
+        // always-grant behaviour it exists to replace.
+        Atoms::net_wmUserTime, Atoms::net_wmUserTimeWindow,
+        Atoms::net_wmStateDemandsAttention,
+        Atoms::net_wmStateSkipTaskbar, Atoms::net_wmStateSkipPager,
     };
     XChangeProperty(display(), m_root, Atoms::net_supported,
                     XA_ATOM, 32, PropModeReplace,
@@ -746,6 +769,34 @@ void WindowManager::installCursorOnWindow(RootCursor c, Window w)
     }
 
     XChangeWindowAttributes(display(), w, CWCursor, &attr);
+}
+
+
+// FOCUS-01 (plan 08-08), threat T-8-WRAP. The one timestamp comparison both
+// arbitration entry points share -- Client::shouldFocusOnMap() for the map-time
+// path and the _NET_ACTIVE_WINDOW branch in src/Events.cpp for the activation
+// path. Neither may reimplement it, because getting it wrong in one place and
+// not the other is exactly how a security decision drifts apart.
+//
+// X server timestamps are 32-bit millisecond counters that wrap roughly every
+// 49.7 days. The naive `userTime >= m_lastUserInteraction` is wrong across a
+// wrap: after the counter rolls over, every fresh client timestamp compares as
+// smaller than the stored one and the WM refuses focus to EVERYTHING until the
+// user clicks something -- a total focus outage, once per wrap.
+//
+// The fix is the standard X idiom: subtract in unsigned 32-bit arithmetic, then
+// reinterpret the result as signed. The subtraction is exact modulo 2^32, so it
+// yields the true difference for any pair of timestamps less than ~24.85 days
+// apart, wrap or no wrap. Both operands are narrowed to uint32_t first because
+// Xlib's `Time` is an unsigned long -- 64-bit on this target -- and subtracting
+// at 64 bits would NOT wrap and would reintroduce the bug the cast exists to
+// avoid.
+bool WindowManager::isUserTimeRecent(Time userTime) const
+{
+    const std::uint32_t a = static_cast<std::uint32_t>(userTime);
+    const std::uint32_t b = static_cast<std::uint32_t>(m_lastUserInteraction);
+    const std::int32_t delta = static_cast<std::int32_t>(a - b);
+    return delta >= 0;
 }
 
 

@@ -15,6 +15,29 @@
 
 void WindowManager::eventButton(XButtonEvent *e)
 {
+    // FOCUS-01 (plan 08-08): this is the last-user-interaction clock, and this
+    // is the ONLY place that feeds it. It sits above the root-menu/client
+    // dispatch so that every real button press counts, including the ones that
+    // open the root menu.
+    //
+    // Two deliberate restrictions, both of which look like oversights if they
+    // are not written down:
+    //
+    //  - Crossing events do NOT feed this clock. Moving the pointer over a
+    //    window is not the user action the EWMH means; if crossings counted,
+    //    any pop-up appearing under a drifting pointer would look
+    //    user-initiated and the whole feature would be defeated.
+    //  - Synthetic presses do NOT feed it either (threat T-8-FOCUS: "a clock
+    //    fed only by real button presses"). XSendEvent lets any client deliver
+    //    a ButtonPress to root carrying a timestamp of its choosing; a forged
+    //    far-future value would make every honest client's user-time look stale
+    //    and deny focus desktop-wide. Client::eventButton() already refuses
+    //    send_event for the same reason.
+    //
+    // If keyboard handling ever lands, key presses feed this clock too -- they
+    // are user interaction in exactly the sense meant here.
+    if (!e->send_event) noteUserInteraction(e->time);
+
     if (e->window == e->root) {
         if (e->button == Button1) menu(e);
         else if (e->button == Button3) circulate(true);  // root right-click: circulate active first
