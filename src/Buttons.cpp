@@ -38,7 +38,7 @@ void WindowManager::circulate(bool activeFirst)
         // out-of-bounds access and unsigned underflow in size()-1
         if (m_clients.empty()) return;
 
-        int i = -1, j;
+        int i = -1;
 
         if (!m_activeClient) {
             i = -1;
@@ -53,14 +53,44 @@ void WindowManager::circulate(bool activeFirst)
             if (i < 0 || static_cast<size_t>(i) >= m_clients.size() - 1) i = -1;
         }
 
-        // Restructured loop: check bounds BEFORE accessing m_clients[j]
-        for (j = i + 1; ; ++j) {
-            if (static_cast<size_t>(j) >= m_clients.size()) j = 0;
-            if (j == i) return;
-            if (m_clients[j]->isNormal() && !m_clients[j]->isTransient()) break;
+        // Bounded scan: every entry is examined AT MOST ONCE, starting just
+        // after the active client's index and wrapping.
+        //
+        // The previous form (`for (j = i + 1; ; ++j)`, wrapping j to 0 and
+        // exiting only on `j == i`) was unbounded whenever nothing satisfied
+        // the break condition: j is always wrapped into [0, size), so it can
+        // never equal -1, and i IS -1 when there is no active client. The WM
+        // then froze at 100% CPU permanently -- measured at 299 ticks over 3s
+        // of wall clock -- and stopped answering SIGTERM, because the signal
+        // handler only sets a flag the event loop never gets back to checking.
+        // A right-click on the root of a freshly started WM was enough to
+        // reach it: m_clients is non-empty (the WM adopts its own menu and
+        // WM-check windows) but holds nothing in Normal state.
+        // deferred-items.md item 6; regression test [wm_circulate].
+        //
+        // Behaviour when an eligible client DOES exist is unchanged. With
+        // i >= 0 the step range 1..n visits i+1 ... i+n-1 and then hits j == i
+        // on the final step, which is exactly the set of entries the old loop
+        // examined before its `j == i` return. With i == -1 it visits 0 ... n-1
+        // once each and then stops, which is what the old loop should have done
+        // and never did.
+        const int n = static_cast<int>(m_clients.size());
+        int found = -1;
+
+        for (int step = 1; step <= n; ++step) {
+            const int j = (i + step) % n;
+            if (j == i) break;
+            if (m_clients[j]->isNormal() && !m_clients[j]->isTransient()) {
+                found = j;
+                break;
+            }
         }
 
-        c = m_clients[j].get();
+        // No eligible client anywhere in the list: there is nothing to
+        // circulate to, so leave the active window alone rather than spinning.
+        if (found < 0) return;
+
+        c = m_clients[found].get();
     }
 
     // WR-05: Guard against null c (all clients transient/hidden)
