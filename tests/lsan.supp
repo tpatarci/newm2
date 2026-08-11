@@ -16,3 +16,24 @@ leak:libXft.so
 leak:libfontconfig
 leak:FcFontSet
 leak:FcPatternObject
+
+# libXrandr leaks 32 bytes per connection when the extension is ABSENT.
+#
+# Added by plan 08-05, which introduced the only XRRQueryExtension call in the
+# tree. Unlike the entries above -- process-lifetime caches that are never freed
+# by design -- this one is a defect on the library's negative path: it allocates
+# its per-display bookkeeping and then fails to register the close hook that
+# would free it, so XCloseDisplay does not clean up.
+#
+# Not inferred from a stack trace. Reproduced standalone on this host with a
+# twelve-line program that opens a display, calls XRRQueryExtension once and
+# closes the display, with no wm2 code linked at all:
+#
+#   RANDR present  -> XRRQueryExtension returns 1, ASan clean
+#   RANDR absent   -> XRRQueryExtension returns 0, 32 bytes leaked in 1 alloc,
+#                     allocated at libXrandr.so.2+0x2a55 via XRRQueryExtension
+#
+# It therefore surfaces only in the [wm_norandr] group, where the server is
+# started with `-extension RANDR`. Bounded at 32 bytes for the process's whole
+# life, because the WM queries the extension exactly once at startup.
+leak:libXrandr.so

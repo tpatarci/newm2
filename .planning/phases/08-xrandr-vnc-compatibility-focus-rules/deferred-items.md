@@ -255,3 +255,74 @@ documents that it is a workaround rather than a convention to copy.
 
 **Disposition:** deferred to the test-infrastructure / diagnostics work
 (08-11 … 08-13), or to whoever next touches the event loop.
+
+## 10. Rare WM startup hang before the event loop begins (PRE-EXISTING, unconfirmed cause)
+
+**Found during:** 08-05 Task 3, running the combined
+`-L '^(wm_geometry|wm_norandr)$'` gate repeatedly for the plan's stability
+criterion.
+
+**Symptom:** roughly once in ten runs of a 15-case gate, one or two fixtures
+fail at startup with the staged diagnostic
+
+```
+WmFixture: WM startup failed at stage: event loop not pumping
+  (probe window never reparented) on :120
+xvfb: pid=... alive
+wm:   pid=... alive
+```
+
+The WM child is **alive**, its stderr contains the complete startup banner
+through `  Xrandr extension available.`, and `_NET_SUPPORTING_WM_CHECK` has
+been published on root — so `setupEwmhProperties()` ran. What never happens is
+the reparent of the readiness probe window, i.e. `loop()` never processes a
+MapRequest. The WM is wedged **between the EWMH publication and the event
+loop**, and stays that way until the fixture kills it.
+
+**Most likely cause (NOT yet confirmed — no hung process was caught under a
+debugger):** `WindowManager::timestamp()` at `src/Manager.cpp:723-737` is the
+only unbounded blocking wait in that window. It appends zero bytes to
+`_WM2_RUNNING` on root and then calls
+
+```cpp
+XMaskEvent(display(), PropertyChangeMask, &event);
+```
+
+which blocks forever if the expected `PropertyNotify` never arrives. It is
+called as `timestamp(true)` from the constructor
+(`XSetSelectionOwner(..., timestamp(true))`), immediately after
+`initialiseScreen()` and before `scanInitialWindows()`/`loop()` — exactly the
+interval the symptom brackets. A missing or already-consumed `PropertyNotify`
+would produce precisely this picture. `Client` construction during
+`scanInitialWindows()` is the only other candidate and would have to be reached
+first.
+
+**Pre-existing:** treated as such on the evidence available, which is
+suggestive rather than conclusive and is recorded honestly as such:
+
+- The blocking call is untouched by plan 08-05. This plan added
+  `StructureNotifyMask` to the root mask and an `XRRSelectInput`, neither of
+  which removes `PropertyChangeMask` or consumes queued events —
+  `XMaskEvent` leaves non-matching events on the queue by construction.
+- Measured rate on the post-08-05 tree: **0 failures in 6 consecutive runs**
+  of the 15-case gate (90 test executions) after the single observed
+  occurrence.
+- Measured rate at the pre-08-05 baseline commit `f4941dd`, on an
+  equivalent-load gate (`-L '^(wm_geometry|wm_noshape|wm_process)$'`, also 15
+  cases, same number of Xvfb+WM fixture startups): **0 failures in 6
+  consecutive runs**.
+
+So neither tree reproduced it in 12 further runs, and the rate is too low for
+6-run samples to separate them. What can be said with confidence is that the
+code path that hangs is not code this plan wrote or modified.
+
+**Impact:** a rare red run of any process-level suite, with a clear diagnostic
+naming the stage. It is a test-harness-visible symptom of a WM defect, not a
+harness defect: a real user whose WM wedged here would see a session that never
+starts managing windows.
+
+**Disposition:** deferred. Worth catching under a debugger the next time it
+reproduces — `gdb -p <wm pid>` on the hung child would confirm or refute the
+`XMaskEvent` hypothesis in one backtrace. Natural owner is the
+test-infrastructure / diagnostics work (08-11 … 08-13), alongside item 9, which
+is also an event-loop timing defect.

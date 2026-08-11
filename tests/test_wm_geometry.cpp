@@ -10,6 +10,9 @@
 //   [wm_geometry] -- workarea publication, the map-time clamp, the
 //                    ensureVisible() clamp, and (plan 08-05) the resolution
 //                    change reflow, on a server that starts at 1280x1024
+//   [wm_norandr]  -- XDIS-02: the WM on a server with no RANDR extension at
+//                    all, and the root-ConfigureNotify fallback that has to
+//                    carry resolution changes there
 //
 // Screen size: 1280x1024, deliberately the largest any Phase 8 geometry test
 // needs. This X server's RANDR maximum screen size equals the geometry it was
@@ -65,6 +68,46 @@ WmFixtureOptions geometryFixture()
 {
     WmFixtureOptions o;
     o.xvfbArgs = { "-screen", "0", "1280x1024x24" };
+    return o;
+}
+
+// XDIS-02: a server that genuinely does not have the RANDR extension.
+//
+// Unlike SHAPE -- which this X server refuses to disable, answering
+// `Extension "SHAPE" can not be disabled` and forcing plan 08-03 to simulate
+// its absence in-process -- RANDR is on the server's toggleable list. So the
+// evidence below is a real extension-less server rather than a lever, which is
+// the strongest form this claim can take.
+WmFixtureOptions noRandrFixture()
+{
+    WmFixtureOptions o;
+    o.xvfbArgs = { "-screen", "0", "1280x1024x24", "-extension", "RANDR" };
+    return o;
+}
+
+// The same WM behaviour, on a server that DOES have RANDR, with the WM's own
+// RANDR path forced inert.
+//
+// This exists because of a hard constraint measured on this host: on a server
+// started with `-extension RANDR` the screen cannot be resized AT ALL. The only
+// mechanism for changing an X screen's size is RANDR's own RRSetScreenSize, so
+// `xrandr --fb 1024x768` there answers "RandR extension missing" and the
+// dimensions stay put. There is no second mechanism to fall back on -- Xvfb
+// offers no XF86VidMode screen resizing either.
+//
+// So "does the fallback actually reflow?" cannot be asked of a genuinely
+// RANDR-less server: the question needs a resize, and a resize needs the
+// extension. Forcing the sentinel off on a RANDR-capable server is the only
+// configuration in which the fallback can be DRIVEN, and it is a faithful one:
+// with the sentinel below zero the WM never calls XRRSelectInput, so no
+// screen-change notification is ever selected and the RANDR dispatch arm cannot
+// match. Root's ConfigureNotify is left as the only thing that can possibly
+// reach the handler.
+WmFixtureOptions forcedNoRandrFixture()
+{
+    WmFixtureOptions o;
+    o.xvfbArgs = { "-screen", "0", "1280x1024x24" };
+    o.childEnv = { { "WM2_FORCE_NO_RANDR", "1" } };
     return o;
 }
 
@@ -1146,4 +1189,194 @@ TEST_CASE("A fullscreen client is not repositioned by the resolution-change refl
     REQUIRE(fixture.wmAlive());
     XDestroyWindow(d.get(), client);
     XSync(d.get(), False);
+}
+
+// ---------------------------------------------------------------------------
+// Case 11: control -- the default fixture server really does have RANDR
+//
+// Without this, the [wm_norandr] group below could be passing because both
+// groups take the same code path, and nobody would know. Pairing a degraded
+// group with a control on the non-degraded path is the convention plan 08-03
+// established for exactly this reason: a fallback suite that cannot tell the
+// two paths apart is a suite that always passes.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("On a RANDR-capable server the WM announces the extension as available",
+          "[wm_geometry]")
+{
+    WmFixture fixture(geometryFixture());
+
+    const std::string log = fixture.wmStderr();
+    INFO("wm stderr: " << log);
+
+    CHECK(log.find("Xrandr extension available.") != std::string::npos);
+    CHECK(log.find("no xrandr extension") == std::string::npos);
+    CHECK(log.find("forced off") == std::string::npos);
+
+    REQUIRE(fixture.wmAlive());
+}
+
+// ===========================================================================
+// XDIS-02: the WM on a server with no RANDR extension
+//
+// Four cases, and they deliberately do NOT all run on the same server. Three
+// run against a genuinely extension-less server; the fourth cannot, and the
+// reason is a measured property of X rather than a convenience:
+//
+//   the only way to change an X screen's size is RANDR's RRSetScreenSize,
+//   so on a server started with `-extension RANDR` no resolution change can
+//   be produced at all -- `xrandr --fb 1024x768` answers "RandR extension
+//   missing" and the screen stays 1280x1024.
+//
+// "Does the fallback reflow?" therefore has to be asked of a server that can
+// resize, with the WM's RANDR path forced inert. See forcedNoRandrFixture()
+// above for why that is a faithful stand-in and not a weakened one.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Case 12: the WM degrades on a RANDR-less server instead of dying
+//
+// This is the whole of XDIS-02's "never fatal" half. The WM must reach full
+// readiness -- which WmFixture proves by round-tripping a window through the
+// event loop, not merely by seeing a property appear -- and must say in its own
+// transcript that it noticed.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("The WM starts and warns on a server with no RANDR extension", "[wm_norandr]")
+{
+    WmFixture fixture(noRandrFixture());   // reaching this line IS the readiness proof
+
+    const std::string log = fixture.wmStderr();
+    INFO("wm stderr: " << log);
+
+    // The genuine-absence wording, distinct from the forced-off wording.
+    CHECK(log.find("no xrandr extension") != std::string::npos);
+    CHECK(log.find("Xrandr extension available.") == std::string::npos);
+
+    // ...and it did not treat a missing capability as a reason to abandon ship.
+    CHECK(log.find("failure during initialisation") == std::string::npos);
+    CHECK(log.find("abandoning") == std::string::npos);
+
+    REQUIRE(fixture.wmAlive());
+}
+
+// ---------------------------------------------------------------------------
+// Case 13: ordinary window management is unaffected by the missing extension
+//
+// A capability check that quietly broke framing would still satisfy case 12.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("The WM manages windows normally on a server with no RANDR extension",
+          "[wm_norandr]")
+{
+    WmFixture fixture(noRandrFixture());
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+    requireFixtureScreen(d.get());
+
+    Window client = None;
+    // This helper waits for BOTH halves: reparented into a frame, and published
+    // in _NET_CLIENT_LIST.
+    Window frame = mapClientAndAwaitFrame(d.get(), 300, 220, 240, 180, client);
+    INFO("wm stderr: " << fixture.wmStderr());
+    REQUIRE(client != None);
+    REQUIRE(frame != None);
+
+    Rect frameRect;
+    REQUIRE(pumpedRect(d.get(), frame, frameRect));
+    INFO("frame " << describe(frameRect));
+    CHECK(frameRect.x == 300);
+    CHECK(frameRect.y == 220);
+
+    REQUIRE(fixture.wmAlive());
+    XDestroyWindow(d.get(), client);
+    XSync(d.get(), False);
+}
+
+// ---------------------------------------------------------------------------
+// Case 14: the root-ConfigureNotify fallback genuinely reflows
+//
+// The case that proves the fallback branch is wired rather than merely written,
+// and the reason StructureNotifyMask was added to the root mask at all.
+//
+// The WM's RANDR path is provably inert here: with the sentinel forced below
+// zero the WM never calls XRRSelectInput, so the server sends it no
+// screen-change notification and the RANDR dispatch arm cannot match. Every
+// effect below therefore arrived through root's own ConfigureNotify.
+//
+// Same outcome asserted as the RANDR case (case 7): the workarea follows the
+// screen down AND a now-offscreen window is moved back, with its size untouched.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("With RANDR inert the root-ConfigureNotify fallback still reflows",
+          "[wm_norandr]")
+{
+    WmFixture fixture(forcedNoRandrFixture());
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+    requireFixtureScreen(d.get());
+
+    // Prove the RANDR path is off before relying on it being off.
+    const std::string log = fixture.wmStderr();
+    INFO("wm stderr: " << log);
+    REQUIRE(log.find("forced off") != std::string::npos);
+    REQUIRE(log.find("Xrandr extension available.") == std::string::npos);
+
+    constexpr int kW = 240, kH = 180;
+
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d.get(), 300, 220, kW, kH, client);
+    REQUIRE(client != None);
+    REQUIRE(frame != None);
+
+    Rect placed;
+    REQUIRE(placeClient(d.get(), client, 900, 700, kW, kH, placed));
+    INFO("placed at: " << describe(placed));
+    REQUIRE(placed.x + placed.w > kSmallMaxX);
+    REQUIRE(placed.y + placed.h > kSmallMaxY);
+
+    REQUIRE(resizeScreenTo(fixture.display(), kSmallW, kSmallH));
+
+    const std::vector<unsigned long> workarea =
+        awaitWorkarea(d.get(), { 0, 0, kSmallW, kSmallH });
+    INFO("workarea after: " << describe(workarea));
+    REQUIRE(workarea.size() == 4);
+    CHECK(workarea[2] == static_cast<unsigned long>(kSmallW));
+    CHECK(workarea[3] == static_cast<unsigned long>(kSmallH));
+
+    const Rect expected{ kSmallMaxX - placed.w, kSmallMaxY - placed.h,
+                         placed.w, placed.h };
+    const Rect got = awaitRect(d.get(), client, expected);
+    INFO("after reflow: " << describe(got) << "  expected " << describe(expected));
+    CHECK(got.x == kSmallMaxX - placed.w);
+    CHECK(got.y == kSmallMaxY - placed.h);
+    CHECK(got.w == placed.w);                 // moved, NOT resized
+    CHECK(got.h == placed.h);
+
+    REQUIRE(fixture.wmAlive());
+    XDestroyWindow(d.get(), client);
+    XSync(d.get(), False);
+}
+
+// ---------------------------------------------------------------------------
+// Case 15: clean shutdown on a RANDR-less server
+//
+// A capability path that leaves the WM unable to exit cleanly would be a
+// regression the other three cases cannot see.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("The WM exits cleanly on SIGTERM with no RANDR extension", "[wm_norandr]")
+{
+    WmFixture fixture(noRandrFixture());
+    REQUIRE(fixture.wmAlive());
+
+    // True only for a normal exit with status 0 -- not the ASan exitcode
+    // sentinel, not a signal death.
+    const bool clean = fixture.terminateWmCleanly();
+    INFO("wm stderr: " << fixture.wmStderr());
+    INFO("exit code: " << fixture.wm().exitCode()
+         << " signal: " << fixture.wm().termSignal());
+    CHECK(clean);
 }
