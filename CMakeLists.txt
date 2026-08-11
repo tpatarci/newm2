@@ -420,6 +420,46 @@ if(BUILD_TESTS)
             PROPERTIES
                 FIXTURES_REQUIRED preflight_ok
         )
+
+        # --- Focus-policy tests (FOCUS-02, TEST-05) ---
+        #
+        # Cloned from test_wm_geometry above -- own display per fixture
+        # instance, so deliberately NO shared-display binding and NO
+        # `FIXTURES_REQUIRED xvfb_display`.
+        #
+        # One addition over that target: the XTEST library. Focus is driven by
+        # real pointer input here, and it must come from a connection with grab
+        # control enabled (RESEARCH Pitfall 10) -- the WM takes pointer grabs
+        # during interaction, and Client::eventButton() ignores synthetic
+        # events outright, so nothing else reaches the paths under test.
+        add_executable(test_wm_focus tests/test_wm_focus.cpp)
+        target_link_libraries(test_wm_focus PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+            PkgConfig::XTST
+        )
+        target_include_directories(test_wm_focus PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/tests
+            ${XFT_INCLUDE_DIRS}
+        )
+
+        target_compile_definitions(test_wm_focus PRIVATE
+            WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
+            WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
+            WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+        )
+
+        # The tests exec the binary, so it must exist before they run.
+        add_dependencies(test_wm_focus wm2-born-again)
+
+        # ADD_TAGS_AS_LABELS is required by D-33, or [wm_focus] is not
+        # selectable by the anchored label gates this plan's criteria use.
+        catch_discover_tests(test_wm_focus ADD_TAGS_AS_LABELS
+            PROPERTIES
+                FIXTURES_REQUIRED preflight_ok
+                TIMEOUT 240
+        )
     endif()
 
     # Config parsing unit tests (pure data transformation, no X11 needed)
