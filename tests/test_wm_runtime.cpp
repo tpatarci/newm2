@@ -105,6 +105,22 @@ constexpr int kDefaultFrameThickness = 7;
 const char* const kProbeProgram = "xclock";
 const char* const kProbeClass   = "XClock";
 
+// How long to wait for a program the WM spawned to appear as a managed window.
+//
+// Generous on purpose. A deadline here exists to stop a broken case hanging the
+// suite forever, NOT to assert that spawning is fast: the chain is fork, fork,
+// exec, an X connection, a map request, and the WM framing it -- and under the
+// sanitizer, with the whole 283-case suite running, every link of that is
+// slower. MEASURED: this case took 16.4 s against a 15 s deadline in one
+// full-suite ASan run while passing in 0.3 s on its own.
+constexpr int kSpawnObserveMs = 45000;
+
+// The matching wait for a spawn that must NOT happen. Shorter, because nothing
+// is coming -- but not trivially short: a window that was merely slow must not
+// be mistaken for a window that never existed. The filesystem witness is the
+// primary evidence in that case regardless.
+constexpr int kSpawnAbsentMs = 15000;
+
 // ---------------------------------------------------------------------------
 // Xlib's own error handler
 //
@@ -675,23 +691,28 @@ bool openRootMenu(Display* d, XTestDriver& driver, int x, int y,
     driver.moveTo(x, y);
     driver.press(Button1);
 
+    // 20 s rather than 8 s at each stage for the same reason kSpawnObserveMs is
+    // generous: under the sanitizer, with the whole suite running, the WM takes
+    // noticeably longer to reach its Expose handler.
+    constexpr int kMenuStageMs = 20000;
+
     menuOut = None;
     if (!WmFixture::pollUntil([&] {
             menuOut = findOpenMenu(d, x, y);
             return menuOut != None;
-        }, 8000)) {
+        }, kMenuStageMs)) {
         return false;
     }
 
     if (!WmFixture::pollUntil([&] {
             return serverRect(d, menuOut, rectOut) && rectOut.w > 1 && rectOut.h > 1;
-        }, 8000)) {
+        }, kMenuStageMs)) {
         return false;
     }
 
     return WmFixture::pollUntil([&] {
         return captureRoot(d, rectOut).size() >= 2;
-    }, 8000);
+    }, kMenuStageMs);
 }
 
 // Release over the first menu row ("New"). The WM computes
@@ -1416,7 +1437,7 @@ TEST_CASE("new-window-command decides which program the menu's New entry starts"
     REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect));
     selectFirstMenuEntry(d, driver, menuRect);
 
-    const Window spawned = awaitClientWithClass(d, kProbeClass, before, 15000);
+    const Window spawned = awaitClientWithClass(d, kProbeClass, before, kSpawnObserveMs);
     INFO("wm stderr:\n" << fixture.wmStderr());
     INFO("client list size: " << clientList(d).size());
     REQUIRE(spawned != None);
@@ -1470,7 +1491,7 @@ TEST_CASE("exec-using-shell gates whether a command with arguments and "
         selectFirstMenuEntry(d, driver, menuRect);
 
         spawnedOut = awaitClientWithClass(d, kProbeClass, before,
-                                          shellEnabled ? 15000 : 6000);
+                                          shellEnabled ? kSpawnObserveMs : kSpawnAbsentMs);
 
         // The sentinel is written by the SECOND half of the command, after the
         // program starts, so it is polled on its own deadline rather than read
@@ -1478,7 +1499,7 @@ TEST_CASE("exec-using-shell gates whether a command with arguments and "
         // exactly why it has a deadline and not a single read.
         sentinelSeen = WmFixture::pollUntil([&] {
             return pathExists(sentinel);
-        }, shellEnabled ? 10000 : 4000);
+        }, shellEnabled ? kSpawnObserveMs : kSpawnAbsentMs);
 
         INFO("wm stderr:\n" << fixture.wmStderr());
         CHECK(fixture.wmAlive());
