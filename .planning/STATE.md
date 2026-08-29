@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 08
 current_phase_name: xrandr-vnc-compatibility-focus-rules
 status: executing
-stopped_at: Completed 08-11-PLAN.md
-last_updated: "2026-08-29T10:59:49.913Z"
+stopped_at: Completed 08-12-PLAN.md
+last_updated: "2026-08-29T12:09:41.230Z"
 last_activity: 2026-08-11
 last_activity_desc: gathered Phase 8 context across 8 gray areas (32 decisions captured)
-state_head: b53b8b1fde5fc3a1062c4d7efa71d113c3ba6eac
+state_head: 7b6826fc8e9ba0c649d370521b2a25956a6c659d
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 36
-  completed_plans: 33
+  completed_plans: 34
 milestone_name: milestone
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 08 (xrandr-vnc-compatibility-focus-rules) — EXECUTING
-Plan: 12 of 14
+Plan: 13 of 14
 Status: Ready to execute
 Last activity: 2026-08-11 — Phase 08 execution started
 
@@ -89,6 +89,7 @@ Progress: [████████░░] 81% (7/9 phases complete)
 | Phase 08 P09 | 60min | 3 tasks | 7 files |
 | Phase 08 P10 | 21min | 3 tasks | 6 files |
 | Phase 08 P11 | 75min | 3 tasks | 6 files |
+| Phase 08 P12 | 95min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -160,6 +161,12 @@ Recent decisions affecting current work:
 - [Phase 08]: Plan 08-11: the WM's X protocol error log is now a test observable; errorHandler() logs and returns 0, so teardown defects are invisible to any assertion about windows or properties
 - [Phase 08]: Plan 08-11: hidden-list transfers are proven through the published _NET_CLIENT_LIST ORDER, explicitly as a proxy for the vector move and not as an EWMH ordering claim
 - [Phase 08]: Plan 08-11: fixResizeDimensions() validates each resize increment per axis before its own division; a non-positive increment means 'do not quantise this axis', never a divide by zero
+- [Phase 08]: Deferred item 8's recorded cause was corrected: Border::unmap()'s frame/tab/button unmaps each reach Client::eventUnmap() via hasWindow(), and the tab's is what withdrew the fullscreen client -- the reparent guard alone is not sufficient
+- [Phase 08]: eventClient's _NET_WM_STATE branch guards on !isWithdrawn(), not !isNormal(): an Iconic client is genuinely managed, Withdrawn is the ICCCM's own word for unmanaged
+- [Phase 08]: Maximize insets the workarea by the frame decoration so the FRAME fills it; the client sits at (xIndent, yIndent), the one convention every geometry path in the WM now follows
+- [Phase 08]: setMaximized falls back to the screen when the workarea is not a usable rectangle inside it -- a range check, deliberately not a size threshold, which would be a policy about how much screen a panel may claim
+- [Phase 08]: clampStrut recorded as an equivalent mutant: Xlib sign-extends format-32 property data into long, so the narrowing conversion is exact and no external observation can distinguish it
+- [Phase 08]: Memory-safety mutations must be run in the ASan tree -- two of fifteen are green in debug and kill the WM under the sanitizer
 
 ### Pending Todos
 
@@ -190,6 +197,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-29T10:59:39.056Z
-Stopped at: Completed 08-11-PLAN.md
+Last session: 2026-08-29T12:09:29.820Z
+Stopped at: Completed 08-12-PLAN.md
 Resume file: None
