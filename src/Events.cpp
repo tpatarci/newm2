@@ -354,11 +354,62 @@ void WindowManager::eventClient(XClientMessageEvent *e)
         }
     }
 
-    // EWMH: _NET_ACTIVE_WINDOW (per D-10, always grant)
+    // EWMH: _NET_ACTIVE_WINDOW -- arbitrated by source indication.
+    //
+    // SUPERSEDES Phase 6 D-10 ("always grant"), by the recorded outcome of the
+    // decision checkpoint in plan 08-08; the amendment note lives on the D-10
+    // entry in .planning/phases/06-ewmh-compliance/06-CONTEXT.md. D-10 itself
+    // forecast this: it scoped always-grant to Phase 6 and said Phase 8 would
+    // add timestamp-based focus-stealing prevention.
+    //
+    // Why this branch has to exist at all: FOCUS-01 is enforced at map time in
+    // Client::shouldFocusOnMap(). If activation requests were still granted
+    // unconditionally, an application refused there could simply ask for the
+    // focus it had just been denied. A mitigation with an unguarded second
+    // entry point is not a mitigation.
+    //
+    // The source indication is the discriminator, and it is the one the EWMH
+    // provides for exactly this purpose:
+    //
+    //   2 (pager)       granted unconditionally. Taskbars and window switchers
+    //                   act on the user's direct instruction and know more
+    //                   about the user's intent than the WM does. Arbitrating
+    //                   them would break the desktop to no security benefit.
+    //   1 (application) arbitrated against the message timestamp, through the
+    //                   SAME isUserTimeRecent() helper the map-time path uses.
+    //                   Not a second comparison -- one arbiter, two callers,
+    //                   because a security rule that exists twice drifts.
+    //   0 (none given)  granted. A legacy client sends no source indication and
+    //                   refusing it would break it, which is D-19's reasoning
+    //                   applied to this entry point.
+    //
+    // The honest ceiling: a client that lies about its source is granted. So is
+    // one that forges a fresh timestamp, so arbitrating all sources would not
+    // raise the ceiling -- it would only break pagers. This stops ordinary
+    // background applications, not a deliberately hostile one.
     if (e->message_type == Atoms::net_activeWindow) {
-        if (c && c->isNormal()) {
-            c->activate();
+        // Validate before trusting any field. Format 32 is what makes the five
+        // long slots meaningful; a managed, normal target is what makes the
+        // request actionable; and the source must be one the EWMH defines,
+        // because treating "not 1" as "trusted" would hand focus to any client
+        // that sent a garbage source value.
+        if (!c || !c->isNormal() || e->format != 32) return;
+
+        const long source = e->data.l[0];
+        if (source != 0 && source != 1 && source != 2) return;
+
+        bool grant = true;
+        if (config().focusStealingPrevention && source == 1) {
+            const Time stamp = static_cast<Time>(e->data.l[1]);
+            // Zero is not a timestamp the WM can act on. At map time it carries
+            // the spec's explicit "do not focus me"; on a request to BE focused
+            // it is simply absent evidence, and the request is arbitrated as
+            // stale rather than granted on the strength of nothing.
+            grant = (stamp != 0) && isUserTimeRecent(stamp);
         }
+
+        if (grant) c->activate();
+        else       c->demandAttention();
         return;
     }
 
