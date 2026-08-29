@@ -1,6 +1,7 @@
 #pragma once
 
 #include "x11wrap.h"
+#include "Rules.h"
 #include <X11/Xutil.h>
 #include <string>
 #include <memory>
@@ -198,6 +199,17 @@ private:
     std::string m_resName;
     std::string m_resClass;
 
+    // RULES-02 (plan 08-10): the resolved later-wins fold for THIS window, and
+    // the two flags derived from it that outlive manage().
+    //
+    // m_ruleNoDecorate is kept distinct from isDock() on purpose: both end up on
+    // the same unframed code path, but only a dock may recompute the workarea,
+    // and collapsing the two would let any no-decorate rule shrink every other
+    // window's usable screen.
+    RuleOutcome m_ruleOutcome;
+    bool m_ruleNoDecorate{false};
+    bool m_skipTaskbar{false};
+
     Colormap m_colormap;
     std::vector<Window> m_colormapWindows;
     std::vector<Colormap> m_windowColormaps;
@@ -217,6 +229,8 @@ private:
     void getTransient();
     void getWindowType();
     void getClassHint();
+    void applyWindowRules();
+    void clampGeometryToScreen();
     void decorate(bool active);
 
     // Gesture detection

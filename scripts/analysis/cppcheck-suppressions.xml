@@ -116,12 +116,6 @@
     <fileName>src/Manager.cpp</fileName>
     <hash>32c26801e40d145e</hash>
   </suppress>
-  <!-- The function 'applyRules' is never used.| -->
-  <suppress>
-    <id>unusedFunction</id>
-    <fileName>src/Rules.cpp</fileName>
-    <hash>f31aaa26c6527e52</hash>
-  </suppress>
   <!-- The function 'coordsInHole' is never used.| -->
   <suppress>
     <id>unusedFunction</id>

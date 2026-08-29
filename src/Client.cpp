@@ -117,19 +117,7 @@ void Client::manage(bool mapped)
     // class or type has to be consultable before the framing decision is made,
     // and this ordering is what plan 08-10's fold depends on.
     getClassHint();
-
-    // D-01/D-02: DOCK and NOTIFICATION windows get no frame decoration
-    if (m_windowType == WindowType::Dock || m_windowType == WindowType::Notification) {
-        XMapWindow(display(), m_window);
-        setState(ClientState::Normal);
-        windowManager()->updateClientList();
-
-        // D-09: Dock windows affect workarea
-        if (m_windowType == WindowType::Dock) {
-            windowManager()->updateWorkarea();
-        }
-        return;
-    }
+    applyWindowRules();
 
     XWMHints *hints = XGetWMHints(d, m_window);
 
@@ -170,6 +158,58 @@ void Client::manage(bool mapped)
         m_minWidth = m_minHeight = 50;
     }
 
+    // RULES-02: the rule's geometry is overlaid on the client's REQUEST, here --
+    // after the minimum-size floors above are known and before gravitate() and
+    // the screen clamps below consume the result. Applying it any later would
+    // make the rule a second geometry authority racing the frame; applying it
+    // any earlier would let a rule ask for a size the size hints forbid.
+    if (m_ruleOutcome.hasSize) {
+        // Raised to the minimum exactly as a client's own undersized request is,
+        // a few lines below. A rule is a user preference, not a licence to
+        // violate the application's stated constraints.
+        m_w = m_ruleOutcome.width  < m_minWidth  ? m_minWidth  : m_ruleOutcome.width;
+        m_h = m_ruleOutcome.height < m_minHeight ? m_minHeight : m_ruleOutcome.height;
+        m_fixedSize = false;
+        reshape = true;
+    }
+    if (m_ruleOutcome.hasPosition) {
+        m_x = m_ruleOutcome.posX;
+        m_y = m_ruleOutcome.posY;
+    }
+
+    // D-01/D-02: DOCK and NOTIFICATION windows get no frame decoration, and
+    // RULES-02's no-decorate action joins them on that same path rather than
+    // opening a second one.
+    //
+    // Positioned HERE rather than before the size-hint block above so a
+    // rule-undecorated window still gets its minimum-size floors and its rule
+    // geometry: the early return must skip the FRAME, not the placement.
+    if (m_windowType == WindowType::Dock ||
+        m_windowType == WindowType::Notification ||
+        m_ruleNoDecorate) {
+
+        // No gravitate() here: gravity compensates for a frame, and there is no
+        // frame. The client window IS the window, so the rule's coordinates are
+        // its coordinates.
+        if (m_ruleOutcome.hasPosition || m_ruleOutcome.hasSize) {
+            clampGeometryToScreen();
+            XMoveResizeWindow(d, m_window, m_x, m_y,
+                              static_cast<unsigned>(m_w), static_cast<unsigned>(m_h));
+        }
+
+        XMapWindow(display(), m_window);
+        setState(ClientState::Normal);
+        windowManager()->updateClientList();
+
+        // D-09: Dock windows affect workarea. Guarded on isDock() and NOT on
+        // "reached the unframed path", so a no-decorate rule cannot shrink every
+        // other window's usable area as a side effect of removing one border.
+        if (isDock()) {
+            windowManager()->updateWorkarea();
+        }
+        return;
+    }
+
     // Act
     gravitate(false);
 
@@ -191,6 +231,18 @@ void Client::manage(bool mapped)
     if (m_y < m_border->yIndent()) m_y = m_border->yIndent();
 
     m_border->configure(m_x, m_y, m_w, m_h, 0L, Above);
+
+    // RULES-02: the clamp above keeps the frame's indent on screen, which is not
+    // the same thing as keeping the WINDOW on screen -- a rule saying 980,700
+    // for a 300x220 window satisfies it and still leaves most of the window past
+    // the right edge. ensureVisible() is the existing whole-window clamp, and it
+    // MOVES rather than resizes, so an out-of-range rule value cannot strand a
+    // window where the user cannot reach it. Only for rule-driven geometry:
+    // running it unconditionally would change placement for every window the WM
+    // has ever managed.
+    if (m_ruleOutcome.hasPosition || m_ruleOutcome.hasSize) {
+        ensureVisible();
+    }
 
     if (mapped) m_reparenting = true;
     if (reshape && !m_fixedSize) XResizeWindow(d, m_window, m_w, m_h);
@@ -542,6 +594,15 @@ void Client::updateNetWmState()
     // drop whichever states the other site did not know about. Plan 08-10 adds
     // skip-taskbar/skip-pager to this same list for the same reason.
     if (m_demandsAttention) states.push_back(Atoms::net_wmStateDemandsAttention);
+    // RULES-02 (plan 08-10). Both states, always together: a panel reads
+    // _NET_WM_STATE_SKIP_TASKBAR and a pager reads _NET_WM_STATE_SKIP_PAGER, so
+    // publishing only the first leaves the window visible in half the places the
+    // user asked it to disappear from. Added here, beside the demands-attention
+    // state rather than in place of it, because this remains the single writer.
+    if (m_skipTaskbar) {
+        states.push_back(Atoms::net_wmStateSkipTaskbar);
+        states.push_back(Atoms::net_wmStateSkipPager);
+    }
 
     if (states.empty()) {
         XChangeProperty(display(), m_window, Atoms::net_wmState,
@@ -828,6 +889,63 @@ void Client::getClassHint()
         m_resClass = boundedCopy(hint.res_class, kMaxClassLen);
         XFree(hint.res_class);
     }
+}
+
+
+// RULES-02 (plan 08-10): fold the user's configured rules against this window
+// and remember the outcome, once, at manage time.
+//
+// Three shipping actions, and deliberately no fourth. The original RULES-02
+// wording also named a "specific workspace" action; this window manager reports
+// a single desktop by design (Phase 6), so that action has nothing to target and
+// is NOT implemented. Recorded here, at the fold, so a future reader sees an
+// excluded action rather than a forgotten one -- and recorded in the requirement
+// text itself (D-23), not only in a planning document.
+//
+// D-22: every matching rule applies in file order and the LAST one to set a
+// given action wins. The fold itself lives in src/Rules.cpp and is unit-tested
+// without a display; all this does is supply the three facts and act on the
+// result.
+void Client::applyWindowRules()
+{
+    const std::vector<WindowRule>& rules = windowManager()->config().rules;
+    if (rules.empty()) return;
+
+    RuleWindowFacts facts;
+    facts.instanceName = m_resName;
+    facts.className    = m_resClass;
+    switch (m_windowType) {
+    case WindowType::Dock:         facts.type = RuleWindowType::Dock;         break;
+    case WindowType::Dialog:       facts.type = RuleWindowType::Dialog;       break;
+    case WindowType::Notification: facts.type = RuleWindowType::Notification; break;
+    case WindowType::Normal:       facts.type = RuleWindowType::Normal;       break;
+    }
+
+    m_ruleOutcome = applyRules(rules, facts);
+
+    m_ruleNoDecorate = (m_ruleOutcome.noDecorate == RuleTriState::On);
+    m_skipTaskbar    = (m_ruleOutcome.skipTaskbar == RuleTriState::On);
+
+    // Published through the single _NET_WM_STATE writer, never directly. The
+    // property is written here because nothing else in the map path writes it
+    // for an ordinary window, so without this call the rule would set a flag
+    // that no panel ever sees.
+    if (m_skipTaskbar) updateNetWmState();
+}
+
+
+// RULES-02: keep the whole window on screen by MOVING it. The unframed
+// counterpart of ensureVisible(), which cannot be reused here because it moves
+// the frame -- and a rule-undecorated window has no frame to move.
+void Client::clampGeometryToScreen()
+{
+    const int mx = windowManager()->screenWidth() - 1;
+    const int my = windowManager()->screenHeight() - 1;
+
+    if (m_x + m_w > mx) m_x = mx - m_w;
+    if (m_y + m_h > my) m_y = my - m_h;
+    if (m_x < 0) m_x = 0;
+    if (m_y < 0) m_y = 0;
 }
 
 
