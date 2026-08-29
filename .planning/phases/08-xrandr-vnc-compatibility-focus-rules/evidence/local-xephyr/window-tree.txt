@@ -1,0 +1,35 @@
+# window tree -- local-xephyr -- :153 -- 2026-08-29T14:21:48Z
+# commit d478e83
+
+
+xwininfo: Window id: 0x50e (the root window) (has no name)
+
+  Root window id: 0x50e (the root window) (has no name)
+  Parent window id: 0x0 (none)
+     6 children:
+     0x200026 (has no name): ()  215x61+450+320  +450+320
+        3 children:
+        0x400030 "xmessage": ("xmessage" "Xmessage")  193x52+21+8  +471+328
+           2 children:
+           0x200029 (has no name): ()  14x14+179+38  +650+366
+           0x400031 (has no name): ()  193x52+0+0  +471+328
+              2 children:
+              0x400035 (has no name): ()  183x18+4+4  +475+332
+                 1 child:
+                 0x400036 (has no name): ()  14x18+-1+-1  +475+332
+              0x400032 (has no name): ()  36x17+4+29  +475+357
+        0x200028 (has no name): ()  5x5+4+4  +454+324
+        0x200027 (has no name): ()  214x44+0+0  +450+320
+     0x200020 (has no name): ()  222x209+150+150  +150+150
+        3 children:
+        0x60000a "xclock": ("xclock" "XClock")  200x200+21+8  +171+158
+           2 children:
+           0x200023 (has no name): ()  14x14+186+186  +357+344
+           0x60000b (has no name): ()  200x200+0+0  +171+158
+        0x200022 (has no name): ()  5x5+4+4  +154+154
+        0x200021 (has no name): ()  221x44+0+0  +150+150
+     0x20001d (has no name): ()  1x1+0+0  +0+0
+     0x20001c "wm2-born-agai": ()  1x1+-1+-1  +-1+-1
+     0x20001b (has no name): ()  1x1+0+0  +0+0
+     0x20001a (has no name): ()  1x1+0+0  +0+0
+

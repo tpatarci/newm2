@@ -544,6 +544,55 @@ before/after visual comparison to land safely, which is 08-14's evidence work.
 It is a two-line change plus screenshots; the risk is entirely in the review,
 not in the edit.
 
+### UPDATE (08-14): SCREENSHOTTED, re-measured, and the consequence is worse than recorded
+
+08-06 deferred this saying it "wants 08-14's screenshots". It now has them:
+`evidence/screenshots/deferred-item-11-tab-does-not-track-title.png`.
+
+**Reproduced independently on a fresh run** (Xvfb 1000x700, shipped defaults,
+two `xmessage` windows differing only in title):
+
+| Title | Length | Tab window geometry |
+|---|---|---|
+| `A` | 1 char | `0x200027` **325x54** |
+| `A Very Long Window Title Indeed Yes` | 34 chars | `0x200021` **325x58** |
+
+**Four pixels apart for a 34-fold difference in title length** — the same
+54 / 58 figures 08-06 measured, on a different display size, which makes the
+axis-swap diagnosis in the entry above about as confirmed as it gets without
+touching the code.
+
+**What the screenshot adds, and it is not cosmetic.** 08-06 predicted the label
+would "run far past the end of its tab". It does not. It is CLIPPED TO THE TAB,
+and the tab is ~54 px of the ~130 px the rotated string needs, so:
+
+- the 1-character title renders a legible sideways `A`;
+- **the 34-character title renders NO VISIBLE LABEL AT ALL.**
+
+So the user-visible effect is not an overhanging label, it is a window with an
+**empty tab**. Every window whose title is more than a few characters — which is
+most windows, most of the time — is unlabelled. That is a materially worse
+defect than the entry above describes, and it is the single most visible
+rendering issue in the product.
+
+**Still not fixed, deliberately, and here is the reasoning rather than a
+shrug.** Plan 08-14 is the phase's evidence and signoff plan: its
+`files_modified` does not include `src/Border.cpp`, and it neither asks for nor
+budgets a rendering change. Editing the tab-metrics reads at the final signoff
+step would put an unreviewed, highly visible appearance change into the same
+commit range that is supposed to be *certifying* the appearance — and the human
+visual pass (08-14 Task 3) is precisely the review this change has always needed
+and has never had. Changing what that pass is looking at, on the way into it,
+would be the wrong order.
+
+**Recommended owner:** the first plan of the next phase, as a small dedicated
+rendering change — swap the two `XGlyphInfo` axis reads in `Border::loadTabFont()`
+and `Border::fixTabHeight()`, then re-take the screenshot above as the
+before/after pair. Note that the ellipsis-shortening loop below those reads is
+currently near-dead (`m_tabHeight` almost always lands under `maxHeight` on the
+first try) and **will start firing** once the tab tracks the title, so that loop
+gets exercised for the first time by this fix and needs its own look.
+
 ## 12. The full process-level suite flakes at roughly one test per run (PRE-EXISTING, quantified)
 
 **Found during:** 08-06 Task 3, running `scripts/gates/build-all.sh` end to end
