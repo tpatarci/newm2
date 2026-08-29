@@ -1964,6 +1964,66 @@ TEST_CASE("Repeated create, map, unmap and destroy over 120 windows leaves the W
     CHECK(parentOf(d, fresh) == freshFrame);
     CHECK(parentOf(d, freshFrame) == DefaultRootWindow(d));
 
+    // --- 3b: a WM_COLORMAP_WINDOWS entry that dies under the WM's feet ----
+    //
+    // Folded into this case rather than given one of its own because it is the
+    // same claim -- the WM holds a reference to a window a client can destroy at
+    // any moment -- and because it exists at all only for an honest reason:
+    // deleting the return check on the SECOND XGetWindowAttributes in
+    // Client::getColormaps() left the whole suite green. That is not an
+    // equivalent mutant, it is an uncovered branch, and the branch is only
+    // reachable through WM_COLORMAP_WINDOWS, which nothing else here writes.
+    //
+    // Note the property is written TWICE: the second write is what makes
+    // getColormaps() run again with the referenced window already gone, which
+    // is the state in which an unchecked read yields the PREVIOUS window's
+    // colormap. The client must also be ACTIVE, or eventProperty() refreshes
+    // the array without installing anything and the bad value never reaches the
+    // server.
+    {
+        XTestDriver driver(fixture.display());
+        const Rect fr = rectOf(d, fresh);
+        driver.moveTo(fr.x + fr.w / 2, fr.y + fr.h / 2);
+        XSync(d, False);
+        REQUIRE(WmFixture::pollUntil([&] {
+            pumpWm(d);
+            return activeWindow(d) == fresh;
+        }, 8000));
+
+        Window cmapWin = createClient(d, 760, 40, 40, 30, "colormap-donor");
+        XMapWindow(d, cmapWin);
+        XSync(d, False);
+
+        const Atom cmapProp = XInternAtom(d, "WM_COLORMAP_WINDOWS", False);
+        XChangeProperty(d, fresh, cmapProp, XA_WINDOW, 32, PropModeReplace,
+                        reinterpret_cast<unsigned char*>(&cmapWin), 1);
+        XSync(d, False);
+        settleWm(d);
+
+        XDestroyWindow(d, cmapWin);
+        XSync(d, False);
+        settleWm(d);
+
+        XChangeProperty(d, fresh, cmapProp, XA_WINDOW, 32, PropModeReplace,
+                        reinterpret_cast<unsigned char*>(&cmapWin), 1);
+        XSync(d, False);
+        settleWm(d);
+
+        XDeleteProperty(d, fresh, cmapProp);
+        XSync(d, False);
+        settleWm(d);
+
+        driver.moveTo(kParkX, kParkY);
+        XSync(d, False);
+        settleWm(d);
+
+        // Still framed, still managed, still the WM's client -- the point is
+        // that the bad reference changed nothing observable, not merely that
+        // the WM stayed up.
+        CHECK(listed(d, fresh));
+        CHECK(parentOf(d, fresh) == freshFrame);
+    }
+
     // --- 4: resident memory is inside a FIXED, pre-chosen budget ----------
     long afterKb = 0;
     REQUIRE(residentKb(fixture.wm().pid(), afterKb));

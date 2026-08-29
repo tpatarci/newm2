@@ -558,12 +558,20 @@ static void printUsage(const char* argv0, const std::vector<CliOption>& longOpti
                 printedHeading = true;
             }
 
+            // Every name printed here is a name getopt_long() was handed, taken
+            // from the same list, rather than one re-derived from the spec. The
+            // difference is not cosmetic: with the negations re-derived, removing
+            // them from the parse table left the usage text still advertising
+            // --no-<name> for options the binary would then reject. Found by
+            // mutation M7.
+            std::printf("  --%-28s %s\n", opt.flag.c_str(), opt.spec->summary);
+
             if (opt.spec->type == OptType::Boolean) {
-                std::printf("  --%-28s %s\n", opt.spec->name, opt.spec->summary);
-                const std::string negated = std::string("no-") + opt.spec->name;
-                std::printf("  --%-28s (disable the above)\n", negated.c_str());
-            } else {
-                std::printf("  --%-28s %s\n", opt.spec->name, opt.spec->summary);
+                for (const CliOption& other : longOptions) {
+                    if (other.spec == opt.spec && other.negated) {
+                        std::printf("  --%-28s (disable the above)\n", other.flag.c_str());
+                    }
+                }
             }
         }
     }
