@@ -304,6 +304,31 @@ void WindowManager::eventDestroy(XDestroyWindowEvent *e)
             setActiveClient(nullptr);
         }
 
+        // STEP 2b: Scrub the dying client out of every OTHER client's revert
+        // chain, before STEP 4 frees it (threat T-8-UAF).
+        //
+        // m_revert is a raw Client* recording where the focus should fall back
+        // to when its owner goes away, and WindowManager::clearFocus() walks
+        // that chain calling isNormal() on each link. Until this line, the sole
+        // caller of skipInRevert() was Client::activate() -- so a client that
+        // was DESTROYED rather than superseded stayed referenced as a revert
+        // target by everything that had reverted to it, and the next
+        // clearFocus() to walk the chain read freed memory.
+        //
+        // Found by the ASan gate while landing FOCUS-01, and pre-existing: the
+        // defect is in this removal path, not in the focus work. What changed is
+        // its reachability. Before map-time arbitration, m_revert was populated
+        // only when the user actually focused something, so revert chains were
+        // rare and mostly single-link; now every mapped window activates, chains
+        // form in ordinary use, and "map two windows, close the first, close the
+        // second" is enough to read through a dangling pointer.
+        //
+        // Passing c->revertTo() as the replacement keeps the chain intact rather
+        // than truncating it: whoever pointed at the dying client inherits its
+        // target. That target is live by induction -- it was either never
+        // destroyed, or was itself scrubbed here when it was.
+        skipInRevert(c, c->revertTo());
+
         // STEP 3: Remove from map first
         m_windowMap.erase(c->window());
 
