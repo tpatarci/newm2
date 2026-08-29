@@ -1403,3 +1403,343 @@ TEST_CASE("A maximum smaller than the minimum resolves without a nonsensical dim
     REQUIRE(fx.terminateWmCleanly());
     REQUIRE(fx.asanReports().empty());
 }
+
+
+// ===========================================================================
+// Checklist item 9: every window gravity mode the placement path handles
+// ===========================================================================
+
+namespace {
+
+// One row per case in Client::gravitate()'s switch, enumerated FROM that switch
+// rather than from memory.
+//
+// The offsets are expressed in terms of the frame indents, which are measured at
+// run time from a reference window rather than hardcoded: they depend on the tab
+// width, which depends on the font, so a literal here would fail the day someone
+// changes a font.
+//
+// With a client border width of zero -- which is what XCreateSimpleWindow gives
+// and what every window in this file has -- the switch's xdelta is exactly
+// -xIndent, so each mode's net offset collapses to one of three values per axis:
+// the full indent, zero, or minus one. That is what this table records.
+struct GravityRow {
+    const char* name;
+    int gravity;
+    int useIndentX;   // 1 -> +xIndent, 0 -> 0, -1 -> -1
+    int useIndentY;
+};
+
+constexpr GravityRow kGravityRows[] = {
+    { "NorthWest", NorthWestGravity,  1,  1 },
+    { "North",     NorthGravity,      0,  1 },
+    { "NorthEast", NorthEastGravity, -1,  1 },
+    { "West",      WestGravity,       1,  0 },
+    { "Center",    CenterGravity,     0,  0 },
+    { "Static",    StaticGravity,     0,  0 },
+    { "East",      EastGravity,      -1,  0 },
+    { "SouthWest", SouthWestGravity,  1, -1 },
+    { "South",     SouthGravity,      0, -1 },
+    { "SouthEast", SouthEastGravity, -1, -1 },
+};
+
+int gravityOffset(int code, int indent)
+{
+    return code == 1 ? indent : (code == 0 ? 0 : -1);
+}
+
+// The warning Client::gravitate() prints when it meets a value its switch does
+// not handle. Two cases below turn on this string: the handled modes must NOT
+// produce it, and the unhandled one MUST.
+//
+// It is not decoration. Two of the ten handled modes -- Center and Static --
+// apply a net offset of exactly zero, which is also what the unhandled fallback
+// leaves behind, so deleting either case from the switch would move no window at
+// all and a position-only assertion could never notice. This string is the only
+// server-side difference between "handled, offset zero" and "not handled".
+constexpr const char* kBadGravityWarning = "bad window gravity";
+
+bool mentions(const std::string& haystack, const char* needle)
+{
+    return haystack.find(needle) != std::string::npos;
+}
+
+// Create a client declaring the given gravity, map it, and report the absolute
+// rectangles of both the client and its frame. Returns the client window, or
+// None if the WM never framed it.
+Window bringUpWithGravity(Display* d, int x, int y, int w, int h, long flags,
+                          int gravity, Rect& clientRect, Rect& frameRect)
+{
+    Window win = createClient(d, x, y, w, h);
+    setNormalHints(d, win, flags, 0, 0, 0, 0, 0, 0, 0, 0, gravity);
+    XMapWindow(d, win);
+    XSync(d, False);
+
+    const Window frame = awaitFrameFor(d, win);
+    if (frame == None) return None;
+    settleWm(d);
+
+    if (!serverRect(d, win, clientRect)) return None;
+    if (!serverRect(d, frame, frameRect)) return None;
+    return win;
+}
+
+} // namespace
+
+
+TEST_CASE("Every handled window gravity places the client where that mode implies",
+          "[wm_gravity]")
+{
+    WmFixture fx;
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    XTestDriver driver(fx.display());
+    driver.moveTo(kParkX, kParkY);
+    XSync(driver.display(), False);
+
+    // The frame indents, measured rather than assumed. A NorthWest client's
+    // client area sits exactly (xIndent, yIndent) inside its frame, which is the
+    // reparent offset Border::reparent uses and is independent of the gravity
+    // arithmetic under test.
+    Rect refClient{}, refFrame{};
+    REQUIRE(bringUpWithGravity(d, 300, 300, 200, 150, PWinGravity,
+                               NorthWestGravity, refClient, refFrame) != None);
+    const int xIndent = refClient.x - refFrame.x;
+    const int yIndent = refClient.y - refFrame.y;
+    INFO("measured indents " << xIndent << "," << yIndent);
+    REQUIRE(xIndent > 0);
+    REQUIRE(yIndent > 0);
+
+    constexpr int kReqX = 300;
+    constexpr int kReqY = 300;
+
+    for (const GravityRow& row : kGravityRows) {
+        Rect cr{}, fr{};
+        REQUIRE(bringUpWithGravity(d, kReqX, kReqY, 200, 150, PWinGravity,
+                                   row.gravity, cr, fr) != None);
+
+        const int expectX = kReqX + gravityOffset(row.useIndentX, xIndent);
+        const int expectY = kReqY + gravityOffset(row.useIndentY, yIndent);
+
+        INFO("gravity " << row.name << " (" << row.gravity << "): client "
+             << describe(cr) << " frame " << describe(fr)
+             << " expected client at " << expectX << "," << expectY);
+
+        REQUIRE(cr.x == expectX);
+        REQUIRE(cr.y == expectY);
+
+        // The frame is always exactly one indent up and left of the client area,
+        // whatever the gravity did -- so a mode that moved the client also moved
+        // its decoration with it rather than leaving the two out of step.
+        REQUIRE(cr.x - fr.x == xIndent);
+        REQUIRE(cr.y - fr.y == yIndent);
+
+        // Nothing off the top-left of the screen, for any mode.
+        REQUIRE(fr.x >= 0);
+        REQUIRE(fr.y >= 0);
+    }
+
+    // Not one of the ten was treated as unknown. This is what makes the two
+    // zero-offset modes' rows able to fail.
+    const std::string log = fx.wmStderr();
+    INFO("wm stderr:\n" << log);
+    REQUIRE_FALSE(mentions(log, kBadGravityWarning));
+
+    REQUIRE(fx.wmAlive());
+    REQUIRE(fx.terminateWmCleanly());
+    REQUIRE(fx.asanReports().empty());
+}
+
+
+TEST_CASE("A client declaring no gravity is placed as NorthWest", "[wm_gravity]")
+{
+    WmFixture fx;
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    XTestDriver driver(fx.display());
+    driver.moveTo(kParkX, kParkY);
+    XSync(driver.display(), False);
+
+    // Reference: an explicit NorthWest declaration.
+    Rect explicitClient{}, explicitFrame{};
+    REQUIRE(bringUpWithGravity(d, 320, 260, 200, 150, PWinGravity,
+                               NorthWestGravity, explicitClient, explicitFrame) != None);
+
+    // The same request with the gravity flag ABSENT. The value passed here is a
+    // deliberate decoy -- without PWinGravity the placement path must not read
+    // it, so if the two rectangles agree the default really is being used rather
+    // than the struct field being picked up regardless of its flag.
+    Rect defaultClient{}, defaultFrame{};
+    REQUIRE(bringUpWithGravity(d, 320, 260, 200, 150, PMinSize,
+                               SouthEastGravity, defaultClient, defaultFrame) != None);
+
+    INFO("wm stderr:\n" << fx.wmStderr());
+    INFO("explicit " << describe(explicitClient) << " default " << describe(defaultClient));
+
+    REQUIRE(defaultClient.x == explicitClient.x);
+    REQUIRE(defaultClient.y == explicitClient.y);
+
+    REQUIRE(fx.wmAlive());
+    REQUIRE(fx.terminateWmCleanly());
+    REQUIRE(fx.asanReports().empty());
+}
+
+
+TEST_CASE("An unhandled gravity value places the window without a negative coordinate",
+          "[wm_gravity]")
+{
+    WmFixture fx;
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    XTestDriver driver(fx.display());
+    driver.moveTo(kParkX, kParkY);
+    XSync(driver.display(), False);
+
+    // Requested at 2,2 on purpose. An unhandled mode applies NO offset at all,
+    // so the requested position passes straight through to a frame that starts
+    // one indent up and left of it -- which is off the top-left of the screen
+    // unless the placement path clamps. That clamp is the branch this case
+    // exists to pin, and it is the plausible failure mode here: a window placed
+    // at a negative coordinate is unreachable, whereas an unhandled enumerator
+    // does not crash anything.
+    Rect cr{}, fr{};
+    const Window win = bringUpWithGravity(d, 2, 2, 240, 180, PWinGravity, 99, cr, fr);
+    REQUIRE(win != None);
+
+    const std::string log = fx.wmStderr();
+    INFO("wm stderr:\n" << log);
+    INFO("client " << describe(cr) << " frame " << describe(fr));
+
+    // The WM said so rather than silently doing something arbitrary.
+    REQUIRE(mentions(log, kBadGravityWarning));
+
+    REQUIRE(fr.x >= 0);
+    REQUIRE(fr.y >= 0);
+    REQUIRE(cr.x > 0);
+    REQUIRE(cr.y > 0);
+    REQUIRE(cr.x < kScreenW);
+    REQUIRE(cr.y < kScreenH);
+
+    // Still a fully managed window: the unhandled value cost it nothing else.
+    REQUIRE(listed(d, win));
+    REQUIRE(cr.w == 240);
+    REQUIRE(cr.h == 180);
+
+    REQUIRE(fx.wmAlive());
+    REQUIRE(fx.terminateWmCleanly());
+    REQUIRE(fx.asanReports().empty());
+}
+
+
+TEST_CASE("The placement adjustment is its own inverse across map/unmap cycles",
+          "[wm_gravity]")
+{
+    // The classic defect in this area is an adjustment applied on the way in and
+    // not correctly undone on the way out, so a window creeps by one frame
+    // offset every time it is hidden and restored. Three cycles, and the
+    // position must be IDENTICAL each time -- not close.
+    //
+    // NorthWest is the mode used because its offset is the FULL frame indent on
+    // both axes -- tens of pixels, not one -- so a one-sided inverse shows up as
+    // an unmissable drift rather than something a rounding argument could
+    // explain away.
+    WmFixture fx;
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    XTestDriver driver(fx.display());
+    driver.moveTo(kParkX, kParkY);
+    XSync(driver.display(), False);
+
+    Window win = createClient(d, 260, 220, 240, 180);
+    setNormalHints(d, win, PWinGravity, 0, 0, 0, 0, 0, 0, 0, 0, NorthWestGravity);
+    XSelectInput(d, win, StructureNotifyMask);
+    XMapWindow(d, win);
+    XSync(d, False);
+    REQUIRE(awaitFrameFor(d, win) != None);
+    settleWm(d);
+
+    Rect first{};
+    REQUIRE(serverRect(d, win, first));
+    INFO("wm stderr:\n" << fx.wmStderr());
+    INFO("first placement " << describe(first));
+
+    for (int cycle = 1; cycle <= 3; ++cycle) {
+        XUnmapWindow(d, win);
+        XSync(d, False);
+        REQUIRE(WmFixture::pollUntil([&] {
+            pumpWm(d);
+            long st = -1;
+            return icccmState(d, win, st) && st == WithdrawnState;
+        }, 8000));
+        settleWm(d);
+
+        XMapWindow(d, win);
+        XSync(d, False);
+        REQUIRE(WmFixture::pollUntil([&] {
+            pumpWm(d);
+            long st = -1;
+            return icccmState(d, win, st) && st == NormalState;
+        }, 8000));
+        settleWm(d);
+
+        Rect again{};
+        REQUIRE(serverRect(d, win, again));
+        INFO("cycle " << cycle << " placement " << describe(again));
+        REQUIRE(again.x == first.x);
+        REQUIRE(again.y == first.y);
+        REQUIRE(again.w == first.w);
+        REQUIRE(again.h == first.h);
+    }
+
+    // The window has not moved on screen -- but that alone does not prove the
+    // adjustment was inverted, because the remap path re-parents into a frame
+    // that never moved and so cannot drift even if the WM's own coordinates did.
+    // What CAN drift is the position the WM believes in, and it publishes that
+    // to the client in the synthetic ConfigureNotify a toolkit lays itself out
+    // against. So provoke one and check it against the server.
+    //
+    // This is the half that actually fails when the placement adjustment is
+    // applied on the way in and not undone on the way out: three cycles of an
+    // un-inverted NorthWest adjustment leave the WM believing the window is a
+    // full frame indent away, three times over, from where it really is.
+    while (XPending(d) > 0) { XEvent drop; XNextEvent(d, &drop); }
+    XResizeWindow(d, win, 250, 190);
+    XSync(d, False);
+    settleWm(d);
+
+    Rect settled{};
+    REQUIRE(serverRect(d, win, settled));
+
+    bool sawSynthetic = false;
+    int reportedX = 0, reportedY = 0;
+    while (XPending(d) > 0) {
+        XEvent ev;
+        XNextEvent(d, &ev);
+        // The synthetic one, sent by the WM, carries ROOT coordinates; the
+        // server's own ConfigureNotify is parent-relative and says nothing about
+        // where the frame is.
+        if (ev.type == ConfigureNotify && ev.xconfigure.send_event) {
+            sawSynthetic = true;
+            reportedX = ev.xconfigure.x;
+            reportedY = ev.xconfigure.y;
+        }
+    }
+
+    INFO("settled " << describe(settled) << " WM reported "
+         << reportedX << "," << reportedY);
+    REQUIRE(sawSynthetic);
+    REQUIRE(reportedX == settled.x);
+    REQUIRE(reportedY == settled.y);
+
+    REQUIRE(fx.wmAlive());
+    REQUIRE(fx.terminateWmCleanly());
+    REQUIRE(fx.asanReports().empty());
+}
