@@ -106,6 +106,43 @@ const char* const kProbeProgram = "xclock";
 const char* const kProbeClass   = "XClock";
 
 // ---------------------------------------------------------------------------
+// Xlib's own error handler
+//
+// The DEFAULT one calls exit(1). Several helpers below walk the window tree
+// with XQueryTree and then ask each child for its geometry or attributes, and
+// between those two round trips a window can legitimately disappear -- the
+// nudge windows settleWm() creates and destroys are doing precisely that, over
+// and over, and so is every client the churn case tears down. A raced
+// XGetGeometry then killed the TEST PROCESS with no assertion output at all,
+// which reads as an unexplained failure rather than as a race.
+//
+// MEASURED before this was installed: 2 flakes in 4 runs of the 15-case gate,
+// in two different cases, both `BadDrawable` on X_GetGeometry with serial 16.
+//
+// The helpers already handle the failure correctly -- XGetGeometry returns 0
+// and they return false -- so this only lets them reach that code. Errors are
+// COUNTED rather than merely swallowed, so a helper that started erroring
+// systematically would still be visible instead of silently returning nothing.
+//
+// XSetErrorHandler is global to Xlib rather than per-connection, so this is
+// installed once at static initialisation, before Catch2 runs.
+// ---------------------------------------------------------------------------
+
+int g_xErrorCount = 0;
+
+int quietXErrorHandler(Display*, XErrorEvent*)
+{
+    ++g_xErrorCount;
+    return 0;
+}
+
+struct QuietXErrors {
+    QuietXErrors() { XSetErrorHandler(quietXErrorHandler); }
+};
+
+const QuietXErrors g_quietXErrors;
+
+// ---------------------------------------------------------------------------
 // Settling (deferred item 9)
 // ---------------------------------------------------------------------------
 
@@ -583,29 +620,88 @@ std::string describeTop(Display* d, const Histogram& h, size_t n = 4)
 // root and only moved/resized when the menu opens, so with no client mapped it
 // is the ONLY viewable child of root larger than 1x1. That is why the menu cases
 // deliberately map no client of their own.
-Window findOpenMenu(Display* d)
+// The OUTER menu is identified by the press point it is anchored on, not by
+// being the first viewable child of root.
+//
+// WindowManager::menu() places the menu at (pressX - width/2, pressY - 2), so
+// the press point lies inside it. The submenu popup -- a second window of the
+// same kind, mapped when a MotionNotify lands on a category row -- is placed to
+// the SIDE and does not contain the press point. MEASURED: taking the first
+// candidate picked up the submenu on a host whose application cache made the
+// menu tall enough for the WM to warp the pointer while opening it, and the
+// case then compared the wrong window's pixels. Whether a submenu opens at all
+// depends on how many applications the host has installed, which is exactly the
+// kind of hidden dependency a test should not carry.
+Window findOpenMenu(Display* d, int pressX, int pressY)
 {
+    Window fallback = None;
     for (Window child : childrenOf(d, DefaultRootWindow(d))) {
         Rect r;
-        if (!localRect(d, child, r)) continue;
+        if (!serverRect(d, child, r)) continue;
         if (r.w <= 1 || r.h <= 1) continue;
         if (!isViewable(d, child)) continue;
-        return child;
+        if (fallback == None) fallback = child;
+        if (pressX >= r.x && pressX < r.x + r.w &&
+            pressY >= r.y && pressY < r.y + r.h) {
+            return child;
+        }
     }
-    return None;
+    return fallback;
 }
 
-Window openRootMenu(Display* d, XTestDriver& driver, int x, int y)
+// Where every menu case presses. Chosen so WindowManager::menu() does NOT need
+// to clamp the menu to a screen edge: a clamp warps the pointer, the warp is a
+// MotionNotify, and a MotionNotify over a category row opens a submenu nobody
+// asked for. Leaves room for a menu up to 600 wide and 760 tall.
+constexpr int kMenuPressX = 300;
+constexpr int kMenuPressY = 5;
+
+// Open the root menu with a real press and return only once the WM has
+// actually DRAWN it -- not merely mapped it.
+//
+// WindowManager::menu() ignores a ButtonRelease entirely until its `drawn` flag
+// is set, and that flag is set by the Expose handler. A release that beats the
+// Expose selects nothing: the menu just closes and no entry runs. MEASURED: one
+// flake in six runs of the 15-case gate, in which the New entry simply never
+// fired and the case reported a missing window with no other symptom.
+//
+// "Drawn" is observed from outside as "the menu rectangle is no longer one flat
+// colour". The server paints the background pixel when the window is mapped,
+// and the entry labels are the first thing drawn over it, so a second distinct
+// pixel value IS the Expose having been handled.
+bool openRootMenu(Display* d, XTestDriver& driver, int x, int y,
+                  Window& menuOut, Rect& rectOut)
 {
     driver.moveTo(x, y);
     driver.press(Button1);
 
-    Window menu = None;
-    WmFixture::pollUntil([&] {
-        menu = findOpenMenu(d);
-        return menu != None;
+    menuOut = None;
+    if (!WmFixture::pollUntil([&] {
+            menuOut = findOpenMenu(d, x, y);
+            return menuOut != None;
+        }, 8000)) {
+        return false;
+    }
+
+    if (!WmFixture::pollUntil([&] {
+            return serverRect(d, menuOut, rectOut) && rectOut.w > 1 && rectOut.h > 1;
+        }, 8000)) {
+        return false;
+    }
+
+    return WmFixture::pollUntil([&] {
+        return captureRoot(d, rectOut).size() >= 2;
     }, 8000);
-    return menu;
+}
+
+// Release over the first menu row ("New"). The WM computes
+// sel = (y - 11) / entryHeight from menu-relative coordinates, so a few pixels
+// into the first row selects entry 0 whatever the font's entry height is.
+void selectFirstMenuEntry(Display* d, XTestDriver& driver, const Rect& menuRect)
+{
+    driver.moveTo(menuRect.x + menuRect.w / 2, menuRect.y + 14);
+    driver.release(Button1);
+    XSync(d, False);
 }
 
 // Dismiss the menu WITHOUT selecting anything: the grab uses owner_events=False,
@@ -1146,17 +1242,11 @@ TEST_CASE("Menu background colour reaches the menu opened by a real root click",
         XTestDriver driver(fixture.display());
         driver.moveTo(kParkX, kParkY);
 
-        Window menu = openRootMenu(d, driver, 400, 300);
-        REQUIRE(menu != None);
-
-        // The menu is painted by the server from its background pixel on map,
-        // then the WM draws entries over it on the Expose it selects for. Poll
-        // for a stable capture rather than reading once: the map and the draw
-        // are two separate server round trips.
+        // openRootMenu() returns only once the menu is mapped AND drawn, which
+        // is two separate server round trips.
+        Window menu = None;
         Rect menuRect{};
-        REQUIRE(WmFixture::pollUntil([&] {
-            return serverRect(d, menu, menuRect) && menuRect.w > 1 && menuRect.h > 1;
-        }, 4000));
+        REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect));
 
         out = captureRoot(d, menuRect);
         dismissMenu(d, driver);
@@ -1321,20 +1411,10 @@ TEST_CASE("new-window-command decides which program the menu's New entry starts"
 
     const std::vector<Window> before = clientList(d);
 
-    Window menu = openRootMenu(d, driver, 400, 300);
-    REQUIRE(menu != None);
-
+    Window menu = None;
     Rect menuRect{};
-    REQUIRE(WmFixture::pollUntil([&] {
-        return serverRect(d, menu, menuRect) && menuRect.w > 1 && menuRect.h > 1;
-    }, 4000));
-
-    // Entry 0 ("New") occupies menu-relative y in [11, 11 + entryHeight). The
-    // WM computes sel = (y - 11) / entryHeight, so a release a few pixels into
-    // the first row selects it regardless of the font's exact entry height.
-    driver.moveTo(menuRect.x + menuRect.w / 2, menuRect.y + 14);
-    driver.release(Button1);
-    XSync(d, False);
+    REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect));
+    selectFirstMenuEntry(d, driver, menuRect);
 
     const Window spawned = awaitClientWithClass(d, kProbeClass, before, 15000);
     INFO("wm stderr:\n" << fixture.wmStderr());
@@ -1384,16 +1464,10 @@ TEST_CASE("exec-using-shell gates whether a command with arguments and "
 
         const std::vector<Window> before = clientList(d);
 
-        Window menu = openRootMenu(d, driver, 400, 300);
-        REQUIRE(menu != None);
+        Window menu = None;
         Rect menuRect{};
-        REQUIRE(WmFixture::pollUntil([&] {
-            return serverRect(d, menu, menuRect) && menuRect.w > 1 && menuRect.h > 1;
-        }, 4000));
-
-        driver.moveTo(menuRect.x + menuRect.w / 2, menuRect.y + 14);
-        driver.release(Button1);
-        XSync(d, False);
+        REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect));
+        selectFirstMenuEntry(d, driver, menuRect);
 
         spawnedOut = awaitClientWithClass(d, kProbeClass, before,
                                           shellEnabled ? 15000 : 6000);
@@ -2060,15 +2134,10 @@ TEST_CASE("Repeated create, map, unmap and destroy over 120 windows leaves the W
         driver.moveTo(kParkX, kParkY);
 
         for (int i = 0; i < 3; ++i) {
-            Window menu = openRootMenu(d, driver, 400, 300);
-            REQUIRE(menu != None);
+            Window menu = None;
             Rect menuRect{};
-            REQUIRE(WmFixture::pollUntil([&] {
-                return serverRect(d, menu, menuRect) && menuRect.w > 1 && menuRect.h > 1;
-            }, 8000));
-            driver.moveTo(menuRect.x + menuRect.w / 2, menuRect.y + 14);
-            driver.release(Button1);
-            XSync(d, False);
+            REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect));
+            selectFirstMenuEntry(d, driver, menuRect);
             settleWm(d);
         }
     }
