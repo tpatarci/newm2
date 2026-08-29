@@ -74,6 +74,17 @@ Border::Border(Client *client, Window child)
 
 Border::~Border()
 {
+    // The per-instance XftDraw is released FIRST, before the windows below.
+    //
+    // It is created bound to m_tab (see drawLabel), and XftDrawDestroy frees the
+    // RENDER Picture it holds for that drawable. Destroying m_tab first destroys
+    // the Picture along with it, so the subsequent free names an id the server no
+    // longer knows -- `RenderBadPicture (invalid Picture parameter)` on stderr for
+    // every single managed window that is ever closed. Found by the destroy
+    // lifecycle cases in tests/test_wm_lifecycle.cpp (plan 08-11) and reproduced
+    // against a bare WM with one client, so it is not a test artefact.
+    m_tabDraw.reset();  // destroy per-instance XftDraw (Pitfall 2)
+
     if (m_parent != root()) {
         if (!m_parent) {
             std::fprintf(stderr, "wm2: zero parent in Border::~Border\n");
@@ -84,8 +95,6 @@ Border::~Border()
             XDestroyWindow(display(), m_resize);
         }
     }
-
-    m_tabDraw.reset();  // destroy per-instance XftDraw (Pitfall 2)
 
     if (--m_borderCount == 0) {
         m_drawGC.reset();
