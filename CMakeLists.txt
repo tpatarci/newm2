@@ -498,6 +498,48 @@ if(BUILD_TESTS)
                 FIXTURES_REQUIRED preflight_ok
                 TIMEOUT 240
         )
+
+        # --- Lifecycle, size-hint and gravity tests (TEST-05, plan 08-11) ---
+        #
+        # Cloned from test_wm_rules above, plus XTEST: the destroy-while-focus-
+        # tracking case needs a real pointer entry to put focus tracking in
+        # flight, and a synthetic event would not reach that path
+        # (RESEARCH Pitfall 10, and Client::eventButton ignores send_event).
+        # The size-hint group drives real resize drags on the frame's resize
+        # handle for the same reason -- an interactive resize is the path the
+        # constraint function sits on, and a configure request takes a different
+        # route entirely.
+        #
+        # Own display per fixture instance, so deliberately NO shared-display
+        # binding and NO `FIXTURES_REQUIRED xvfb_display`.
+        add_executable(test_wm_lifecycle tests/test_wm_lifecycle.cpp)
+        target_link_libraries(test_wm_lifecycle PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+            PkgConfig::XTST
+        )
+        target_include_directories(test_wm_lifecycle PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/tests
+            ${XFT_INCLUDE_DIRS}
+        )
+
+        target_compile_definitions(test_wm_lifecycle PRIVATE
+            WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
+            WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
+            WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+        )
+
+        # The tests exec the binary, so it must exist before they run.
+        add_dependencies(test_wm_lifecycle wm2-born-again)
+
+        # ADD_TAGS_AS_LABELS is required by D-33, or the three tags this file
+        # carries are not selectable by the anchored label gates.
+        catch_discover_tests(test_wm_lifecycle ADD_TAGS_AS_LABELS
+            PROPERTIES
+                FIXTURES_REQUIRED preflight_ok
+                TIMEOUT 300
+        )
     endif()
 
     # Config parsing unit tests (pure data transformation, no X11 needed)
