@@ -113,6 +113,10 @@ void Client::manage(bool mapped)
     getProtocols();
     getTransient();
     getWindowType();
+    // Read BEFORE the undecorated early-return below, not after: a rule keyed on
+    // class or type has to be consultable before the framing decision is made,
+    // and this ordering is what plan 08-10's fold depends on.
+    getClassHint();
 
     // D-01/D-02: DOCK and NOTIFICATION windows get no frame decoration
     if (m_windowType == WindowType::Dock || m_windowType == WindowType::Notification) {
@@ -772,6 +776,58 @@ void Client::getWindowType()
     }
 
     XFree(data);
+}
+
+
+// RULES-01 (plan 08-10), the runtime half: until now nothing in this window
+// manager had ever asked a window which application it belongs to. A rule keyed
+// on a class or an instance name has nothing to compare against without this.
+//
+// Read exactly once, from manage(). A window that rewrites WM_CLASS after it is
+// already managed is deliberately not re-evaluated -- rules are a placement
+// policy applied when a window appears, not a live binding.
+// Copy at most maxLen bytes of a NUL-terminated, client-supplied string. Written
+// out rather than reached for in a library so the bound is visible at the point
+// it matters: the source is a hostile-capable X client (threat T-8-PROP).
+static std::string boundedCopy(const char *s, std::size_t maxLen)
+{
+    std::size_t n = 0;
+    while (n < maxLen && s[n] != '\0') ++n;
+    return std::string(s, n);
+}
+
+
+void Client::getClassHint()
+{
+    m_resName.clear();
+    m_resClass.clear();
+
+    XClassHint hint;
+    hint.res_name = nullptr;
+    hint.res_class = nullptr;
+
+    // NO WARNING ON FAILURE, deliberately. A window with no class hint is
+    // entirely ordinary -- anything built straight on Xlib sets none, and so do
+    // plenty of toolkit transients. Warning here would print a line for a large
+    // fraction of every session's windows, which is how a log stops being read.
+    // The empty strings ARE the result: a class-keyed rule simply will not
+    // match, which is the correct outcome.
+    if (XGetClassHint(display(), m_window, &hint) == 0) return;
+
+    // Both strings are server-allocated and must be freed individually; the
+    // XClassHint itself is the caller's stack. Copying is bounded (T-8-PROP):
+    // the contents are client-supplied, and an unbounded copy would let any
+    // client dictate an allocation inside the window manager.
+    constexpr std::size_t kMaxClassLen = 1024;
+
+    if (hint.res_name) {
+        m_resName = boundedCopy(hint.res_name, kMaxClassLen);
+        XFree(hint.res_name);
+    }
+    if (hint.res_class) {
+        m_resClass = boundedCopy(hint.res_class, kMaxClassLen);
+        XFree(hint.res_class);
+    }
 }
 
 

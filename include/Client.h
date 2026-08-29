@@ -62,6 +62,10 @@ public:
     const std::string& name() const { return m_name; }
     const std::string& iconName() const { return m_iconName; }
     const std::string& label() const { return m_label; }
+    // RULES-01 (plan 08-10): the two WM_CLASS fields, read once at manage time.
+    // Empty for a window that sets no class hint, which is entirely normal.
+    const std::string& resName() const { return m_resName; }
+    const std::string& resClass() const { return m_resClass; }
     int x() const { return m_x; }
     int y() const { return m_y; }
     int width() const { return m_w; }
@@ -189,6 +193,11 @@ private:
     std::string m_label;
     static const char* const m_defaultLabel;
 
+    // RULES-01: WM_CLASS, read once when the window is taken under management.
+    // Client-supplied and untrusted (threat T-8-PROP), so the copy is bounded.
+    std::string m_resName;
+    std::string m_resClass;
+
     Colormap m_colormap;
     std::vector<Window> m_colormapWindows;
     std::vector<Colormap> m_windowColormaps;
@@ -207,6 +216,7 @@ private:
     void getProtocols();
     void getTransient();
     void getWindowType();
+    void getClassHint();
     void decorate(bool active);
 
     // Gesture detection
