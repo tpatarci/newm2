@@ -472,6 +472,30 @@ if(BUILD_TESTS)
     )
     catch_discover_tests(test_config ADD_TAGS_AS_LABELS)
 
+    # --- Window-rule model, matcher and parser unit tests (RULES-01) ---
+    #
+    # Display-free BY CONSTRUCTION, not by luck: include/Rules.h and
+    # src/Rules.cpp carry no X11 include of any kind, so this target links
+    # neither PkgConfig::X11 nor any display fixture and declares no
+    # ENVIRONMENT binding. That is the whole reason the rules model is plain
+    # data -- every parser and matcher edge case is reachable in milliseconds
+    # with no X server, so this suite is cheap enough to run on every commit.
+    #
+    # Sources are compiled directly into the executable (the test_config
+    # pattern immediately above) rather than linked from a library, because the
+    # project ships no library target. src/Config.cpp is included because the
+    # parser half of RULES-01 lives in Config::applyKeyValue().
+    add_executable(test_rules tests/test_rules.cpp src/Rules.cpp src/Config.cpp)
+    target_link_libraries(test_rules PRIVATE
+        Catch2::Catch2WithMain
+    )
+    target_include_directories(test_rules PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    # D-33: ADD_TAGS_AS_LABELS is required, or the tag this file carries is not
+    # selectable by the anchored label gates this plan's criteria use.
+    catch_discover_tests(test_rules ADD_TAGS_AS_LABELS)
+
     # DesktopEntry (.desktop) parsing unit tests (pure data transformation, no X11 needed)
     add_executable(test_desktopentry tests/test_desktopentry.cpp src/DesktopEntry.cpp)
     target_link_libraries(test_desktopentry PRIVATE
