@@ -3,6 +3,7 @@
 #include "x11wrap.h"
 #include <X11/Xutil.h>
 #include <string>
+#include <vector>
 
 class Client;
 class WindowManager;
@@ -108,6 +109,23 @@ private:
     void combineShape(Window dest, int destKind, int xOff, int yOff,
                       const XRectangle *rects, int nRects,
                       int op, int ordering);
+
+    // The YXSorted form of the above (plan 08-13).
+    //
+    // A YXSorted request is a PROMISE to the server that the rectangles arrive
+    // sorted by y origin and then by x origin. The server validates the promise
+    // and rejects the whole request with BadMatch when it is broken -- so a
+    // mis-ordered list does not merely render slowly, it leaves the window
+    // UNSHAPED, and WindowManager::errorHandler() logs the rejection and carries
+    // on. Every list below is assembled in an order that depends on FRAME_WIDTH
+    // and on the measured tab width, neither of which is fixed, so the promise
+    // held only for a narrow band of configured frame thicknesses.
+    //
+    // Takes the vector BY VALUE on purpose: shapeParent() submits one list
+    // twice, mutating a remembered INDEX in between, and sorting the caller's
+    // own vector would invalidate that index.
+    void combineShapeSorted(Window dest, int destKind, int xOff, int yOff,
+                            std::vector<XRectangle> rects, int op);
 
     Client *m_client;
 

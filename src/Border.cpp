@@ -2,6 +2,7 @@
 #include "Client.h"
 #include "Manager.h"
 #include <X11/Xft/Xft.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -309,6 +310,24 @@ void Border::combineShape(Window dest, int destKind, int xOff, int yOff,
     XShapeCombineRectangles(display(), dest, destKind, xOff, yOff,
                             const_cast<XRectangle *>(rects), nRects,
                             op, ordering);
+}
+
+
+void Border::combineShapeSorted(Window dest, int destKind, int xOff, int yOff,
+                                std::vector<XRectangle> rects, int op)
+{
+    // See the declaration in include/Border.h for why this exists. The sort is
+    // STABLE so a list that already satisfies the promise -- which is every list
+    // at the shipped frame thickness -- is passed through byte for byte, and the
+    // fix cannot change any rendering that was already correct.
+    std::stable_sort(rects.begin(), rects.end(),
+                     [](const XRectangle& a, const XRectangle& b) {
+                         if (a.y != b.y) return a.y < b.y;
+                         return a.x < b.x;
+                     });
+
+    combineShape(dest, destKind, xOff, yOff, rects.data(),
+                 static_cast<int>(rects.size()), op, YXSorted);
 }
 
 
@@ -622,9 +641,8 @@ void Border::setTransientFrameVisibility(bool visible, int w, int h)
         appendRect(i - 1, h, 1, i + 2);
     }
 
-    combineShape(m_parent, ShapeBounding,
-                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                 visible ? ShapeUnion : ShapeSubtract, YXSorted);
+    combineShapeSorted(m_parent, ShapeBounding, 0, 0, rects,
+                       visible ? ShapeUnion : ShapeSubtract);
 
     rects.clear();
 
@@ -637,9 +655,8 @@ void Border::setTransientFrameVisibility(bool visible, int w, int h)
         appendRect(i - 1, h, 1, i + 1);
     }
 
-    combineShape(m_parent, ShapeClip,
-                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                 visible ? ShapeUnion : ShapeSubtract, YXSorted);
+    combineShapeSorted(m_parent, ShapeClip, 0, 0, rects,
+                       visible ? ShapeUnion : ShapeSubtract);
 }
 
 
@@ -684,18 +701,16 @@ void Border::shapeParent(int w, int h)
         appendRect(i, m_tabHeight + i - 1, m_tabWidth - i + 2, 1);
     }
 
-    combineShape(m_parent, ShapeBounding,
-                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                 ShapeSet, YXSorted);
+    combineShapeSorted(m_parent, ShapeBounding, 0, 0, rects, ShapeSet);
 
+    // mainRect indexes the UNSORTED list, which is exactly why
+    // combineShapeSorted() takes its copy by value.
     rects[mainRect].x++;
     rects[mainRect].y++;
     rects[mainRect].width -= 2;
     rects[mainRect].height -= 2;
 
-    combineShape(m_parent, ShapeClip,
-                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                 ShapeSet, YXSorted);
+    combineShapeSorted(m_parent, ShapeClip, 0, 0, rects, ShapeSet);
 }
 
 
@@ -729,9 +744,7 @@ void Border::shapeTab(int w, int h)
         appendRect(i, m_tabHeight + i - 1, m_tabWidth - i + 2, 1);
     }
 
-    combineShape(m_tab, ShapeBounding,
-                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                 ShapeSet, YXSorted);
+    combineShapeSorted(m_tab, ShapeBounding, 0, 0, rects, ShapeSet);
 
     rects.clear();
 
@@ -748,9 +761,7 @@ void Border::shapeTab(int w, int h)
         appendRect(i + 1, m_tabHeight + i - 1, m_tabWidth - i, 1);
     }
 
-    combineShape(m_tab, ShapeClip,
-                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                 ShapeSet, YXSorted);
+    combineShapeSorted(m_tab, ShapeClip, 0, 0, rects, ShapeSet);
 }
 
 
@@ -925,9 +936,8 @@ void Border::setFrameVisibility(bool visible, int w, int h)
     rects[finalIdx].width += 1;
     rects[finalIdx].height = h - rects[finalIdx].height + 2;
 
-    combineShape(m_parent, ShapeBounding,
-                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                 visible ? ShapeUnion : ShapeSubtract, YXSorted);
+    combineShapeSorted(m_parent, ShapeBounding, 0, 0, rects,
+                       visible ? ShapeUnion : ShapeSubtract);
     rects.clear();
 
     // Clip rectangles
@@ -948,9 +958,8 @@ void Border::setFrameVisibility(bool visible, int w, int h)
 
     appendRect(m_tabWidth + 2, h, FRAME_WIDTH - 2, FRAME_WIDTH + 1);
 
-    combineShape(m_parent, ShapeClip,
-                 0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                 visible ? ShapeUnion : ShapeSubtract, YXSorted);
+    combineShapeSorted(m_parent, ShapeClip, 0, 0, rects,
+                       visible ? ShapeUnion : ShapeSubtract);
 
     if (visible && !isFixedSize()) {
         XMapRaised(display(), m_resize);
