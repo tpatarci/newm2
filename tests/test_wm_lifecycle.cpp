@@ -395,6 +395,159 @@ void requestIconify(Display* d, Window win)
     XSync(d, False);
 }
 
+
+// ---------------------------------------------------------------------------
+// Size hints and interactive resize ([wm_sizehints])
+// ---------------------------------------------------------------------------
+
+// Set WM_NORMAL_HINTS with EXACTLY the flag combination given.
+//
+// The flag bits matter as much as the values: Client::fixResizeDimensions()
+// branches on which flags are present, so a case that set a value without its
+// flag would exercise nothing at all and pass for the wrong reason. Every field
+// is written explicitly, including the ones left zero, so nothing is inherited
+// from an uninitialised struct.
+void setNormalHints(Display* d, Window w, long flags,
+                    int minW, int minH, int maxW, int maxH,
+                    int baseW, int baseH, int incW, int incH,
+                    int gravity = NorthWestGravity)
+{
+    XSizeHints hints{};
+    hints.flags       = flags;
+    hints.min_width   = minW;   hints.min_height   = minH;
+    hints.max_width   = maxW;   hints.max_height   = maxH;
+    hints.base_width  = baseW;  hints.base_height  = baseH;
+    hints.width_inc   = incW;   hints.height_inc   = incH;
+    hints.win_gravity = gravity;
+    XSetWMNormalHints(d, w, &hints);
+    XSync(d, False);
+}
+
+// The frame's resize handle.
+//
+// Border::configure creates it as a child of the CLIENT window, not of the
+// frame, so it is found by asking the server for the client's children rather
+// than by computing where it ought to be. That also means it is located from
+// real geometry, so a change to the frame thickness cannot silently move the
+// press out from under it.
+Window resizeHandle(Display* d, Window client)
+{
+    Window wroot = None, parent = None, *children = nullptr;
+    unsigned int n = 0;
+    if (!XQueryTree(d, client, &wroot, &parent, &children, &n)) return None;
+    Window handle = (n >= 1) ? children[0] : None;
+    if (children) XFree(children);
+    return handle;
+}
+
+// Drag the resize handle so the client's bottom-right corner lands at
+// (targetW, targetH) measured from the client's own top-left.
+//
+// This is the INTERACTIVE path deliberately, not a configure request: the
+// constraint function under test sits on Client::resize(), and a
+// ConfigureRequest takes an entirely different route through
+// Client::eventConfigureRequest(). A test that used the easier route would be
+// testing something else.
+//
+// Client::resize() computes the new width as (pointer x - m_x), where m_x is the
+// client area's absolute x, because the WM grabs the pointer on the ROOT window
+// and therefore reads root-relative coordinates. So the pointer target is simply
+// the client's origin plus the size being asked for.
+bool dragResizeTo(Display* d, XTestDriver& driver, Window client,
+                  int targetW, int targetH)
+{
+    const Window handle = resizeHandle(d, client);
+    if (handle == None) return false;
+
+    Rect hr{}, cr{};
+    if (!serverRect(d, handle, hr)) return false;
+    if (!serverRect(d, client, cr)) return false;
+
+    // The handle is shaped as a lower-right triangle (Border::shapeResize), so
+    // the press goes near its bottom-right corner, which is inside the bounding
+    // shape on every row.
+    const int px = hr.x + hr.w - 2;
+    const int py = hr.y + hr.h - 2;
+
+    driver.moveTo(px, py);
+    XSync(driver.display(), False);
+    pollSleep();
+
+    driver.press(Button1);
+    XSync(driver.display(), False);
+    pollSleep();
+
+    const int tx = cr.x + targetW;
+    const int ty = cr.y + targetH;
+
+    // A series of motion events rather than one jump: the WM's nested drag loop
+    // consumes them one at a time and only acts when a size actually changes,
+    // and a single teleport would exercise one arithmetic evaluation instead of
+    // the sequence a real drag produces.
+    constexpr int kSteps = 6;
+    for (int i = 1; i <= kSteps; ++i) {
+        driver.moveTo(px + (tx - px) * i / kSteps, py + (ty - py) * i / kSteps);
+        XSync(driver.display(), False);
+        pollSleep();
+    }
+
+    driver.release(Button1);
+    XSync(driver.display(), False);
+    settleWm(d);
+    return true;
+}
+
+// Every synthetic ConfigureNotify the WM has sent this client so far.
+//
+// Client::sendConfigureNotify() reports m_w/m_h as the WM computed them, so this
+// sees the constrained size the WM BELIEVES in -- which is not always the size
+// the server ended up with, because an absurd dimension is rejected by the
+// server and silently leaves the window as it was. That gap is exactly where a
+// degenerate-hint defect hides.
+struct SizeReport { int w = 0, h = 0; };
+
+std::vector<SizeReport> drainConfigureNotifies(Display* d, Window w)
+{
+    std::vector<SizeReport> out;
+    XEvent ev;
+    while (XCheckTypedWindowEvent(d, w, ConfigureNotify, &ev)) {
+        out.push_back(SizeReport{ ev.xconfigure.width, ev.xconfigure.height });
+    }
+    return out;
+}
+
+// A single-client fixture for the size-hint cases: create the window, set its
+// hints BEFORE mapping (the WM reads them inside Client::manage(), so hints
+// written afterwards would race the read they are supposed to govern), map,
+// and confirm it is the focused client.
+//
+// The focus check is a precondition, not decoration. A deactivated client
+// carries a passive button grab on its frame, which would swallow the press on
+// the resize handle and make the drag a no-op -- a case that skipped this would
+// "pass" by never resizing anything.
+struct SizeHintClient {
+    Window window = None;
+    Window frame  = None;
+    Rect   rect{};
+};
+
+bool bringUpSized(Display* d, int x, int y, int w, int h,
+                  long flags, int minW, int minH, int maxW, int maxH,
+                  int baseW, int baseH, int incW, int incH,
+                  SizeHintClient& out)
+{
+    out.window = createClient(d, x, y, w, h);
+    setNormalHints(d, out.window, flags, minW, minH, maxW, maxH,
+                   baseW, baseH, incW, incH);
+    XSelectInput(d, out.window, StructureNotifyMask);
+    XMapWindow(d, out.window);
+    XSync(d, False);
+
+    out.frame = awaitFrameFor(d, out.window);
+    if (out.frame == None) return false;
+    settleWm(d);
+    return serverRect(d, out.window, out.rect);
+}
 } // namespace
 
 
@@ -789,6 +942,464 @@ TEST_CASE("Destroying a hidden client removes it from the list without a sanitiz
     INFO("x protocol errors:\n" << joined(protoErrors));
     REQUIRE(protoErrors.empty());
 
+    REQUIRE(fx.terminateWmCleanly());
+    REQUIRE(fx.asanReports().empty());
+}
+
+
+// ===========================================================================
+// Checklist item 8: every XSizeHints resize constraint
+//
+// All seven cases drive a REAL drag on the frame's resize handle. The
+// constraint arithmetic lives on Client::resize()'s path and nowhere else, so
+// the interactive route is not a stylistic preference here -- it is the only
+// route that reaches the code under test.
+// ===========================================================================
+
+TEST_CASE("A minimum size cannot be dragged past, in either dimension", "[wm_sizehints]")
+{
+    WmFixture fx;
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    XTestDriver driver(fx.display());
+    driver.moveTo(kParkX, kParkY);
+    XSync(driver.display(), False);
+
+    SizeHintClient c{};
+    REQUIRE(bringUpSized(d, 40, 40, 400, 320, PMinSize,
+                         260, 200, 0, 0, 0, 0, 0, 0, c));
+
+    INFO("wm stderr:\n" << fx.wmStderr());
+    INFO("mapped rect " << describe(c.rect));
+    REQUIRE(activeWindow(d) == c.window);
+    REQUIRE(c.rect.w == 400);
+    REQUIRE(c.rect.h == 320);
+
+    // Ask for far less than the stated minimum, in BOTH dimensions at once.
+    REQUIRE(dragResizeTo(d, driver, c.window, 90, 70));
+
+    Rect after{};
+    REQUIRE(serverRect(d, c.window, after));
+    INFO("after drag " << describe(after));
+    REQUIRE(after.w == 260);
+    REQUIRE(after.h == 200);
+
+    REQUIRE(fx.wmAlive());
+    REQUIRE(fx.terminateWmCleanly());
+    REQUIRE(fx.asanReports().empty());
+}
+
+
+TEST_CASE("A maximum size cannot be dragged past, in either dimension", "[wm_sizehints]")
+{
+    WmFixture fx;
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    XTestDriver driver(fx.display());
+    driver.moveTo(kParkX, kParkY);
+    XSync(driver.display(), False);
+
+    // Placed near the top-left so the drag target stays on screen: XTEST cannot
+    // move the pointer past the screen edge, and the pointer position IS the
+    // requested size in this path.
+    SizeHintClient c{};
+    REQUIRE(bringUpSized(d, 10, 10, 300, 220, PMinSize | PMaxSize,
+                         100, 80, 500, 400, 0, 0, 0, 0, c));
+
+    INFO("wm stderr:\n" << fx.wmStderr());
+    REQUIRE(activeWindow(d) == c.window);
+
+    REQUIRE(dragResizeTo(d, driver, c.window, 900, 700));
+
+    Rect after{};
+    REQUIRE(serverRect(d, c.window, after));
+    INFO("after drag " << describe(after) << " (asked for 900x700, max is 500x400)");
+    REQUIRE(after.w == 500);
+    REQUIRE(after.h == 400);
+
+    REQUIRE(fx.wmAlive());
+    REQUIRE(fx.terminateWmCleanly());
+    REQUIRE(fx.asanReports().empty());
+}
+
+
+TEST_CASE("A base size plus an increment quantises to base + n*increment", "[wm_sizehints]")
+{
+    WmFixture fx;
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    XTestDriver driver(fx.display());
+    driver.moveTo(kParkX, kParkY);
+    XSync(driver.display(), False);
+
+    // PBaseSize present, so the quantisation origin is the BASE, not the
+    // minimum -- which is the branch this case exists to pin.
+    SizeHintClient c{};
+    REQUIRE(bringUpSized(d, 20, 20, 300, 240,
+                         PMinSize | PBaseSize | PResizeInc,
+                         100, 80, 0, 0, 100, 80, 25, 20, c));
+
+    INFO("wm stderr:\n" << fx.wmStderr());
+    REQUIRE(activeWindow(d) == c.window);
+
+    REQUIRE(dragResizeTo(d, driver, c.window, 512, 379));
+
+    Rect after{};
+    REQUIRE(serverRect(d, c.window, after));
+    INFO("after drag " << describe(after) << " (base 100x80, inc 25x20)");
+
+    // On a whole multiple of the increment above the base, and no further from
+    // what was asked for than one increment -- the second half is what makes
+    // this fail if the WM simply ignored the request.
+    REQUIRE((after.w - 100) % 25 == 0);
+    REQUIRE((after.h - 80) % 20 == 0);
+    REQUIRE(after.w <= 512);
+    REQUIRE(after.w > 512 - 25);
+    REQUIRE(after.h <= 379);
+    REQUIRE(after.h > 379 - 20);
+
+    REQUIRE(fx.wmAlive());
+    REQUIRE(fx.terminateWmCleanly());
+    REQUIRE(fx.asanReports().empty());
+}
+
+
+TEST_CASE("An increment with no base size quantises against the minimum size", "[wm_sizehints]")
+{
+    WmFixture fx;
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    XTestDriver driver(fx.display());
+    driver.moveTo(kParkX, kParkY);
+    XSync(driver.display(), False);
+
+    // No PBaseSize: the quantisation origin falls back to the minimum. The two
+    // drags below cover both directions past that origin, because the downward
+    // one is where a negative intermediate would appear -- (w - min) goes
+    // negative before the multiply, and truncation toward zero is what keeps the
+    // result sane.
+    SizeHintClient c{};
+    REQUIRE(bringUpSized(d, 20, 20, 300, 240,
+                         PMinSize | PResizeInc,
+                         120, 90, 0, 0, 0, 0, 30, 25, c));
+
+    INFO("wm stderr:\n" << fx.wmStderr());
+    REQUIRE(activeWindow(d) == c.window);
+
+    REQUIRE(dragResizeTo(d, driver, c.window, 431, 342));
+
+    Rect up{};
+    REQUIRE(serverRect(d, c.window, up));
+    INFO("after upward drag " << describe(up) << " (min 120x90, inc 30x25)");
+    REQUIRE((up.w - 120) % 30 == 0);
+    REQUIRE((up.h - 90) % 25 == 0);
+    REQUIRE(up.w <= 431);
+    REQUIRE(up.w > 431 - 30);
+    REQUIRE(up.h <= 342);
+    REQUIRE(up.h > 342 - 25);
+
+    // Now drag well below the minimum. Nothing negative may reach the server.
+    REQUIRE(dragResizeTo(d, driver, c.window, 55, 55));
+
+    Rect down{};
+    REQUIRE(serverRect(d, c.window, down));
+    INFO("after downward drag " << describe(down));
+    REQUIRE(down.w == 120);
+    REQUIRE(down.h == 90);
+
+    REQUIRE(fx.wmAlive());
+    REQUIRE(fx.terminateWmCleanly());
+    REQUIRE(fx.asanReports().empty());
+}
+
+
+TEST_CASE("A fixed-size client is not resized by a drag and shows no resize handle",
+          "[wm_sizehints]")
+{
+    WmFixture fx;
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    XTestDriver driver(fx.display());
+    driver.moveTo(kParkX, kParkY);
+    XSync(driver.display(), False);
+
+    // Minimum equal to maximum in both dimensions is the ICCCM way to say "this
+    // window does not resize", and it is what Client::manage() reads to set the
+    // fixed-size flag.
+    SizeHintClient c{};
+    REQUIRE(bringUpSized(d, 60, 60, 300, 220, PMinSize | PMaxSize,
+                         300, 220, 300, 220, 0, 0, 0, 0, c));
+
+    INFO("wm stderr:\n" << fx.wmStderr());
+    REQUIRE(activeWindow(d) == c.window);
+    REQUIRE(c.rect.w == 300);
+    REQUIRE(c.rect.h == 220);
+
+    // The handle object still exists -- it is created with the frame -- but it
+    // is not mapped, so there is nothing on screen inviting a resize.
+    const Window handle = resizeHandle(d, c.window);
+    REQUIRE(handle != None);
+    REQUIRE_FALSE(isMapped(d, handle));
+
+    // Drag anyway, exactly as a determined user would.
+    REQUIRE(dragResizeTo(d, driver, c.window, 700, 560));
+
+    Rect after{};
+    REQUIRE(serverRect(d, c.window, after));
+    INFO("after drag " << describe(after) << " (fixed at 300x220)");
+    REQUIRE(after.w == 300);
+    REQUIRE(after.h == 220);
+
+    REQUIRE(fx.wmAlive());
+    REQUIRE(fx.terminateWmCleanly());
+    REQUIRE(fx.asanReports().empty());
+}
+
+
+TEST_CASE("A zero, negative or absurd resize increment neither divides by zero nor "
+          "produces a nonsensical size", "[wm_sizehints]")
+{
+    // Three separate WMs, one per degenerate declaration, because each one has
+    // to be the FOCUSED client for its drag to reach the resize handle at all.
+    //
+    // The width and height axes are covered by separate windows on purpose: a
+    // guard written for one axis only would still leave the other dividing by
+    // zero, and a single window declaring both bad values could not tell the two
+    // guards apart.
+
+    SECTION("a zero width increment") {
+        WmFixture fx;
+        auto conn = fx.openDisplay();
+        REQUIRE(conn != nullptr);
+        Display* d = conn.get();
+
+        XTestDriver driver(fx.display());
+        driver.moveTo(kParkX, kParkY);
+        XSync(driver.display(), False);
+
+        SizeHintClient c{};
+        REQUIRE(bringUpSized(d, 20, 20, 300, 240,
+                             PMinSize | PResizeInc,
+                             120, 90, 0, 0, 0, 0, /*incW*/0, /*incH*/25, c));
+
+        REQUIRE(dragResizeTo(d, driver, c.window, 420, 340));
+
+        INFO("wm stderr:\n" << fx.wmStderr());
+        REQUIRE(fx.wmAlive());
+
+        Rect after{};
+        REQUIRE(serverRect(d, c.window, after));
+        INFO("after drag " << describe(after));
+        REQUIRE(after.w > 0);
+        REQUIRE(after.h > 0);
+        REQUIRE(after.w <= kScreenW);
+        REQUIRE(after.h <= kScreenH);
+        // A zero increment means "no quantisation on this axis", not "refuse to
+        // resize": the width must actually have followed the drag.
+        REQUIRE(after.w > 300);
+
+        REQUIRE(fx.terminateWmCleanly());
+        REQUIRE(fx.asanReports().empty());
+    }
+
+    SECTION("a zero height increment") {
+        WmFixture fx;
+        auto conn = fx.openDisplay();
+        REQUIRE(conn != nullptr);
+        Display* d = conn.get();
+
+        XTestDriver driver(fx.display());
+        driver.moveTo(kParkX, kParkY);
+        XSync(driver.display(), False);
+
+        // The mirror image of the section above, and the reason there are two:
+        // the height axis has its own division, so a guard added to the width
+        // axis alone would leave this one dividing by zero. Each section reddens
+        // for its own guard and neither reddens for the other's.
+        SizeHintClient c{};
+        REQUIRE(bringUpSized(d, 20, 20, 300, 240,
+                             PMinSize | PResizeInc,
+                             120, 90, 0, 0, 0, 0, /*incW*/30, /*incH*/0, c));
+
+        REQUIRE(dragResizeTo(d, driver, c.window, 420, 340));
+
+        INFO("wm stderr:\n" << fx.wmStderr());
+        REQUIRE(fx.wmAlive());
+
+        Rect after{};
+        REQUIRE(serverRect(d, c.window, after));
+        INFO("after drag " << describe(after));
+        REQUIRE(after.w > 0);
+        REQUIRE(after.h > 0);
+        REQUIRE(after.w <= kScreenW);
+        REQUIRE(after.h <= kScreenH);
+        REQUIRE(after.h > 240);
+
+        REQUIRE(fx.terminateWmCleanly());
+        REQUIRE(fx.asanReports().empty());
+    }
+
+    SECTION("a negative increment on both axes") {
+        WmFixture fx;
+        auto conn = fx.openDisplay();
+        REQUIRE(conn != nullptr);
+        Display* d = conn.get();
+
+        XTestDriver driver(fx.display());
+        driver.moveTo(kParkX, kParkY);
+        XSync(driver.display(), False);
+
+        // Recorded honestly: a negative increment is arithmetically HARMLESS in
+        // the shipped formula, because the sign cancels between the divide and
+        // the multiply, so this section passes with or without the guards. It is
+        // here because the coverage item names negative increments, and because
+        // it pins that the guard treats a negative increment as "no quantisation"
+        // rather than refusing to resize at all -- which IS a behaviour a naive
+        // guard could introduce.
+        SizeHintClient c{};
+        REQUIRE(bringUpSized(d, 20, 20, 300, 240,
+                             PMinSize | PResizeInc,
+                             120, 90, 0, 0, 0, 0, /*incW*/-30, /*incH*/-25, c));
+
+        REQUIRE(dragResizeTo(d, driver, c.window, 420, 340));
+
+        INFO("wm stderr:\n" << fx.wmStderr());
+        REQUIRE(fx.wmAlive());
+
+        Rect after{};
+        REQUIRE(serverRect(d, c.window, after));
+        INFO("after drag " << describe(after));
+        REQUIRE(after.w > 0);
+        REQUIRE(after.h > 0);
+        REQUIRE(after.w <= kScreenW);
+        REQUIRE(after.h <= kScreenH);
+        REQUIRE(after.w > 300);
+        REQUIRE(after.h > 240);
+
+        REQUIRE(fx.terminateWmCleanly());
+        REQUIRE(fx.asanReports().empty());
+    }
+
+    SECTION("a negative base with an increment larger than the screen") {
+        WmFixture fx;
+        auto conn = fx.openDisplay();
+        REQUIRE(conn != nullptr);
+        Display* d = conn.get();
+
+        XTestDriver driver(fx.display());
+        driver.moveTo(kParkX, kParkY);
+        XSync(driver.display(), False);
+
+        // The quantisation origin is the base, so a hugely negative base with a
+        // huge increment makes the multiple round to zero and the result settle
+        // on the base itself -- a large negative number, which is then handed to
+        // the server as an unsigned dimension.
+        SizeHintClient c{};
+        REQUIRE(bringUpSized(d, 20, 20, 300, 240,
+                             PBaseSize | PResizeInc,
+                             0, 0, 0, 0, /*baseW*/-1000, /*baseH*/-1000,
+                             /*incW*/100000, /*incH*/100000, c));
+
+        drainConfigureNotifies(d, c.window);
+        REQUIRE(dragResizeTo(d, driver, c.window, 420, 340));
+
+        INFO("wm stderr:\n" << fx.wmStderr());
+        REQUIRE(fx.wmAlive());
+
+        Rect after{};
+        REQUIRE(serverRect(d, c.window, after));
+        INFO("after drag " << describe(after));
+        REQUIRE(after.w > 0);
+        REQUIRE(after.h > 0);
+        REQUIRE(after.w <= kScreenW);
+        REQUIRE(after.h <= kScreenH);
+
+        // And the size the WM told the client about is sane too. The server
+        // rejects an out-of-range dimension outright, so the geometry above can
+        // look fine while the WM believes something absurd and says so in its
+        // synthetic ConfigureNotify -- which is the value a real toolkit lays
+        // its widgets out against.
+        for (const SizeReport& r : drainConfigureNotifies(d, c.window)) {
+            INFO("ConfigureNotify " << r.w << "x" << r.h);
+            REQUIRE(r.w > 0);
+            REQUIRE(r.h > 0);
+            REQUIRE(r.w <= kScreenW);
+            REQUIRE(r.h <= kScreenH);
+        }
+
+        REQUIRE(fx.terminateWmCleanly());
+        REQUIRE(fx.asanReports().empty());
+    }
+}
+
+
+TEST_CASE("A maximum smaller than the minimum resolves without a nonsensical dimension",
+          "[wm_sizehints]")
+{
+    // Contradictory hints a client is free to state and ICCCM does not resolve.
+    // The project's policy is a positive, safe geometry -- so the assertions
+    // here pin "something sane" rather than one exact size, which is the honest
+    // expectation for a contradiction.
+    WmFixture fx;
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    XTestDriver driver(fx.display());
+    driver.moveTo(kParkX, kParkY);
+    XSync(driver.display(), False);
+
+    SizeHintClient c{};
+    REQUIRE(bringUpSized(d, 20, 20, 320, 240, PMinSize | PMaxSize,
+                         /*min*/300, 220, /*max*/100, 80, 0, 0, 0, 0, c));
+
+    INFO("wm stderr:\n" << fx.wmStderr());
+    REQUIRE(activeWindow(d) == c.window);
+
+    // Not fixed-size: the minimum and maximum differ, so the resize path runs.
+    const Window handle = resizeHandle(d, c.window);
+    REQUIRE(handle != None);
+
+    drainConfigureNotifies(d, c.window);
+
+    // Both directions, because the contradiction is reachable from either side.
+    REQUIRE(dragResizeTo(d, driver, c.window, 640, 480));
+    Rect big{};
+    REQUIRE(serverRect(d, c.window, big));
+    INFO("after upward drag " << describe(big));
+    REQUIRE(big.w > 0);
+    REQUIRE(big.h > 0);
+    REQUIRE(big.w <= kScreenW);
+    REQUIRE(big.h <= kScreenH);
+
+    REQUIRE(dragResizeTo(d, driver, c.window, 60, 60));
+    Rect small{};
+    REQUIRE(serverRect(d, c.window, small));
+    INFO("after downward drag " << describe(small));
+    REQUIRE(small.w > 0);
+    REQUIRE(small.h > 0);
+    REQUIRE(small.w <= kScreenW);
+    REQUIRE(small.h <= kScreenH);
+
+    for (const SizeReport& r : drainConfigureNotifies(d, c.window)) {
+        INFO("ConfigureNotify " << r.w << "x" << r.h);
+        REQUIRE(r.w > 0);
+        REQUIRE(r.h > 0);
+        REQUIRE(r.w <= kScreenW);
+        REQUIRE(r.h <= kScreenH);
+    }
+
+    REQUIRE(fx.wmAlive());
     REQUIRE(fx.terminateWmCleanly());
     REQUIRE(fx.asanReports().empty());
 }
