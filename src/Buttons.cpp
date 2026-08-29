@@ -121,11 +121,19 @@ void WindowManager::circulate(bool activeFirst)
 }
 
 
-int WindowManager::attemptGrab(Window w, Window constrain, int mask, int t)
+int WindowManager::attemptGrab(Window w, Window constrain, int mask, Time t)
 {
-    if (t == 0) t = static_cast<int>(timestamp(false));
+    // `t` is a Time, not an int, and that is a correctness requirement rather
+    // than a tidiness one. X server timestamps are 32-bit unsigned milliseconds
+    // since server start. Routed through a signed int they turn negative after
+    // ~24.8 days of server uptime, and the subsequent widening cast to Time
+    // sign-extends that to a value far in the future. X ignores any grab or
+    // ungrab whose time is later than the current server time, so past that
+    // uptime every grab in this file would have failed silently -- on a VPS
+    // droplet that is left running, which is this project's whole target.
+    if (t == 0) t = timestamp(false);
     int status = XGrabPointer(display(), w, false, mask, GrabModeAsync,
-                              GrabModeAsync, constrain, None, static_cast<Time>(t));
+                              GrabModeAsync, constrain, None, t);
     return status;
 }
 
@@ -651,23 +659,26 @@ void WindowManager::showGeometry(int x, int y)
     int mx = screenWidth() - 1;
     int my = screenHeight() - 1;
 
-    XMoveResizeWindow(display(), m_menuWindow,
+    // D-34: the readout owns m_geometryWindow. It used to borrow m_menuWindow,
+    // so a drag left the menu's window sized 60x31 with coordinates painted in
+    // it, and the next menu() inherited that until its first Expose. Two
+    // features, two windows, no shared mutable state between them.
+    XMoveResizeWindow(display(), m_geometryWindow,
                       (mx - width) / 2, (my - height) / 2, width, height);
 
-    // Create or rebind XftDraw for menu window
-    if (!m_menuDraw) {
-        m_menuDraw = x11::XftDrawPtr(XftDrawCreate(display(), m_menuWindow,
+    if (!m_geometryDraw) {
+        m_geometryDraw = x11::XftDrawPtr(XftDrawCreate(display(), m_geometryWindow,
             DefaultVisual(display(), m_screenNumber),
             DefaultColormap(display(), m_screenNumber)));
     } else {
-        XftDrawChange(m_menuDraw.get(), m_menuWindow);
+        XftDrawChange(m_geometryDraw.get(), m_geometryWindow);
     }
 
     // Clear background and draw text
-    XftDrawRect(m_menuDraw.get(), m_menuBgColor.get(), 0, 0, width, height);
-    XMapRaised(display(), m_menuWindow);
+    XftDrawRect(m_geometryDraw.get(), m_menuBgColor.get(), 0, 0, width, height);
+    XMapRaised(display(), m_geometryWindow);
 
-    XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
+    XftDrawStringUtf8(m_geometryDraw.get(), m_menuFgColor.get(),
         m_menuFont, 4, 4 + m_menuFont->ascent,
         reinterpret_cast<const FcChar8*>(string), len);
 }
@@ -675,5 +686,5 @@ void WindowManager::showGeometry(int x, int y)
 
 void WindowManager::removeGeometry()
 {
-    XUnmapWindow(display(), m_menuWindow);
+    XUnmapWindow(display(), m_geometryWindow);
 }

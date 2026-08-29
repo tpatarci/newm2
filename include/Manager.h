@@ -98,7 +98,7 @@ public:
     bool isUserTimeRecent(Time userTime) const;
 
     // Grab helpers
-    int attemptGrab(Window, Window, int, int);
+    int attemptGrab(Window, Window, int, Time);
     void releaseGrab(XButtonEvent *e);
 
     // Exposure during grab
@@ -227,6 +227,13 @@ private:
     // menu's font/colors (m_menuFont/m_menuFgColor/m_menuBgColor/m_menuHlColor).
     Window m_submenuWindow;
     x11::XftDrawPtr m_submenuDraw;        // XftDraw bound to m_submenuWindow
+
+    // Drag geometry readout (D-34). Its own window, not a second job for
+    // m_menuWindow: the indicator and the menu map, resize and draw
+    // independently, and sharing one XID meant a menu opened after a drag
+    // inherited the indicator's geometry until its first Expose.
+    Window m_geometryWindow;
+    x11::XftDrawPtr m_geometryDraw;       // XftDraw bound to m_geometryWindow
 
     // EWMH WM check window (per EWMH spec, child of root)
     Window m_wmCheckWindow;

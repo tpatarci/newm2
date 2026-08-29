@@ -83,6 +83,7 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     , m_menuFont(nullptr)
     , m_menuBorderPixel(0)
     , m_submenuWindow(None)
+    , m_geometryWindow(None)
     , m_wmCheckWindow(None)
     , m_focusChanging(false)
     , m_focusCandidate(nullptr)
@@ -338,9 +339,13 @@ void WindowManager::release()
     XSetInputFocus(display(), PointerRoot, RevertToPointerRoot, timestamp(false));
     installColormap(None);
 
-    // Clean up Xft menu resources
+    // Clean up Xft menu resources. Every XftDraw goes before the window it is
+    // bound to is destroyed: XftDrawDestroy touches its drawable, and getting
+    // this order wrong is exactly the RenderBadPicture-on-every-close defect
+    // 08-11 found in Border::~Border.
     m_menuDraw.reset();
     m_submenuDraw.reset();
+    m_geometryDraw.reset();
     // m_menuFgColor, m_menuBgColor, m_menuHlColor auto-freed by RAII
 
     if (m_menuFont) {
@@ -358,6 +363,12 @@ void WindowManager::release()
     if (m_submenuWindow != None) {
         XDestroyWindow(display(), m_submenuWindow);
         m_submenuWindow = None;
+    }
+
+    // Destroy the geometry readout window (D-34), same pattern again.
+    if (m_geometryWindow != None) {
+        XDestroyWindow(display(), m_geometryWindow);
+        m_geometryWindow = None;
     }
 
     // Destroy EWMH WM check window
@@ -600,25 +611,62 @@ void WindowManager::initialiseScreen()
 
     m_menuBorderPixel     = allocateColour(m_config.menuBorders.c_str(), "menu border");
 
-    m_menuWindow = XCreateSimpleWindow(display(), m_root, 0, 0, 1, 1, 1,
-                                       m_menuBorderPixel, 0);
+    // The WM's own popups are OVERRIDE-REDIRECT, and that flag is load-bearing
+    // rather than decorative.
+    //
+    // Without it these are ordinary top-level children of the root, so the WM's
+    // own CreateNotify/MapRequest handlers adopt them as clients: the menu, the
+    // submenu and the WM-check window were all appearing in _NET_CLIENT_LIST,
+    // observed live on an XRDP and a TigerVNC session. That is deferred item 7,
+    // and it is not merely untidy. Once a popup is a client, every client
+    // lifecycle path -- adopt, reparent, unmanage, destroy -- can act on the
+    // very window menu() is about to XMoveResizeWindow/XMapRaised, which is the
+    // BadWindow-then-no-menu failure recorded as deferred item 17. It also gave
+    // circulate() a non-empty client list with nothing in Normal state, which is
+    // how deferred item 6's 100% CPU spin was reachable on a freshly started WM.
+    //
+    // override_redirect is the X idiom that says "this window is not for a
+    // window manager to manage" -- including the window manager that made it.
+    // Setting it at creation, before the window is ever mapped, means no
+    // CreateNotify handler can adopt it in the first place.
+    // The flag MUST be set at creation, not patched on afterwards. CreateNotify
+    // carries the value the window had when it was created, and eventCreate()
+    // (src/Events.cpp) reads it off that event. XCreateSimpleWindow followed by
+    // XChangeWindowAttributes therefore adopts the window anyway: the event is
+    // already queued with override_redirect False by the time the change lands.
+    // That is why createPopupWindow() uses XCreateWindow with the flag in the
+    // creation valuemask -- measured, after the patch-afterwards version left
+    // all four windows still sitting in _NET_CLIENT_LIST.
+    const bool saveUnders = DoesSaveUnders(ScreenOfDisplay(display(), m_screenNumber));
 
-    if (DoesSaveUnders(ScreenOfDisplay(display(), m_screenNumber))) {
-        XSetWindowAttributes suAttr;
-        suAttr.save_under = true;
-        XChangeWindowAttributes(display(), m_menuWindow, CWSaveUnder, &suAttr);
-    }
+    auto createPopupWindow = [&]() -> Window {
+        XSetWindowAttributes attr;
+        attr.override_redirect = True;
+        attr.border_pixel      = m_menuBorderPixel;
+        attr.background_pixel  = 0;
+        unsigned long mask = CWOverrideRedirect | CWBorderPixel | CWBackPixel;
+        if (saveUnders) {
+            attr.save_under = True;
+            mask |= CWSaveUnder;
+        }
+        return XCreateWindow(display(), m_root, 0, 0, 1, 1, 1,
+                             CopyFromParent, InputOutput,
+                             CopyFromParent, mask, &attr);
+    };
+
+    m_menuWindow = createPopupWindow();
 
     // Submenu popup window (Phase 7): app-category flyout, provisioned the same
     // way as m_menuWindow. Reuses m_menuFont/m_menuFgColor/m_menuBgColor/m_menuHlColor.
-    m_submenuWindow = XCreateSimpleWindow(display(), m_root, 0, 0, 1, 1, 1,
-                                          m_menuBorderPixel, 0);
+    m_submenuWindow = createPopupWindow();
 
-    if (DoesSaveUnders(ScreenOfDisplay(display(), m_screenNumber))) {
-        XSetWindowAttributes suAttr;
-        suAttr.save_under = true;
-        XChangeWindowAttributes(display(), m_submenuWindow, CWSaveUnder, &suAttr);
-    }
+    // The drag geometry readout gets its OWN window (D-34). It used to borrow
+    // m_menuWindow, which meant one window served two unrelated purposes, each
+    // of which maps, resizes and draws into it: a menu opened after a drag
+    // inherited the indicator's size and contents until its first Expose, and
+    // the two features could not be reasoned about independently. Separate
+    // windows cost one XID and remove the whole class of interaction.
+    m_geometryWindow = createPopupWindow();
 
     // Load menu font via Xft with fontconfig fallback chain (D-02)
     // Font size 12 matches Lucida Bold 14pt visual footprint (D-03)
@@ -671,8 +719,23 @@ unsigned long WindowManager::allocateColour(const char *name, const char *desc)
 
 void WindowManager::setupEwmhProperties()
 {
-    // Create WM check child window (per EWMH spec)
-    m_wmCheckWindow = XCreateSimpleWindow(display(), m_root, -1, -1, 1, 1, 0, 0, 0);
+    // Create WM check child window (per EWMH spec).
+    //
+    // Override-redirect for the same reason as the menu popups: this is the WM's
+    // own bookkeeping window, not a client, and without the flag the WM adopts it
+    // into m_clients and publishes it in _NET_CLIENT_LIST (deferred item 7,
+    // observed live on XRDP and TigerVNC). It is never mapped, but it is still a
+    // top-level child of the root and the CreateNotify path does not care.
+    // Set at creation, for the same reason as the popups above: CreateNotify
+    // carries the creation-time value, so patching the flag on afterwards is
+    // always too late to stop eventCreate() adopting the window.
+    {
+        XSetWindowAttributes checkAttr;
+        checkAttr.override_redirect = True;
+        m_wmCheckWindow = XCreateWindow(display(), m_root, -1, -1, 1, 1, 0,
+                                        CopyFromParent, InputOutput,
+                                        CopyFromParent, CWOverrideRedirect, &checkAttr);
+    }
 
     // Set _NET_SUPPORTING_WM_CHECK on root pointing to check window
     XChangeProperty(display(), m_root, Atoms::net_supportingWmCheck,
@@ -827,7 +890,15 @@ void WindowManager::scanInitialWindows()
 
     for (unsigned int i = 0; i < n; ++i) {
         XGetWindowAttributes(display(), wins[i], &attr);
-        if (attr.override_redirect || wins[i] == m_menuWindow) continue;
+        // The explicit `wins[i] == m_menuWindow` exclusion that used to sit here
+        // is gone: it was a partial workaround for the popups not being
+        // override-redirect, and it named only ONE of the four WM-owned windows
+        // -- the submenu, geometry and WM-check windows were adopted regardless,
+        // which is what put them in _NET_CLIENT_LIST. Now that all four are
+        // created override-redirect, this single check covers every one of them,
+        // and covers any popup added later without anyone remembering to extend
+        // a list.
+        if (attr.override_redirect) continue;
 
         (void)windowToClient(wins[i], true);
     }
