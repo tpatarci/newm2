@@ -10,23 +10,66 @@ accepted exception with a reason.
 
 ## Current Scan Findings
 
-- [ ] Resolve build preflight before claiming test coverage. On this scan host,
+**All four are resolved as of Phase 8.** The section is kept rather than deleted
+so the history stays legible: each entry records what was wrong, the plan that
+fixed it, and the test that would catch it coming back. A resolved finding with
+no test behind it is a finding that will be rediscovered.
+
+- [x] Resolve build preflight before claiming test coverage. On this scan host,
       `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON` failed
       because `pkg-config` could not find `xft` or `fontconfig`. CMake requires
       `x11`, `xext`, `xft`, and `fontconfig` in `CMakeLists.txt:11-14`.
-- [ ] Fix or explicitly accept the `eventDestroy` lifetime hazard in
+      **RESOLVED (plans 08-01 and 08-02).** `scripts/preflight.sh` asserts every
+      declared dependency — the six pkg-config modules, the toolchain and its
+      CMake floor, the X11 tooling, a simple X client, and the three fontconfig
+      chains the WM actually requests. It is registered as the `preflight` ctest
+      test with `FIXTURES_SETUP preflight_ok` (`CMakeLists.txt:105`), and every
+      process-level suite declares `FIXTURES_REQUIRED preflight_ok`, so a missing
+      dependency now fails with a **named cause** before any behavioural
+      assertion runs, instead of as an opaque configure error three steps later.
+      Deliberately not a CMake configure-time check: that would block plain
+      binary builds on machines that never run tests.
+- [x] Fix or explicitly accept the `eventDestroy` lifetime hazard in
       `src/Events.cpp:237-283`: the code erases the owning `unique_ptr<Client>`
       and then checks `c->isDock()`. Preserve `wasDock` before erase and test
       dock destruction under ASan.
-- [ ] Fix or explicitly prove the no-Shape-extension path. `src/Manager.cpp:160`
+      **RESOLVED (plan 08-01, and two further use-after-free defects on the same
+      path in 08-11 and 08-12).** The dock predicate is captured before the erase.
+      Proved by `tests/test_wm_process.cpp` "Destroying a dock window restores
+      `_NET_WORKAREA` with no sanitizer report", which runs in the ASan tree
+      through `scripts/gates/build-all.sh asan` where a sanitizer report file
+      left behind by any child fails the gate — including a report written by the
+      forked WM child, which a green test result would otherwise never surface.
+- [x] Fix or explicitly prove the no-Shape-extension path. `src/Manager.cpp:160`
       records `m_shapeEvent = -1`, but fallback helpers in `src/Border.cpp:155`
       and `src/Border.cpp:172`, plus `src/Border.cpp:590`, still call
       `XShapeCombineRectangles`. A real no-Shape X server must not trigger Shape
       requests.
-- [ ] Prove focus config is actually wired to behavior. `click-to-focus`,
+      **RESOLVED (plan 08-03).** All 26 previously-unguarded Shape calls now go
+      through the single guarded funnel `Border::combineShape()`, with the
+      `WM2_FORCE_NO_SHAPE=1` lever so the fallback is reachable on a server that
+      does have Shape. Proved by `tests/test_wm_fallbacks.cpp` `[wm_noshape]`,
+      which asserts not merely that the WM survives but that it issues **no Shape
+      requests at all** on a server without the extension. Plan 08-13 later found
+      a related defect this same area was hiding — a `YXSorted` ordering promise
+      broken at every non-default frame thickness, leaving the frame unshaped and
+      logged rather than shaped — now funnelled through
+      `Border::combineShapeSorted()` and covered by `[wm_config_runtime]`.
+- [x] Prove focus config is actually wired to behavior. `click-to-focus`,
       `raise-on-focus`, and `auto-raise` are parsed in `src/Config.cpp:152-154`,
       but runtime paths mostly use delayed focus-follows-pointer
       (`src/Client.cpp:1329`, `src/Manager.cpp:810`).
+      **RESOLVED (plan 08-07), and the suspicion was correct — all three were
+      dead settings.** They parsed and reached nothing. Now wired, and proved by
+      `tests/test_wm_focus.cpp` `[wm_focus]`, which drives the real binary with
+      real pointer events and covers each flag in **both** directions (six cases:
+      click-to-focus on and off, auto-raise on and off, raise-on-focus on and
+      off), plus "With auto-raise off the WM burns no CPU while focus tracking is
+      live". The negative halves are the load-bearing ones and they only became
+      trustworthy after deferred item 9 was understood: a single read after a
+      single nudge observes the *previous* state, so every one of them settles
+      first. The same plan fixed the `circulate()` 100%-CPU freeze found on the
+      way.
 
 ## Environment Preflight
 
@@ -85,10 +128,48 @@ cmake --build build/debug --parallel
 ctest --test-dir build/debug --output-on-failure
 ```
 
-- [ ] Confirm the expected discovered test surface is present. At scan time the
-      tree contains 102 Catch2 test cases:
-      `config` 35, `raii` 16, `ewmh` 16, `client` 11, `smoke` 7, `xft_poc` 6,
-      `autoraise` 6, `eventloop` 5.
+- [x] Confirm the expected discovered test surface is present. The tree contains
+      **284 Catch2 test cases** across 21 files, of which **283 are registered
+      with ctest** (`Total Tests: 286` including the `preflight`, `start_xvfb`
+      and `stop_xvfb` fixture tests). The one case not registered is the hidden
+      `[.][wm_resource_calibration]` case in `tests/test_wm_resource.cpp`, which
+      is hidden on purpose so the judged resource budget cannot have been
+      produced by a run that was itself being judged.
+
+      **RECOMPUTE, DO NOT TRANSCRIBE.** This line rotted once already — the
+      figure it carried was 102, taken two phases before it was last read, which
+      omitted three whole test files and understated a fourth. Refresh it with:
+
+```bash
+# source count -- what this line states
+grep -c '^TEST_CASE' tests/*.cpp | awk -F: '{s+=$2} END {print s}'
+
+# per-file breakdown
+grep -c '^TEST_CASE' tests/*.cpp
+
+# what ctest actually registered, which is the number that gates a release
+ctest --test-dir build/debug -N | tail -1
+```
+
+      Per file, at the time of writing (plan 08-14):
+
+      | File | Cases | | File | Cases |
+      |---|---|---|---|---|
+      | `test_config.cpp` | 48 | | `test_wm_geometry.cpp` | 15 |
+      | `test_wm_state.cpp` | 24 | | `test_wm_fallbacks.cpp` | 13 |
+      | `test_wm_focus.cpp` | 21 | | `test_desktopentry.cpp` | 12 |
+      | `test_rules.cpp` | 17 | | `test_client.cpp` | 11 |
+      | `test_wm_lifecycle.cpp` | 17 | | `test_appcache.cpp` | 8 |
+      | `test_ewmh.cpp` | 16 | | `test_binaryscanner.cpp` | 8 |
+      | `test_raii.cpp` | 16 | | `test_wm_rules.cpp` | 8 |
+      | `test_wm_runtime.cpp` | 16 | | `test_smoke.cpp` | 7 |
+      | `test_autoraise.cpp` | 6 | | `test_wm_process.cpp` | 6 |
+      | `test_xft_poc.cpp` | 6 | | `test_eventloop.cpp` | 5 |
+      | `test_wm_resource.cpp` | 4 | | | |
+
+      A count that has drifted is not automatically a defect — a plan that adds
+      cases moves it legitimately. It is a prompt to find out *which* file
+      changed and why.
 - [ ] Run a Release build and tests:
 
 ```bash
@@ -370,3 +451,41 @@ For each release or handoff, attach:
 - [ ] ASan/UBSan logs showing no actionable findings.
 - [ ] Manual interaction checklist results with tester name and date.
 - [ ] List of accepted deviations, each with owner and follow-up issue.
+
+## Accepted Deviations
+
+A deviation belongs here only with a **reason**, an **owner** and a
+**follow-up**. Without all three it is not an accepted deviation, it is an
+omission wearing the word "accepted".
+
+### D-8-TIGHTVNC — TightVNC is not validated for this release
+
+**What is not done.** `PROJECT.md` names TigerVNC, TightVNC, XRDP and X2Go as the
+remote-desktop targets. TightVNC has **no session, no transcript and no
+interaction record**. It is untested.
+
+**Rationale.** TigerVNC is TightVNC's maintained successor on the Unix server
+side, and both descend from the same `Xvnc` codebase. Their X server behaviour —
+the extension set advertised, Shape handling, resize handling, the fontconfig
+picture — substantially overlaps, so a TigerVNC result is genuine evidence about
+TightVNC rather than a guess. It is not, however, the same thing as a TightVNC
+result, which is why this is recorded as a deviation and not quietly ticked.
+
+**Closest tested proxy: TigerVNC.** Its capability transcript and interaction
+record are the best available evidence for TightVNC's behaviour, and both are
+committed under the phase evidence directory alongside the other targets.
+
+**Owner:** whoever next stands up a remote-desktop validation session — the same
+role that runs the User Interaction Checklist for a release. TightVNC needs no
+new tooling: `scripts/capture-display-capabilities.sh <display> tightvnc` and the
+existing interaction checklist are the whole job.
+
+**Follow-up:** add a `tightvnc` transcript to the evidence bundle at the next
+release signoff that has a TightVNC server available, and either delete this
+entry or restate it with a fresh reason. An accepted deviation that is never
+revisited becomes a permanent gap by default, which is the failure mode this
+section exists to prevent.
+
+**What a user should expect meanwhile:** if TightVNC misbehaves, that is a real
+bug worth reporting. The configuration is not unsupported; it has not been
+exercised.
