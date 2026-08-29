@@ -232,12 +232,25 @@ void Border::loadTabFont()
     if (tabFontRotated()) {
         // Rotated Xft fonts have zero height (Plan 01 finding).
         // Use XftTextExtentsUtf8 to measure the actual glyph extent.
-        // Unchanged from the pre-ladder code: this is the normal path and its
-        // rendered result must not move.
+        //
+        // AXIS (deferred item 11, fixed in plan 08-14). For a 90-degree rotated
+        // face the string runs along XGlyphInfo::height and its THICKNESS is
+        // XGlyphInfo::width. MEASURED on this host at size 12:
+        //
+        //     "M"        width 12   height  13
+        //     "Hello"    width 12   height  39
+        //     35 chars   width 16   height 286
+        //
+        // m_tabWidth is the thickness of the tab strip, so it comes from
+        // `width`. It previously read `height`, which for a ONE-CHARACTER
+        // sample is numerically almost the same (13 against 12) -- which is
+        // exactly why this read survived: it is wrong by one pixel and looks
+        // right. Its sibling reads, measuring the whole LABEL on the same wrong
+        // axis, were wrong by an order of magnitude.
         const char* sample = "M";
         XftTextExtentsUtf8(display(), m_tabFont,
             reinterpret_cast<const FcChar8*>(sample), 1, &extents);
-        m_tabWidth = extents.height + 4;
+        m_tabWidth = extents.width + 4;
     } else {
         // Rung 3: an unrotated face has its advance on the other axis, so
         // measuring a glyph the rotated way would size the tab from the
@@ -452,9 +465,20 @@ void Border::drawLabel()
         static_cast<int>(m_label.size()), &extents);
 
     // Draw rotated label text (UTF-8 natively via XftDrawStringUtf8)
+    //
+    // AXIS (deferred item 11, fixed in plan 08-14). The x offset positions the
+    // string ACROSS the tab, so it is the thickness -- `width` -- not the
+    // along-string advance. THIS read is what made the defect invisible rather
+    // than merely ugly: reading `height` put the origin at 2 + 286 = 288 px for
+    // a thirty-five-character title, far outside a ~20 px tab, where the server
+    // clipped the entire label away. 08-06 predicted the label would overhang
+    // its tab; MEASURED, it did not render at all. For a short title the two
+    // axes are close enough that the label landed inside the tab by luck, which
+    // is why only long titles were ever affected -- and why nobody caught it,
+    // since a test window is usually called something short.
     XftDrawStringUtf8(m_tabDraw.get(), &m_xftForeground,
                        m_tabFont,
-                       2 + extents.height, m_tabHeight - 1,
+                       2 + extents.width, m_tabHeight - 1,
                        reinterpret_cast<const FcChar8*>(m_label.c_str()),
                        static_cast<int>(m_label.size()));
 }
@@ -567,12 +591,28 @@ void Border::fixTabHeight(int maxHeight)
         return;
     }
 
+    // AXIS (deferred item 11, fixed in plan 08-14). m_tabHeight is the LENGTH of
+    // the tab, down which the rotated label runs, so it is bounded below by the
+    // along-string advance -- XGlyphInfo::height for a rotated face, not
+    // ::width, which is the constant thickness across the string.
+    //
+    // This is the read that made the tab "very nearly the same length whatever
+    // the title is": MEASURED 54 px for a one-character title against 58 px for
+    // a thirty-four-character one, four pixels apart for a 34-fold difference in
+    // length. All three sites in this function had it the same way round.
+    //
+    // CONSEQUENCE FOR THE CODE BELOW, and it is not incidental: the
+    // icon-name-then-ellipsis shortening path that follows was effectively DEAD,
+    // because m_tabHeight almost always came out under maxHeight on the first
+    // try. With the length now tracking the title it fires for the first time
+    // whenever a long title meets a short window, which is the case it was
+    // written for.
     if (!m_label.empty()) {
         XGlyphInfo extents;
         XftTextExtentsUtf8(display(), m_tabFont,
             reinterpret_cast<const FcChar8*>(m_label.c_str()),
             static_cast<int>(m_label.size()), &extents);
-        m_tabHeight = extents.width + 6 + m_tabWidth;
+        m_tabHeight = extents.height + 6 + m_tabWidth;
     }
 
     if (m_tabHeight <= maxHeight) return;
@@ -584,7 +624,7 @@ void Border::fixTabHeight(int maxHeight)
         XGlyphInfo extents;
         XftTextExtentsUtf8(display(), m_tabFont,
             reinterpret_cast<const FcChar8*>(m_label.c_str()), len, &extents);
-        m_tabHeight = extents.width + 6 + m_tabWidth;
+        m_tabHeight = extents.height + 6 + m_tabWidth;   // along-string advance
     }
     if (m_tabHeight <= maxHeight) return;
 
@@ -595,7 +635,7 @@ void Border::fixTabHeight(int maxHeight)
         XftTextExtentsUtf8(display(), m_tabFont,
             reinterpret_cast<const FcChar8*>(newLabel.c_str()),
             static_cast<int>(newLabel.size()), &extents);
-        m_tabHeight = extents.width + 6 + m_tabWidth;
+        m_tabHeight = extents.height + 6 + m_tabWidth;   // along-string advance
         --len;
     } while (m_tabHeight > maxHeight && len > 2);
 

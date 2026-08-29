@@ -2213,3 +2213,257 @@ TEST_CASE("Repeated create, map, unmap and destroy over 120 windows leaves the W
     REQUIRE(fixture.terminateWmCleanly());
     REQUIRE(fixture.asanReports().empty());
 }
+
+
+// ===========================================================================
+// [wm_tablabel] -- the sideways tab tracks the window title (deferred item 11)
+//
+// The wm2 sideways tab label is the product's stated non-negotiable visual
+// identity. Deferred item 11 recorded, from 08-06, that the tab barely grows
+// with the title: 325x54 for a one-character title against 325x58 for a
+// thirty-four-character one. Plan 08-14's screenshots showed the consequence is
+// not the overhanging label 08-06 predicted -- it is NO LABEL AT ALL, because
+// the draw origin is computed on the same swapped axis and lands outside the
+// tab, where it is clipped away.
+//
+// MEASURED on this host, rotated face at size 12, XftTextExtentsUtf8:
+//
+//     string                                 width   height
+//     "M"                                       12       13
+//     "Hello"                                   12       39
+//     "A Very Long Window Title Indeed Yes"     16      286
+//     40 digits                                 12      360
+//
+// So for a rotated font `width` is the CONSTANT thickness across the string and
+// `height` is the along-string advance. Every rotated read in Border had the two
+// the wrong way round.
+//
+// THE ASSERTIONS ARE ABSOLUTE, NOT RUN-COMPARISONS, and they are made on ONE
+// window that is RETITLED rather than on two windows: two windows differ in
+// stacking and active state, and the active client is decorated differently
+// (deferred item 16), so a two-window comparison would be confounded by
+// something other than the title. Retitling holds everything else fixed.
+// ===========================================================================
+
+namespace {
+
+// A title long enough that its rotated advance (~286 px measured above) cannot
+// possibly fit in the ~40 px tab the defect produces, and short enough to fit
+// the tall test window once the defect is fixed.
+const char* const kLongTitle = "A Very Long Window Title Indeed Yes";
+const char* const kShortTitle = "A";
+
+// Tall enough that fixTabHeight()'s maxHeight (the client height, less the tab
+// width) leaves room for the long title's full advance, so a correct
+// implementation is not forced into the ellipsis-shortening path. That path is
+// real and now reachable, but it is not what this case is about.
+constexpr int kTallWindowH = 460;
+
+struct TabObservation {
+    int tabLength = -1;      // the tab window's own height, parent-relative
+    long inkPixels = 0;      // pixels of the configured FOREGROUND colour in it
+};
+
+// Retitle, let the WM notice, and read back the tab's length and how much label
+// ink is actually on the screen inside it.
+TabObservation observeTabFor(Display* d, Window frame, Window client,
+                             unsigned long inkPixel, const char* title)
+{
+    TabObservation obs;
+
+    XStoreName(d, client, title);
+    XSync(d, False);
+    settleWm(d);
+
+    const Window tab = findFrameChild(d, frame, client, false);
+    if (tab == None) return obs;
+
+    Rect local;
+    if (!localRect(d, tab, local)) return obs;
+    obs.tabLength = local.h;
+
+    // Read the SERVER's pixels over the tab's footprint, through root -- the tab
+    // is shaped, and XGetImage outside a bounding shape is undefined (08-13).
+    Rect abs;
+    if (!serverRect(d, tab, abs)) return obs;
+    obs.inkPixels = countOf(captureRoot(d, abs), inkPixel);
+    return obs;
+}
+
+}  // namespace
+
+TEST_CASE("The sideways tab grows with the window title and renders its label",
+          "[wm_tablabel]")
+{
+    // Explicit colours so the ink assertion is ABSOLUTE -- the count is of the
+    // pixel the server resolves the configured tab-foreground NAME to, not of
+    // "some colour that differs from the other run".
+    WmFixture fixture(cleanFixture({"--tab-background=blue",
+                                    "--tab-foreground=red"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const unsigned long ink = namedPixel(d, "red");
+    REQUIRE(ink != ~0UL);
+
+    Window client = None;
+    const Window frame =
+        mapClientAndAwaitFrame(d, 40, 40, 240, kTallWindowH, client, kShortTitle);
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    const TabObservation shortObs = observeTabFor(d, frame, client, ink, kShortTitle);
+    const TabObservation longObs  = observeTabFor(d, frame, client, ink, kLongTitle);
+
+    std::printf("[wm2 tablabel] short title %-4s tab length %4d px, label ink %5ld px\n"
+                "[wm2 tablabel] long  title (%zu chars) tab length %4d px, label ink %5ld px\n",
+                kShortTitle, shortObs.tabLength, shortObs.inkPixels,
+                std::strlen(kLongTitle), longObs.tabLength, longObs.inkPixels);
+    std::fflush(stdout);
+
+    REQUIRE(shortObs.tabLength > 0);
+    REQUIRE(longObs.tabLength > 0);
+
+    // POSITIVE CONTROL. If a one-character title draws no ink either, the
+    // mechanism is broken rather than the axis, and every assertion below would
+    // pass or fail for the wrong reason.
+    INFO("short-title label ink: " << shortObs.inkPixels << " px");
+    REQUIRE(shortObs.inkPixels > 0);
+
+    // 1. THE TAB TRACKS THE TITLE. Measured before the fix: 54 vs 58 px, a ratio
+    //    of 1.07 for a 34-fold difference in title length. A correct
+    //    implementation is bounded below by the rotated advance, which is an
+    //    order of magnitude larger.
+    INFO("tab length " << shortObs.tabLength << " -> " << longObs.tabLength);
+    CHECK(longObs.tabLength > shortObs.tabLength * 2);
+
+    // 2. THE LONG LABEL IS ACTUALLY ON THE SCREEN. This is the user-visible
+    //    claim and the one the screenshots made: before the fix the long title
+    //    rendered ZERO pixels of label because the draw origin was computed from
+    //    the along-string advance and landed far outside the tab.
+    INFO("label ink " << shortObs.inkPixels << " -> " << longObs.inkPixels);
+    CHECK(longObs.inkPixels > shortObs.inkPixels);
+
+    // 3. The tab is still a TAB and not the whole window: the shaped strip must
+    //    stay within the frame it decorates. A "fix" that simply made the tab
+    //    enormous would satisfy 1 and 2 and wreck the layout.
+    Rect frameRect;
+    REQUIRE(serverRect(d, frame, frameRect));
+    INFO("frame " << describe(frameRect) << ", long tab length " << longObs.tabLength);
+    CHECK(longObs.tabLength <= frameRect.h);
+
+    // 4. No X protocol error other than the destroy-path BadWindow of deferred
+    //    item 13. The tab's length feeds shapeTab()'s rectangle list, and 08-13
+    //    found that geometry silently breaking the YXSorted promise at every
+    //    non-default frame thickness -- rejected whole, logged, frame left
+    //    unshaped, invisible to any assertion about windows or geometry.
+    const std::string errs = fixture.wmStderr();
+    INFO("WM stderr:\n" << errs);
+    CHECK_FALSE(contains(errs, "BadMatch"));
+    CHECK_FALSE(contains(errs, "BadValue"));
+    CHECK_FALSE(contains(errs, "BadDrawable"));
+    CHECK_FALSE(contains(errs, "RenderBadPicture"));
+}
+
+TEST_CASE("A long title on a short window is shortened to fit its tab, still legibly",
+          "[wm_tablabel]")
+{
+    // THE PATH THIS CASE COVERS WAS DEAD CODE UNTIL PLAN 08-14.
+    //
+    // fixTabHeight()'s icon-name-then-ellipsis shortening loop trims the label
+    // until the tab fits the window. Before the axis fix, m_tabHeight was
+    // computed from the constant across-string thickness, so it came out around
+    // 40 px whatever the title was and almost always landed under maxHeight on
+    // the first try -- the loop was reachable in principle and essentially never
+    // entered in practice. Now that the tab length tracks the title, a long
+    // title on a short window enters it every time.
+    //
+    // Deferred item 11 flagged exactly this: "that loop is currently near-dead".
+    // A fix that switches on a previously-unexercised loop without covering it
+    // is a fix that has moved the risk rather than removed it.
+    WmFixture fixture(cleanFixture({"--tab-background=blue",
+                                    "--tab-foreground=red"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const unsigned long ink = namedPixel(d, "red");
+    REQUIRE(ink != ~0UL);
+
+    // Short enough that the long title's full rotated advance (~286 px measured)
+    // CANNOT fit, so the shortening path is forced rather than merely available.
+    constexpr int kShortWindowH = 120;
+
+    Window client = None;
+    const Window frame =
+        mapClientAndAwaitFrame(d, 40, 40, 240, kShortWindowH, client, kShortTitle);
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    // THE ICON NAME MUST ALSO BE LONG, or this case does not reach the loop it
+    // exists to cover. fixTabHeight() has THREE rungs: measure the title, then
+    // fall back to the icon name (or the literal "incognito" when there is
+    // none), and only then enter the ellipsis loop. "incognito" is nine
+    // characters and comfortably fits a 120 px window, so a case that sets only
+    // a long TITLE returns at the second rung and the loop stays unexercised.
+    //
+    // MEASURED while writing this: with the icon name left unset, mutation M4 --
+    // which corrupts the loop's own measurement -- stayed GREEN, because the
+    // loop was never entered. Setting the icon name long is what turns this into
+    // a real test of the third rung rather than a second test of the second one.
+    XSetIconName(d, client, kLongTitle);
+    XSync(d, False);
+    settleWm(d);
+
+    const TabObservation shortObs = observeTabFor(d, frame, client, ink, kShortTitle);
+    const TabObservation longObs  = observeTabFor(d, frame, client, ink, kLongTitle);
+
+    Rect frameRect;
+    REQUIRE(serverRect(d, frame, frameRect));
+
+    std::printf("[wm2 tablabel] SHORT WINDOW %d px, frame %d px\n"
+                "[wm2 tablabel]   short title tab length %4d px, label ink %5ld px\n"
+                "[wm2 tablabel]   long  title tab length %4d px, label ink %5ld px\n",
+                kShortWindowH, frameRect.h,
+                shortObs.tabLength, shortObs.inkPixels,
+                longObs.tabLength, longObs.inkPixels);
+    std::fflush(stdout);
+
+    REQUIRE(shortObs.tabLength > 0);
+    REQUIRE(longObs.tabLength > 0);
+    REQUIRE(shortObs.inkPixels > 0);          // positive control, as above
+
+    // 1. THE TAB STILL GREW to use the room it has. A shortening loop that gave
+    //    up and left the stub tab would fail here -- which is exactly what the
+    //    unfixed loop does, because it measures the wrong axis and concludes the
+    //    label already fits after a single trim.
+    INFO("tab length " << shortObs.tabLength << " -> " << longObs.tabLength);
+    CHECK(longObs.tabLength > shortObs.tabLength * 2);
+
+    // 2. AND IT DID NOT OVERFLOW THE WINDOW. This is the whole point of the
+    //    loop: the tab must be bounded by the frame it decorates. Getting (1)
+    //    without (2) would mean a tab hanging off the bottom of a short window.
+    INFO("tab length " << longObs.tabLength << " vs frame height " << frameRect.h);
+    CHECK(longObs.tabLength <= frameRect.h);
+
+    // 3. The shortened label is still DRAWN. Trimming to nothing would satisfy
+    //    (1) and (2) and leave the user with the blank tab this whole fix is
+    //    about.
+    INFO("label ink " << longObs.inkPixels << " px");
+    CHECK(longObs.inkPixels > 0);
+
+    // 4. The shortened geometry does not break the SHAPE promise. shapeTab()
+    //    builds its rectangle list from m_tabHeight, and 08-13 found that list
+    //    silently rejected whole -- frame left unshaped, logged, invisible to
+    //    every assertion about windows and geometry. This loop is now the thing
+    //    computing that height on a path nothing exercised before.
+    const std::string errs = fixture.wmStderr();
+    INFO("WM stderr:\n" << errs);
+    CHECK_FALSE(contains(errs, "BadMatch"));
+    CHECK_FALSE(contains(errs, "BadValue"));
+    CHECK_FALSE(contains(errs, "BadDrawable"));
+    CHECK_FALSE(contains(errs, "RenderBadPicture"));
+}
