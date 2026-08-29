@@ -1,0 +1,56 @@
+# Stage-1 calibration transcript -- DEBUG tree
+# commit 0e56fc8  branch main
+# host tomislav-HP-Z440-Workstation  Ubuntu 22.04.5 LTS  Linux 6.8.0-124-generic
+# date 2026-08-29T14:07:58Z
+# command: ./build/debug/test_wm_resource '[wm_resource_calibration]' -s
+
+Filters: [wm_resource_calibration]
+Randomness seeded to: 2966375174
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_wm_resource is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+CALIBRATION: resident memory ladder and idle CPU, measured and printed, never
+             judged
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/tests/test_wm_resource.cpp:445
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_resource.cpp:450: PASSED:
+  REQUIRE( dp != nullptr )
+with expansion:
+  {?} != nullptr
+
+
+[wm2 resource] tree=debug
+[wm2 resource]   resident set size, twenty-client ladder
+[wm2 resource]     0 clients   11796 kB
+[wm2 resource]     1 client    11796 kB
+[wm2 resource]     5 clients   11820 kB
+[wm2 resource]    20 clients   11904 kB
+/home/tomislav/development/wm2-born-again/tests/test_wm_resource.cpp:461: PASSED:
+  REQUIRE( l.rss20 > 0 )
+with expansion:
+  11904 (0x2e80) > 0
+
+[wm2 resource]   (calibration -- no budget applied)
+/home/tomislav/development/wm2-born-again/tests/test_wm_resource.cpp:465: PASSED:
+  REQUIRE( idle.ok )
+with expansion:
+  true
+
+[wm2 resource]   idle CPU (default config, 20 clients)
+[wm2 resource]     window        30.00 s wall clock, no X traffic
+[wm2 resource]     CPU ticks     5 -> 5 (0, at 100 Hz)
+[wm2 resource]     CPU time      0.000 s
+[wm2 resource]     as % of wall  0.0000 %   (budget 1.00 %)
+/home/tomislav/development/wm2-born-again/tests/test_wm_resource.cpp:470: PASSED:
+  CHECK( fixture.wmAlive() )
+with expansion:
+  true
+
+===============================================================================
+All tests passed (4 assertions in 1 test case)
+

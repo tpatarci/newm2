@@ -625,6 +625,54 @@ if(BUILD_TESTS)
                 FIXTURES_REQUIRED preflight_ok
                 TIMEOUT 600
         )
+
+        # --- Resource budget: resident memory and idle CPU (D-32, TEST-08,
+        #     plan 08-14) ---
+        #
+        # Cloned from test_wm_runtime above, minus XTEST: this file drives no
+        # device events at all. It deliberately issues NO X traffic during its
+        # idle windows, because any request would be work the WM is then charged
+        # for by the very sample that is supposed to find it idle.
+        #
+        # Own display per fixture instance, so deliberately NO shared-display
+        # binding and NO `FIXTURES_REQUIRED xvfb_display`.
+        add_executable(test_wm_resource tests/test_wm_resource.cpp)
+        target_link_libraries(test_wm_resource PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+        )
+        target_include_directories(test_wm_resource PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/tests
+            ${XFT_INCLUDE_DIRS}
+        )
+
+        target_compile_definitions(test_wm_resource PRIVATE
+            WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
+            WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
+            WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+        )
+
+        # The tests exec the binary, so it must exist before they run.
+        add_dependencies(test_wm_resource wm2-born-again)
+
+        # ADD_TAGS_AS_LABELS is required by D-33, or the [wm_resource_budget]
+        # tag is not selectable by the anchored label gate
+        # `ctest -L '^wm_resource_budget$'` -- which would then match NOTHING and,
+        # with --no-tests=error, fail loudly rather than certify an empty set.
+        #
+        # The TIMEOUT is generous for a specific, non-negotiable reason: each of
+        # the three cases pays a full Xvfb + WM startup, maps twenty clients, and
+        # two of them then sit through a THIRTY-SECOND idle window that cannot be
+        # shortened without coarsening the one-percent bar. Under the sanitizer,
+        # in a loaded full-suite run, that is several times slower again. A
+        # timeout here exists to stop a wedged case hanging the suite forever, not
+        # to assert that any of this is fast.
+        catch_discover_tests(test_wm_resource ADD_TAGS_AS_LABELS
+            PROPERTIES
+                FIXTURES_REQUIRED preflight_ok
+                TIMEOUT 600
+        )
     endif()
 
     # Config parsing unit tests (pure data transformation, no X11 needed)
