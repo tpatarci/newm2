@@ -926,33 +926,72 @@ TEST_CASE("A stale sanitizer report on a reused display prefix is cleared, and "
     // on the same number reads as a fresh sanitizer finding in an innocent
     // case -- which cost 08-12 roughly twenty minutes chasing a phantom
     // regression in updateWorkarea().
-    WmFixture fixture;
-    REQUIRE_FALSE(fixture.asanLogPrefix().empty());
+    std::string prefix, display;
 
-    const std::string ours    = fixture.asanLogPrefix() + ".stale-08-13";
-    const std::string foreign = std::string(WM2_TEST_WORKDIR) +
-                                "/asan-not-this-display." + std::to_string(::getpid());
+    {
+        WmFixture fixture;
+        prefix  = fixture.asanLogPrefix();
+        display = fixture.display();
+        REQUIRE_FALSE(prefix.empty());
 
-    { std::ofstream f(ours);    f << "stale\n"; }
-    { std::ofstream f(foreign); f << "stale\n"; }
+        const std::string ours    = prefix + ".stale-08-13";
+        const std::string foreign = std::string(WM2_TEST_WORKDIR) +
+                                    "/asan-not-this-display." + std::to_string(::getpid());
 
-    // Half one: the attribution really is prefix-based, so a stale file really
-    // does become someone else's failure. Without this the cleanup below would
-    // be a fix for a problem the test never demonstrated.
-    INFO("prefix: " << fixture.asanLogPrefix());
-    CHECK_FALSE(fixture.asanReports().empty());
+        { std::ofstream f(ours);    f << "stale\n"; }
+        { std::ofstream f(foreign); f << "stale\n"; }
 
-    // Half two: the cleanup removes exactly the fixture's own prefix.
-    WmFixture::removeReportsWithPrefix(fixture.asanLogPrefix());
+        // Half one: the attribution really is prefix-based, so a stale file
+        // really does become someone else's failure. Without this the cleanup
+        // below would be a fix for a problem the test never demonstrated.
+        INFO("prefix: " << prefix);
+        CHECK_FALSE(fixture.asanReports().empty());
 
-    CHECK(fixture.asanReports().empty());
-    CHECK_FALSE(pathExists(ours));
+        // Half two: the cleanup removes exactly the fixture's own prefix.
+        WmFixture::removeReportsWithPrefix(prefix);
 
-    // A neighbouring fixture's reports are NOT collateral. A cleanup that
-    // cleared the whole directory would pass every assertion above and would
-    // silently delete a concurrent ctest worker's genuine finding.
-    CHECK(pathExists(foreign));
-    ::unlink(foreign.c_str());
+        CHECK(fixture.asanReports().empty());
+        CHECK_FALSE(pathExists(ours));
+
+        // A neighbouring fixture's reports are NOT collateral. A cleanup that
+        // cleared the whole directory would pass every assertion above and would
+        // silently delete a concurrent ctest worker's genuine finding.
+        CHECK(pathExists(foreign));
+        ::unlink(foreign.c_str());
+    }
+
+    // Half three: the WIRING, which is the half that actually protects anyone.
+    // The two halves above exercise the helper; deleting the CALL to it in
+    // WmFixture::start() would leave both of them green, and the call is the
+    // whole fix.
+    //
+    // Reusing the same display number is deterministic rather than lucky: the
+    // reservation scans upward from a fixed base and takes the lowest FREE
+    // display, the fixture above has released its own reservation, and ctest
+    // runs these suites serially (scripts/gates/build-all.sh passes no -j). The
+    // wait below is for Xvfb's /tmp lock file, which the reservation also
+    // consults and which outlives the process by a moment.
+    const std::string number = display.substr(1);
+    const std::string xLock  = "/tmp/.X" + number + "-lock";
+    WmFixture::pollUntil([&] { return !pathExists(xLock); }, 8000);
+
+    const std::string planted = prefix + ".stale-wiring";
+    { std::ofstream f(planted); f << "stale\n"; }
+    REQUIRE(pathExists(planted));
+
+    WmFixture second;
+    INFO("first display " << display << " prefix " << prefix);
+    INFO("second display " << second.display() << " prefix " << second.asanLogPrefix());
+
+    // If this ever fails, the display was not reused and the case below would be
+    // vacuous -- so it fails loudly here rather than passing for the wrong
+    // reason. Clean up the plant either way.
+    const bool reused = (second.asanLogPrefix() == prefix);
+    if (!reused) ::unlink(planted.c_str());
+    REQUIRE(reused);
+
+    CHECK(second.asanReports().empty());
+    CHECK_FALSE(pathExists(planted));
 }
 
 
@@ -1656,4 +1695,371 @@ TEST_CASE("An unrecognised flag exits non-zero and its advice names a flag that 
     REQUIRE(advised.exitedNormally);
     CHECK(advised.exitCode == 0);
     CHECK_FALSE(contains(advised.output, "unrecognized option"));
+}
+
+
+// ===========================================================================
+// [wm_stress] -- 100+ window create/map/unmap/destroy churn (coverage item 13)
+// ===========================================================================
+
+namespace {
+
+// Resident set size in kilobytes, from /proc/<pid>/statm field 2 (resident
+// pages). Chosen over VmSize because virtual size says nothing about what is
+// actually held -- ASan alone reserves an enormous virtual mapping.
+bool residentKb(pid_t pid, long& out)
+{
+    if (pid <= 0) return false;
+    const std::string path = "/proc/" + std::to_string(pid) + "/statm";
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    long total = 0, resident = 0;
+    const int n = std::fscanf(f, "%ld %ld", &total, &resident);
+    std::fclose(f);
+    if (n != 2) return false;
+    out = resident * (::sysconf(_SC_PAGESIZE) / 1024);
+    return true;
+}
+
+// Zombie children of `parent`. The WM double-forks so its grandchildren are
+// orphaned to init and can never be zombies; what this counts is the
+// INTERMEDIATE child, which spawn() is supposed to reap with wait().
+int zombieChildrenOf(pid_t parent)
+{
+    int zombies = 0;
+    DIR* dp = ::opendir("/proc");
+    if (!dp) return 0;
+    while (struct dirent* e = ::readdir(dp)) {
+        const char* name = e->d_name;
+        if (name[0] < '0' || name[0] > '9') continue;
+
+        const std::string statPath = std::string("/proc/") + name + "/stat";
+        FILE* f = std::fopen(statPath.c_str(), "rb");
+        if (!f) continue;
+        std::string content;
+        char buf[1024];
+        size_t n;
+        while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) content.append(buf, n);
+        std::fclose(f);
+
+        // Parse after the LAST ')': the comm field is parenthesised and may
+        // itself contain spaces and parentheses.
+        const size_t close = content.find_last_of(')');
+        if (close == std::string::npos) continue;
+        std::istringstream in(content.substr(close + 1));
+        std::string state;
+        long ppid = 0;
+        if (!(in >> state >> ppid)) continue;
+        if (ppid == parent && state == "Z") ++zombies;
+    }
+    ::closedir(dp);
+    return zombies;
+}
+
+// A FIXED, DOCUMENTED growth budget, chosen BEFORE the test was first run and
+// deliberately not derived from any measurement this case takes.
+//
+// Reasoning behind the numbers, so a future reader can argue with it rather
+// than guess at it: a managed window costs the WM one Client, one Border and a
+// handful of X resource handles -- on the order of a kilobyte of heap each --
+// and the churn below never holds more than a batch at a time. The m_clients
+// vector reaching a few hundred entries is about a kilobyte. So a leak-free run
+// should grow by well under a megabyte, and everything above that is headroom
+// for allocator fragmentation and glibc arena behaviour.
+//
+// Under the sanitizer every allocation gains redzones and freed memory sits in
+// a quarantine before it is returned, so the same churn legitimately holds
+// several times as much. Hence a separate, larger constant rather than one
+// loose number that would be meaningless in the debug tree.
+//
+// If a run exceeds these, that is a FINDING. It is not a budget to raise.
+constexpr long kGrowthBudgetKbDebug = 8192;    // 8 MB
+constexpr long kGrowthBudgetKbAsan  = 32768;   // 32 MB
+
+#if defined(__SANITIZE_ADDRESS__)
+constexpr long kGrowthBudgetKb = kGrowthBudgetKbAsan;
+constexpr const char* kGrowthBudgetTree = "asan";
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+constexpr long kGrowthBudgetKb = kGrowthBudgetKbAsan;
+constexpr const char* kGrowthBudgetTree = "asan";
+#  else
+constexpr long kGrowthBudgetKb = kGrowthBudgetKbDebug;
+constexpr const char* kGrowthBudgetTree = "debug";
+#  endif
+#else
+constexpr long kGrowthBudgetKb = kGrowthBudgetKbDebug;
+constexpr const char* kGrowthBudgetTree = "debug";
+#endif
+
+constexpr int kBatchSize  = 40;
+constexpr int kBatchCount = 3;    // 120 windows, comfortably past the required 100
+
+// How many of a batch are unmapped, and where the destroyed range starts, so
+// the two subsets OVERLAP rather than partition. A strictly sequential
+// create-then-destroy loop would never exercise the container-mutation ordering
+// that an overlapping unmap/destroy pair does.
+constexpr int kUnmapCount   = 20;
+constexpr int kDestroyStart = 10;
+constexpr int kDestroyCount = 20;
+
+// True once every window in `wins` is published in _NET_CLIENT_LIST. Reads the
+// whole list once per poll rather than querying each window: 40 windows a poll
+// through XQueryTree would make the case slower than the churn it measures.
+bool allListed(Display* d, const std::vector<Window>& wins)
+{
+    const std::vector<Window> l = clientList(d);
+    for (Window w : wins) {
+        if (std::find(l.begin(), l.end(), w) == l.end()) return false;
+    }
+    return true;
+}
+
+bool noneListed(Display* d, const std::vector<Window>& wins)
+{
+    const std::vector<Window> l = clientList(d);
+    for (Window w : wins) {
+        if (std::find(l.begin(), l.end(), w) != l.end()) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+TEST_CASE("Repeated create, map, unmap and destroy over 120 windows leaves the WM "
+          "correct, bounded and free of zombies", "[wm_stress]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    // The baseline is taken AFTER the first window is managed, not at process
+    // start: the one-off allocations of initialisation, the font, the colours
+    // and the first Border's statics all belong to startup rather than to the
+    // churn, and charging them to the churn would make the budget below a
+    // measurement of startup instead.
+    Window warmup = None;
+    REQUIRE(mapClientAndAwaitFrame(d, 10, 10, 80, 60, warmup, "warmup") != None);
+    settleWm(d);
+
+    long baselineKb = 0;
+    REQUIRE(residentKb(fixture.wm().pid(), baselineKb));
+
+    XDestroyWindow(d, warmup);
+    XSync(d, False);
+
+    std::vector<Window> everCreated;
+
+    for (int batch = 0; batch < kBatchCount; ++batch) {
+        std::vector<Window> wins;
+        wins.reserve(kBatchSize);
+
+        // create
+        for (int i = 0; i < kBatchSize; ++i) {
+            const int x = 20 + (i % 8) * 100;
+            const int y = 20 + (i / 8) * 120;
+            wins.push_back(createClient(d, x, y, 70, 50, "churn"));
+        }
+        everCreated.insert(everCreated.end(), wins.begin(), wins.end());
+
+        // map, and wait for the WM to have taken all of them under management
+        for (Window w : wins) XMapWindow(d, w);
+        XSync(d, False);
+        INFO("batch " << batch << ": waiting for " << wins.size() << " windows to be managed");
+        REQUIRE(WmFixture::pollUntil([&] {
+            pumpWm(d);
+            return allListed(d, wins);
+        }, 60000));
+
+        // unmap a subset...
+        for (int i = 0; i < kUnmapCount && i < kBatchSize; ++i) {
+            XUnmapWindow(d, wins[static_cast<size_t>(i)]);
+        }
+        XSync(d, False);
+
+        // ...and destroy a DIFFERENT, OVERLAPPING subset. Half of these are
+        // already unmapped and half are still mapped, so the destroy handler is
+        // entered from both states within one batch -- which is the ordering a
+        // sequential loop never reaches.
+        std::vector<Window> destroyed;
+        for (int i = kDestroyStart;
+             i < kDestroyStart + kDestroyCount && i < kBatchSize; ++i) {
+            destroyed.push_back(wins[static_cast<size_t>(i)]);
+            XDestroyWindow(d, wins[static_cast<size_t>(i)]);
+        }
+        XSync(d, False);
+
+        if (!WmFixture::pollUntil([&] {
+                pumpWm(d);
+                return noneListed(d, destroyed);
+            }, 60000)) {
+            const std::vector<Window> l = clientList(d);
+            std::string leftover;
+            for (Window w : destroyed) {
+                if (std::find(l.begin(), l.end(), w) != l.end()) {
+                    leftover += " " + std::to_string(w);
+                }
+            }
+            INFO("wm alive: " << fixture.wmAlive());
+            INFO("still listed after destroy:" << leftover);
+            INFO("wm stderr:\n" << fixture.wmStderr());
+            FAIL("destroyed windows never left _NET_CLIENT_LIST");
+        }
+
+        // remap what was unmapped but not destroyed, so the next batch is laid
+        // over a live population rather than a clean slate
+        for (int i = 0; i < kUnmapCount && i < kDestroyStart; ++i) {
+            XMapWindow(d, wins[static_cast<size_t>(i)]);
+        }
+        XSync(d, False);
+
+        // tear the rest of this batch down
+        for (int i = 0; i < kBatchSize; ++i) {
+            if (i >= kDestroyStart && i < kDestroyStart + kDestroyCount) continue;
+            XDestroyWindow(d, wins[static_cast<size_t>(i)]);
+        }
+        XSync(d, False);
+
+        REQUIRE(WmFixture::pollUntil([&] {
+            pumpWm(d);
+            return noneListed(d, wins);
+        }, 60000));
+    }
+
+    CHECK(everCreated.size() >= 100);
+    settleWm(d);
+
+    // --- 1: no stale client-list entry survived ---------------------------
+    //
+    // Filtered to the windows this case owns (deferred item 7: the WM adopts its
+    // own menu, submenu and EWMH check windows, so the list is never literally
+    // empty).
+    const std::vector<Window> remaining = clientList(d);
+    std::vector<Window> stale;
+    for (Window w : everCreated) {
+        if (std::find(remaining.begin(), remaining.end(), w) != remaining.end()) {
+            stale.push_back(w);
+        }
+    }
+    INFO("stale client-list entries: " << stale.size());
+    CHECK(stale.empty());
+
+    // --- 2: the active window does not name anything destroyed ------------
+    const Window active = activeWindow(d);
+    INFO("_NET_ACTIVE_WINDOW: " << active);
+    CHECK(std::find(everCreated.begin(), everCreated.end(), active) == everCreated.end());
+    CHECK(active != warmup);
+
+    // --- 3: the WM is still WORKING, not merely still running -------------
+    //
+    // "Alive" and "correct" are different claims, and a WM whose client
+    // bookkeeping had been corrupted by the churn would satisfy the first.
+    Window fresh = None;
+    Window freshFrame = mapClientAndAwaitFrame(d, 300, 250, 240, 180, fresh, "after-churn");
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(freshFrame != None);
+    CHECK(listed(d, fresh));
+    CHECK(parentOf(d, fresh) == freshFrame);
+    CHECK(parentOf(d, freshFrame) == DefaultRootWindow(d));
+
+    // --- 4: resident memory is inside a FIXED, pre-chosen budget ----------
+    long afterKb = 0;
+    REQUIRE(residentKb(fixture.wm().pid(), afterKb));
+    const long growthKb = afterKb - baselineKb;
+
+    // Baseline, budget and result are recorded separately and in full, so the
+    // number that matters is in the log whether the case passes or fails --
+    // and so nobody can later mistake the budget for something derived from
+    // the result.
+    std::printf("[wm_stress] resident memory (%s tree): "
+                "post-startup baseline %ld kB, "
+                "after %zu windows %ld kB, "
+                "growth %ld kB, fixed budget %ld kB\n",
+                kGrowthBudgetTree, baselineKb, everCreated.size(), afterKb,
+                growthKb, kGrowthBudgetKb);
+    std::fflush(stdout);
+
+    UNSCOPED_INFO("resident memory (" << kGrowthBudgetTree << " tree)"
+                  << ": post-startup baseline " << baselineKb << " kB"
+                  << ", after " << everCreated.size() << " windows " << afterKb << " kB"
+                  << ", growth " << growthKb << " kB"
+                  << ", fixed budget " << kGrowthBudgetKb << " kB");
+    CHECK(growthKb < kGrowthBudgetKb);
+
+    // --- 5: repeated spawn() leaves no zombie -----------------------------
+    //
+    // The checklist's zombie item shares this case's shape, so it is folded in
+    // here rather than given a fixture of its own. WmFixture launches the WM
+    // with a real, preflight-checked new-window command, and menu entry 0 runs
+    // it; three selections exercise the double-fork reaping guarantee three
+    // times over.
+    {
+        XTestDriver driver(fixture.display());
+        driver.moveTo(kParkX, kParkY);
+
+        for (int i = 0; i < 3; ++i) {
+            Window menu = openRootMenu(d, driver, 400, 300);
+            REQUIRE(menu != None);
+            Rect menuRect{};
+            REQUIRE(WmFixture::pollUntil([&] {
+                return serverRect(d, menu, menuRect) && menuRect.w > 1 && menuRect.h > 1;
+            }, 8000));
+            driver.moveTo(menuRect.x + menuRect.w / 2, menuRect.y + 14);
+            driver.release(Button1);
+            XSync(d, False);
+            settleWm(d);
+        }
+    }
+
+    settleWm(d);
+    const int zombies = zombieChildrenOf(fixture.wm().pid());
+    INFO("zombie children of the WM: " << zombies);
+    CHECK(zombies == 0);
+
+    // --- the WM survived, and survived without protocol errors ------------
+    //
+    // One error class is separated out rather than simply required absent, and
+    // the reason is worth stating because "we excluded the failing case" is
+    // usually the wrong answer:
+    //
+    //   X_SetInputFocus ... BadMatch means the target window was not viewable
+    //   when the request reached the server. Client::activate() DOES guard --
+    //   it returns early unless the client is managed, not hidden and not
+    //   withdrawn -- but the WM's state can only be as fresh as the last event
+    //   it has processed, and under this churn a window is routinely destroyed
+    //   between the WM deciding to focus it and the request arriving. No query
+    //   can close that window; a viewability check would only move the race one
+    //   round trip earlier. The server discards the request and nothing
+    //   downstream is affected.
+    //
+    // So it is BOUNDED rather than excluded: a handful across 120 windows is the
+    // race, and a count that scales with the churn would be a real regression in
+    // the focus path. Every other error class still fails the case outright.
+    REQUIRE(fixture.wmAlive());
+
+    std::vector<std::string> focusRaces, otherErrors;
+    for (const auto& line : xProtocolErrorsExceptBadWindow(fixture.wmStderr())) {
+        if (line.find("X_SetInputFocus") != std::string::npos &&
+            line.find("BadMatch") != std::string::npos) {
+            focusRaces.push_back(line);
+        } else {
+            otherErrors.push_back(line);
+        }
+    }
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    CHECK(joined(otherErrors).empty());
+    INFO("focus races:\n" << joined(focusRaces));
+    CHECK(focusRaces.size() <= 10);
+
+    // --- the sanitizer is the primary evidence ----------------------------
+    //
+    // A clean SIGTERM exit runs the leak check, so a use-after-free or a leak in
+    // the repeated path fails this case automatically in the asan tree. In the
+    // debug tree the same lines assert an orderly shutdown after the churn,
+    // which is worth having on its own.
+    REQUIRE(fixture.terminateWmCleanly());
+    REQUIRE(fixture.asanReports().empty());
 }
