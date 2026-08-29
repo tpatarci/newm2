@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 08
 current_phase_name: xrandr-vnc-compatibility-focus-rules
 status: executing
-stopped_at: Completed 08-10-PLAN.md
-last_updated: "2026-08-29T09:53:10.579Z"
+stopped_at: Completed 08-11-PLAN.md
+last_updated: "2026-08-29T10:59:49.913Z"
 last_activity: 2026-08-11
 last_activity_desc: gathered Phase 8 context across 8 gray areas (32 decisions captured)
-state_head: 2e61da93da7c7baa97f393212c689ac8b6c0b9aa
+state_head: b53b8b1fde5fc3a1062c4d7efa71d113c3ba6eac
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 36
-  completed_plans: 32
+  completed_plans: 33
 milestone_name: milestone
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 08 (xrandr-vnc-compatibility-focus-rules) — EXECUTING
-Plan: 11 of 14
+Plan: 12 of 14
 Status: Ready to execute
 Last activity: 2026-08-11 — Phase 08 execution started
 
@@ -88,6 +88,7 @@ Progress: [████████░░] 81% (7/9 phases complete)
 | Phase 08 P08 | 115min | 4 tasks | 11 files |
 | Phase 08 P09 | 60min | 3 tasks | 7 files |
 | Phase 08 P10 | 21min | 3 tasks | 6 files |
+| Phase 08 P11 | 75min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -155,6 +156,10 @@ Recent decisions affecting current work:
 - [Phase 08]: RULES-02: m_ruleNoDecorate kept distinct from isDock() -- both reach the unframed path but only a dock may recompute the workarea
 - [Phase 08]: RULES-02: rule geometry is overlaid on the client's request between the size-hint floors and the clamps, never applied after mapping as a second geometry authority
 - [Phase 08]: D-23: RULES-02 amended in the requirement text -- three shipping actions, workspace action excluded because the WM is single-desktop by design (Phase 6, D-11)
+- [Phase 08]: Plan 08-11: the focus-candidate destroy case stretches the auto-raise delay rather than shortening it, so the 'tracking still pending' precondition is observable from outside the WM instead of assumed
+- [Phase 08]: Plan 08-11: the WM's X protocol error log is now a test observable; errorHandler() logs and returns 0, so teardown defects are invisible to any assertion about windows or properties
+- [Phase 08]: Plan 08-11: hidden-list transfers are proven through the published _NET_CLIENT_LIST ORDER, explicitly as a proxy for the vector move and not as an EWMH ordering claim
+- [Phase 08]: Plan 08-11: fixResizeDimensions() validates each resize increment per axis before its own division; a non-positive increment means 'do not quantise this axis', never a divide by zero
 
 ### Pending Todos
 
@@ -173,6 +178,7 @@ Recent decisions affecting current work:
 - 08-05 deferred item 10: rare WM startup hang between the EWMH publication and the event loop, suspected timestamp()'s unbounded XMaskEvent. Pre-existing code path; needs one backtrace from a hung child to confirm
 - Deferred item 11: the sideways tab does not grow with the window title (axis-swapped rotated extents) -- measured in 08-06, out of scope there, recommended for 08-14
 - Deferred item 12: the full process-level suite flakes at ~1 test per run on both this tree and the pre-08-06 baseline -- build-all.sh is not reliably green in one shot
+- Deferred item 13 (08-11): every client destroy logs one X_UnmapWindow BadWindow because the resize handle is a child of the client window; blocks a strict no-protocol-errors assertion
 
 ## Deferred Items
 
@@ -184,6 +190,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-29T09:53:10.401Z
-Stopped at: Completed 08-10-PLAN.md
+Last session: 2026-08-29T10:59:39.056Z
+Stopped at: Completed 08-11-PLAN.md
 Resume file: None
