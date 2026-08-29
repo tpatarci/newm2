@@ -55,6 +55,9 @@ TEST_CASE("A rule with only a class criterion matches that class and nothing els
 
 // -----------------------------------------------------------------------------
 // Test 2: several criteria are AND-ed, not OR-ed (D-21)
+//
+// The type criterion is asserted here rather than in a case of its own: without
+// it, deleting the type check from the matcher leaves the whole suite green.
 // -----------------------------------------------------------------------------
 TEST_CASE("A class criterion and a name criterion are AND-ed", "[rules]") {
     WindowRule r = classRule("Firefox");
@@ -68,6 +71,21 @@ TEST_CASE("A class criterion and a name criterion are AND-ed", "[rules]") {
 
     // Name matches, class does not -- also not enough.
     REQUIRE_FALSE(ruleMatches(r, facts("navigator", "XTerm")));
+
+    // A third criterion AND-s in the same way: with a type criterion added, a
+    // window matching both text criteria but carrying a different type is
+    // rejected, and one carrying the right type is accepted.
+    r.hasMatchType = true;
+    r.matchType = RuleWindowType::Dialog;
+    REQUIRE_FALSE(ruleMatches(r, facts("navigator", "Firefox", RuleWindowType::Normal)));
+    REQUIRE(ruleMatches(r, facts("navigator", "Firefox", RuleWindowType::Dialog)));
+
+    // ... and a type criterion alone is a complete rule on its own.
+    WindowRule typeOnly;
+    typeOnly.hasMatchType = true;
+    typeOnly.matchType = RuleWindowType::Dock;
+    REQUIRE(ruleMatches(typeOnly, facts("panel", "Panel", RuleWindowType::Dock)));
+    REQUIRE_FALSE(ruleMatches(typeOnly, facts("panel", "Panel", RuleWindowType::Normal)));
 }
 
 // -----------------------------------------------------------------------------

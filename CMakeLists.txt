@@ -44,6 +44,7 @@ add_executable(${PROJECT_NAME}
     src/Buttons.cpp
     src/Events.cpp
     src/Config.cpp
+    src/Rules.cpp
     src/AppCache.cpp
     src/DesktopEntry.cpp
     src/BinaryScanner.cpp
