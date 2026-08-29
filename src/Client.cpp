@@ -1494,30 +1494,82 @@ void Client::moveOrResize(XButtonEvent *e)
 }
 
 
+// Apply the client's stated size constraints to a proposed width and height.
+//
+// Every input here is CLIENT-CONTROLLED and none of it is validated anywhere
+// else: WM_NORMAL_HINTS is a property any application can write, with any
+// values, at any time (threat T-8-DOS). Three hardening steps were added in plan
+// 08-11 after tests/test_wm_lifecycle.cpp reproduced two of them against the
+// shipped binary, and each one is written to be a no-op for well-formed hints:
+//
+//   1. Each resize increment is validated INDEPENDENTLY before its own division.
+//      A client declaring width_inc=0 previously killed the window manager
+//      outright with an integer divide by zero -- one property write, whole
+//      session gone. The guard is per axis because a client may state a valid
+//      increment on one axis and a degenerate one on the other, and a shared
+//      guard would either let the bad axis divide or discard the good axis's
+//      quantisation. A non-positive increment means "do not quantise this axis",
+//      which is the only reading that keeps the window resizable.
+//
+//   2. A maximum below the effective minimum is normalised UP to the minimum
+//      before the clamp, so the clamp can never drive a dimension beneath the
+//      floor. ICCCM does not say what a contradiction like that means; the
+//      project's policy is a positive, safe geometry.
+//
+//   3. A final strictly-positive floor. The quantisation origin is the base
+//      size, which a client may declare NEGATIVE -- and a hugely negative base
+//      with a large increment rounds the multiple to zero and leaves the result
+//      at the base itself. That negative int reaches XMoveResizeWindow, whose
+//      width parameter is unsigned, and the server saw a 64536x64536 window on a
+//      1024x768 screen. Measured, not hypothesised.
 void Client::fixResizeDimensions(int &w, int &h, int &dw, int &dh)
 {
     if (w < 50) w = 50;
     if (h < 50) h = 50;
 
-    if (m_sizeHints.flags & PResizeInc) {
-        w = m_minWidth  + (((w - m_minWidth) / m_sizeHints.width_inc) *
-                           m_sizeHints.width_inc);
-        h = m_minHeight + (((h - m_minHeight) / m_sizeHints.height_inc) *
-                           m_sizeHints.height_inc);
+    const int minW = m_minWidth;
+    const int minH = m_minHeight;
 
-        dw = (w - m_minWidth) / m_sizeHints.width_inc;
-        dh = (h - m_minHeight) / m_sizeHints.height_inc;
+    const bool hasMax = (m_sizeHints.flags & PMaxSize) != 0;
+    int maxW = hasMax ? m_sizeHints.max_width  : 0;
+    int maxH = hasMax ? m_sizeHints.max_height : 0;
+    if (hasMax && maxW < minW) maxW = minW;      // step 2
+    if (hasMax && maxH < minH) maxH = minH;
+
+    if (m_sizeHints.flags & PResizeInc) {
+        const int incW = m_sizeHints.width_inc;  // step 1
+        const int incH = m_sizeHints.height_inc;
+
+        if (incW > 0) {
+            w  = minW + (((w - minW) / incW) * incW);
+            dw = (w - minW) / incW;
+        } else {
+            dw = w;
+        }
+
+        if (incH > 0) {
+            h  = minH + (((h - minH) / incH) * incH);
+            dh = (h - minH) / incH;
+        } else {
+            dh = h;
+        }
     } else {
         dw = w; dh = h;
     }
 
-    if (m_sizeHints.flags & PMaxSize) {
-        if (w > m_sizeHints.max_width)  w = m_sizeHints.max_width;
-        if (h > m_sizeHints.max_height) h = m_sizeHints.max_height;
+    if (hasMax) {
+        if (w > maxW) w = maxW;
+        if (h > maxH) h = maxH;
     }
 
-    if (w < m_minWidth)  w = m_minWidth;
-    if (h < m_minHeight) h = m_minHeight;
+    if (w < minW) w = minW;
+    if (h < minH) h = minH;
+
+    // Step 3. Last, so it also catches a negative minimum arriving through the
+    // floors immediately above. Never reached for well-formed hints, since the
+    // function opens by raising both dimensions to 50.
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
 }
 
 
