@@ -505,7 +505,7 @@ problem — but the underlying defect is unchanged and still user-visible: a
 self-repositioning application appears frozen until something else happens on
 the desktop.
 
-## 11. The sideways tab does not grow with the window title (PRE-EXISTING, visible)
+## 11. The sideways tab does not grow with the window title (PRE-EXISTING, visible) — RESOLVED in 08-14 (`cab658b`)
 
 **Found during:** 08-06 Task 2, while reading `Border::fixTabHeight()` closely
 enough to make it null-font safe.
@@ -592,6 +592,60 @@ before/after pair. Note that the ellipsis-shortening loop below those reads is
 currently near-dead (`m_tabHeight` almost always lands under `maxHeight` on the
 first try) and **will start firing** once the tab tracks the title, so that loop
 gets exercised for the first time by this fix and needs its own look.
+
+### RESOLVED (08-14, `cab658b`) — at the user's direction, after the screenshots
+
+The deferral above was overtaken: the screenshots it asked for were damning
+enough that fixing it before the appearance-certification pass became the right
+order rather than the wrong one. Recorded as an **authorised deviation** —
+`src/Border.cpp` is outside plan 08-14's declared `files_modified`.
+
+**THREE sites, not the two this entry predicted.** The third is the one that
+mattered:
+
+| # | Site | Was | Now |
+|---|---|---|---|
+| 1 | `loadTabFont()` — tab THICKNESS | `extents.height + 4` | `extents.width + 4` |
+| 2 | `drawLabel()` — the x DRAW ORIGIN | `2 + extents.height` | `2 + extents.width` |
+| 3 | `fixTabHeight()` x3 — tab LENGTH | `extents.width + 6 + …` | `extents.height + 6 + …` |
+
+**Site 2 is why the label vanished rather than overhanging.** This entry
+predicted the label would "run far past the end of its tab". It does not. The
+draw origin was computed on the same swapped axis, so for a 35-character title
+it landed at `2 + 286 = 288 px` — far outside a ~20 px tab — and the server
+clipped the entire label away. That is the difference between an ugly tab and a
+blank one, and it is why the defect was invisible to every geometry assertion.
+
+**Site 1 was wrong by ONE PIXEL and that is why it survived 25 years.** On the
+one-character sample `"M"` the two axes nearly coincide (width 12, height 13),
+so the thickness read looked correct. Its siblings, measuring the whole *label*
+on the same wrong axis, were wrong by an order of magnitude.
+
+**Measured, by the new test:** tab length `58 -> 325 px`, label ink
+`0 -> 611 px`. Screenshots: `evidence/screenshots/deferred-item-11-BEFORE-…png`
+and `…-AFTER-…png`, same recipe, same display size.
+
+**The shortening loop this entry warned about is now covered.** It was dead code
+before the fix and fires whenever a long title meets a short window. Covering it
+needed a long **icon name** as well as a long title — with the icon name unset
+the `"incognito"` fallback fits and the loop is still never entered. Measured:
+mutation M4 stayed **green** until that was corrected, so the entry's warning was
+right and would otherwise have gone unmet.
+
+**Mutation testing, both trees, no divergence:** M2, M3 and M4 each redden a
+named case; **M1 SURVIVES and is recorded as a survivor, not as an equivalent
+mutant.** It is a genuine 1-pixel over-allocation of tab thickness that no
+assertion pins. Killing it would require asserting the font's own metric from a
+process-level test, i.e. linking Xft into `test_wm_runtime` — a shared-build-file
+change outside 08-14's scope, deliberately not made silently.
+
+**Note on the ASan flake seen while verifying this.** The three-tree gate failed
+once on `new-window-command decides which program the menu's New entry starts`
+(08-13's case, untouched here). Investigated rather than assumed: measured in
+ASan **isolation**, 30 runs per tree state — **pre-fix 4 failures, post-fix 2**.
+The unfixed tree flakes *more*. An initial pre-fix batch of 10/10 was a lucky
+sample, which is precisely why 10-run samples cannot separate rates in this
+range. Unrelated to this fix; it belongs with item 12.
 
 ## 12. The full process-level suite flakes at roughly one test per run (PRE-EXISTING, quantified)
 
