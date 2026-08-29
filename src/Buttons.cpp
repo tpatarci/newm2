@@ -3,6 +3,9 @@
 #include <cstdio>
 #include <cstring>
 #include <sys/time.h>
+#include <algorithm>
+#include <functional>
+#include <iterator>
 #include <vector>
 
 #define AllButtonMask   ( Button1Mask | Button2Mask | Button3Mask \
@@ -162,28 +165,82 @@ void WindowManager::releaseGrab(XButtonEvent *e)
 }
 
 
+// ===========================================================================
+// The root menu, and its app-category submenu, as ONE interaction.
+//
+// The shape of this code is the point, so it is worth stating plainly.
+//
+// ONE grab, taken once when the menu opens and released once when it closes.
+// ONE event loop. The submenu is a STATE of that loop, not a second loop with a
+// grab of its own.
+//
+// The previous design did the opposite: openCategorySubmenu() ungrabbed the
+// outer menu, took its own grab on m_submenuWindow, and ran a nested event loop
+// until release. Because that grab used owner_events=False, every pointer event
+// from then on belonged to the submenu -- so moving back over the OUTER menu
+// delivered motion to the submenu's loop, which computed coordinates relative to
+// itself, found the pointer outside, and highlighted nothing. Meanwhile the
+// outer menu kept whatever highlight it had when you left it, frozen, because
+// nothing was listening for it any more. Reported from a real XRDP session as
+// "once a submenu has been activated, the main menu cannot be re-activated: it
+// remains static", and reproducible on plain Xvfb. There was no way back: the
+// only exit was releasing the button, which closed both popups together.
+//
+// The invariants this replacement holds, and why each one is here:
+//
+//  1. Exactly one XGrabPointer and one XUngrabPointer per menu interaction.
+//     No handing the grab back and forth. Every ungrab/regrab pair is a window
+//     in which another client can take the pointer and leave this code in a
+//     state it has no way to detect, and the old code had two such windows on
+//     the normal path.
+//
+//  2. Pointer position is read in ROOT coordinates (x_root/y_root) and
+//     hit-tested against the rectangles this function itself chose when it
+//     mapped each popup. It is never inferred from which window the grab
+//     happens to be on. That is what makes "which popup is the pointer over"
+//     answerable at all times, for both popups at once, from one loop.
+//
+//  3. The highlight model is updated on every motion event, whether or not the
+//     popup has been exposed yet. Drawing is skipped until the first Expose --
+//     drawing into a not-yet-viewable window is discarded by the server -- but
+//     the MODEL always moves, and the Expose handler paints from the model. The
+//     old code dropped motion entirely while undrawn, and a dropped motion is
+//     never replayed: the pointer is already where it was put, so no further
+//     event is generated and the highlight was simply wrong until the user
+//     moved again.
+//
+//  4. Every path that fills a row rectangle redraws that row's label
+//     afterwards, through one shared helper per popup. Filling paints over the
+//     text; before this existed the hovered row went blank and the row you had
+//     just left stayed blank.
+//
+//  5. The submenu is unmapped whenever the pointer selects a different outer
+//     row, and the outer menu keeps its category row highlighted while the
+//     pointer is inside the submenu. Leaving both popups clears the selections
+//     but leaves the submenu mapped, so travelling diagonally from the category
+//     row into the submenu does not dismiss it mid-journey.
+// ===========================================================================
 void WindowManager::menu(XButtonEvent *e)
 {
-    if (e->window == m_menuWindow) return;
+    if (e->window == m_menuWindow || e->window == m_submenuWindow) return;
 
     std::vector<Client*> clients;
-    bool allowExit = false;
+    clients.reserve(m_hiddenClients.size());
+    std::transform(m_hiddenClients.begin(), m_hiddenClients.end(),
+                   std::back_inserter(clients),
+                   [](const std::unique_ptr<Client>& hc) { return hc.get(); });
 
-    for (const auto& hc : m_hiddenClients) {
-        clients.push_back(hc.get());
-    }
-    int nh = static_cast<int>(clients.size()) + 1;
-
-    int numCategories = static_cast<int>(m_appCategories.size());
+    const int nh = static_cast<int>(clients.size()) + 1;
+    const int numCategories = static_cast<int>(m_appCategories.size());
     int n = static_cast<int>(clients.size()) + 1 + numCategories;
 
-    int mx = screenWidth() - 1;
-    int my = screenHeight() - 1;
+    const int mx = screenWidth() - 1;
+    const int my = screenHeight() - 1;
 
-    allowExit = ((e->x > mx - 3) && (e->y > my - 3));
+    const bool allowExit = ((e->x > mx - 3) && (e->y > my - 3));
     if (allowExit) n += 1;
 
-    auto menuLabelFn = [&](int idx) -> const char* {
+    auto outerLabel = [&](int idx) -> const char* {
         if (idx == 0) return m_menuCreateLabel;
         if (idx < nh) return clients[idx - 1]->label().c_str();
         if (idx < nh + numCategories) return m_appCategories[idx - nh].first.c_str();
@@ -191,52 +248,54 @@ void WindowManager::menu(XButtonEvent *e)
         return clients[idx - 1]->label().c_str();
     };
 
-    int width, maxWidth = 10;
-    for (int i = 0; i < n; ++i) {
-        const char* label = menuLabelFn(i);
-        int len = static_cast<int>(std::strlen(label));
-        XGlyphInfo extents;
-        XftTextExtentsUtf8(display(), m_menuFont,
-            reinterpret_cast<const FcChar8*>(label), len, &extents);
-        width = extents.width;
-        if (width > maxWidth) maxWidth = width;
-    }
-    maxWidth += 32;
+    const int entryHeight = m_menuFont->ascent + m_menuFont->descent + 4;
 
-    int selecting = -1, prev = -1;
-    int entryHeight = m_menuFont->ascent + m_menuFont->descent + 4;
-    int totalHeight = entryHeight * n + 13;
-    int x = e->x - maxWidth / 2;
+    // One width measurement, used for the outer menu and every submenu, so the
+    // two can never drift apart in padding or font metrics.
+    auto measureWidth = [&](const std::function<const char*(int)>& labelFn, int count) {
+        int maxW = 10;
+        for (int i = 0; i < count; ++i) {
+            const char* label = labelFn(i);
+            XGlyphInfo ext;
+            XftTextExtentsUtf8(display(), m_menuFont,
+                reinterpret_cast<const FcChar8*>(label),
+                static_cast<int>(std::strlen(label)), &ext);
+            if (static_cast<int>(ext.width) > maxW) maxW = static_cast<int>(ext.width);
+        }
+        return maxW + 32;
+    };
+
+    const int outerW = measureWidth(outerLabel, n);
+    const int outerH = entryHeight * n + 13;
+
+    int x = e->x - outerW / 2;
     int y = e->y - 2;
     bool warp = false;
 
     if (x < 0) {
         e->x -= x; x = 0; warp = true;
-    } else if (x + maxWidth >= mx) {
-        e->x -= x + maxWidth - mx; x = mx - maxWidth; warp = true;
+    } else if (x + outerW >= mx) {
+        e->x -= x + outerW - mx; x = mx - outerW; warp = true;
     }
 
     if (y < 0) {
         e->y -= y; y = 0; warp = true;
-    } else if (y + totalHeight >= my) {
-        e->y -= y + totalHeight - my; y = my - totalHeight; warp = true;
+    } else if (y + outerH >= my) {
+        e->y -= y + outerH - my; y = my - outerH; warp = true;
     }
 
     if (warp) XWarpPointer(display(), None, root(),
                             None, None, None, None, e->x, e->y);
 
-    // Preserve the window's screen-space origin: x/y are reassigned inside
-    // the event loop below to window-relative pointer coordinates (the grab
-    // uses owner_events=False), so openCategorySubmenu() must anchor off
-    // these saved values, not the reused x/y (CR-01).
-    const int winX = x;
-    const int winY = y;
+    // The popup's screen-space origin. Invariant 2 above: every hit test is
+    // done against these, in root coordinates.
+    const int outerX = x;
+    const int outerY = y;
 
-    XMoveResizeWindow(display(), m_menuWindow, x, y, maxWidth, totalHeight);
+    XMoveResizeWindow(display(), m_menuWindow, outerX, outerY, outerW, outerH);
     XSelectInput(display(), m_menuWindow, MenuMask);
     XMapRaised(display(), m_menuWindow);
 
-    // Create or rebind XftDraw for menu window
     if (!m_menuDraw) {
         m_menuDraw = x11::XftDrawPtr(XftDrawCreate(display(), m_menuWindow,
             DefaultVisual(display(), m_screenNumber),
@@ -245,50 +304,226 @@ void WindowManager::menu(XButtonEvent *e)
         XftDrawChange(m_menuDraw.get(), m_menuWindow);
     }
 
-    // Draw one row's label. Extracted so that EVERY path which fills a row
-    // rectangle can put the text back afterwards.
-    //
-    // Filling a row -- to highlight it, or to un-highlight the one before it --
-    // paints over the label that was there. Before this existed, no caller
-    // redrew it: the row under the pointer went blank and the row you had just
-    // left stayed blank. Found on a real XRDP session and reproduced on plain
-    // Xvfb, so it was never remote-desktop-specific.
-    //
-    // One definition, used by the Expose path and both MotionNotify branches, so
-    // a row drawn on hover cannot drift out of step with the same row drawn on
-    // exposure -- which is exactly the kind of duplication that let the two get
-    // out of step in the first place. The right-aligned Exit row is part of that
-    // shared definition rather than a special case at one call site.
-    auto drawRowLabel = [&](int i) {
-        if (i < 0 || i >= n) return;
-        const char* label = menuLabelFn(i);
-        int len = static_cast<int>(std::strlen(label));
-        XGlyphInfo extents;
-        XftTextExtentsUtf8(display(), m_menuFont,
-            reinterpret_cast<const FcChar8*>(label), len, &extents);
-        int dy = i * entryHeight + m_menuFont->ascent + 10;
+    // ---- interaction state -------------------------------------------------
+    // Everything the loop needs to answer "where is the pointer, and what is
+    // currently on screen" lives here, in one place, rather than being split
+    // across two functions and two stack frames.
+    int  outerSel   = -1;        // highlighted outer row, -1 for none
+    bool outerDrawn = false;     // has the outer menu had its first Expose?
 
-        if (allowExit && i == n - 1) {
-            // Right-aligned items (exit option only -- category rows also fall
-            // at index >= nh but must stay left-aligned)
-            XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
-                m_menuFont, maxWidth - 8 - static_cast<int>(extents.width), dy,
-                reinterpret_cast<const FcChar8*>(label), len);
-        } else {
-            // Left-aligned items
-            XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
-                m_menuFont, 8, dy,
-                reinterpret_cast<const FcChar8*>(label), len);
+    int  openCat    = -1;        // index into m_appCategories, -1 = no submenu
+    int  subX = 0, subY = 0, subW = 0, subH = 0, n2 = 0;
+    int  subSel     = -1;
+    bool subDrawn   = false;
+    const std::vector<AppEntry>* subEntries = nullptr;
+
+    // Row hit test, including the stickiness band the original had: once a row
+    // is selected it keeps the selection across a few pixels of overshoot, so a
+    // slightly unsteady pointer does not flicker between neighbours.
+    auto rowAt = [&](int localY, int count, int current) -> int {
+        const int ry = localY - 11;
+        if (ry < -3) return -1;
+        int r = ry / entryHeight;
+        if (current >= 0 && ry >= current * entryHeight - 3 &&
+            ry <= (current + 1) * entryHeight - 3) r = current;
+        if (r < 0 || r >= count) return -1;
+        return r;
+    };
+
+    // Invariant 4: filling a row paints over its label, so every fill is
+    // followed by the matching redraw. One definition per popup, used by the
+    // Expose path and the motion path alike, so a row drawn on hover cannot
+    // drift out of step with the same row drawn on exposure.
+    auto drawOuterRowLabel = [&](int i) {
+        if (i < 0 || i >= n) return;
+        const char* label = outerLabel(i);
+        const int len = static_cast<int>(std::strlen(label));
+        XGlyphInfo ext;
+        XftTextExtentsUtf8(display(), m_menuFont,
+            reinterpret_cast<const FcChar8*>(label), len, &ext);
+        const int dy = i * entryHeight + m_menuFont->ascent + 10;
+        // The Exit row is right-aligned; category rows also sit at idx >= nh
+        // but stay left-aligned, so the test is on the Exit row specifically.
+        const int dx = (allowExit && i == n - 1)
+                     ? outerW - 8 - static_cast<int>(ext.width)
+                     : 8;
+        XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
+            m_menuFont, dx, dy, reinterpret_cast<const FcChar8*>(label), len);
+    };
+
+    auto drawSubRowLabel = [&](int i) {
+        if (!subEntries || i < 0 || i >= n2) return;
+        const char* label = (*subEntries)[i].name.c_str();
+        const int len = static_cast<int>(std::strlen(label));
+        const int dy = i * entryHeight + m_menuFont->ascent + 10;
+        XftDrawStringUtf8(m_submenuDraw.get(), m_menuFgColor.get(),
+            m_menuFont, 8, dy, reinterpret_cast<const FcChar8*>(label), len);
+    };
+
+    // Full repaint. Order is load-bearing: background, border, THEN the
+    // highlight, THEN every label -- so the text lands on top of the highlight
+    // rather than under it.
+    auto paintPopup = [&](XftDraw* draw, int w, int h, int count, int sel,
+                          const std::function<void(int)>& drawRow) {
+        XftDrawRect(draw, m_menuBgColor.get(), 0, 0, w, h);
+
+        XftDrawRect(draw, m_menuFgColor.get(), 2, 7, w - 5, 1);            // top
+        XftDrawRect(draw, m_menuFgColor.get(), 2, h - 4, w - 5, 1);        // bottom
+        XftDrawRect(draw, m_menuFgColor.get(), 2, 7, 1, h - 10);           // left
+        XftDrawRect(draw, m_menuFgColor.get(), w - 3, 7, 1, h - 10);       // right
+
+        if (sel >= 0 && sel < count) {
+            XftDrawRect(draw, m_menuHlColor.get(),
+                        4, sel * entryHeight + 9, w - 8, entryHeight);
+        }
+        for (int i = 0; i < count; ++i) drawRow(i);
+    };
+
+    auto paintOuter = [&]() {
+        paintPopup(m_menuDraw.get(), outerW, outerH, n, outerSel, drawOuterRowLabel);
+    };
+    auto paintSub = [&]() {
+        if (openCat < 0) return;
+        paintPopup(m_submenuDraw.get(), subW, subH, n2, subSel, drawSubRowLabel);
+    };
+
+    // Invariant 3: the model always moves; only the drawing is conditional on
+    // the popup having been exposed.
+    auto setOuterSel = [&](int next) {
+        if (next == outerSel) return;
+        const int prev = outerSel;
+        outerSel = next;
+        if (!outerDrawn) return;
+        if (prev >= 0 && prev < n) {
+            XftDrawRect(m_menuDraw.get(), m_menuBgColor.get(),
+                        4, prev * entryHeight + 9, outerW - 8, entryHeight);
+            drawOuterRowLabel(prev);
+        }
+        if (outerSel >= 0 && outerSel < n) {
+            XftDrawRect(m_menuDraw.get(), m_menuHlColor.get(),
+                        4, outerSel * entryHeight + 9, outerW - 8, entryHeight);
+            drawOuterRowLabel(outerSel);
         }
     };
 
+    auto setSubSel = [&](int next) {
+        if (next == subSel) return;
+        const int prev = subSel;
+        subSel = next;
+        if (!subDrawn || openCat < 0) return;
+        if (prev >= 0 && prev < n2) {
+            XftDrawRect(m_submenuDraw.get(), m_menuBgColor.get(),
+                        4, prev * entryHeight + 9, subW - 8, entryHeight);
+            drawSubRowLabel(prev);
+        }
+        if (subSel >= 0 && subSel < n2) {
+            XftDrawRect(m_submenuDraw.get(), m_menuHlColor.get(),
+                        4, subSel * entryHeight + 9, subW - 8, entryHeight);
+            drawSubRowLabel(subSel);
+        }
+    };
+
+    auto closeSubmenu = [&]() {
+        if (openCat < 0) return;
+        XUnmapWindow(display(), m_submenuWindow);
+        openCat    = -1;
+        subSel     = -1;
+        subDrawn   = false;
+        subEntries = nullptr;
+        n2         = 0;
+    };
+
+    auto openSubmenu = [&](int catIdx, int rowIndex) {
+        const auto& cat = m_appCategories[catIdx];
+        if (cat.second.empty()) return;   // nothing to show; leave it closed
+
+        subEntries = &cat.second;
+        n2 = static_cast<int>(subEntries->size());
+
+        auto subLabel = [&](int i) -> const char* {
+            return (*subEntries)[i].name.c_str();
+        };
+        subW = measureWidth(subLabel, n2);
+        subH = entryHeight * n2 + 13;
+
+        // Anchored to the right of the outer menu at the hovered row's top
+        // edge, flipping to the left if it would cross the right screen edge --
+        // the same edge-avoidance the outer menu applies to itself.
+        subX = outerX + outerW;
+        subY = outerY + rowIndex * entryHeight;
+        if (subX + subW >= mx) subX = outerX - subW;
+        if (subX < 0) subX = 0;
+        if (subX + subW >= mx) subX = mx - subW;
+        if (subY + subH >= my) subY = my - subH;
+        if (subY < 0) subY = 0;
+
+        XMoveResizeWindow(display(), m_submenuWindow, subX, subY, subW, subH);
+        XSelectInput(display(), m_submenuWindow, MenuMask);
+        XMapRaised(display(), m_submenuWindow);
+
+        if (!m_submenuDraw) {
+            m_submenuDraw = x11::XftDrawPtr(XftDrawCreate(display(), m_submenuWindow,
+                DefaultVisual(display(), m_screenNumber),
+                DefaultColormap(display(), m_screenNumber)));
+        } else {
+            XftDrawChange(m_submenuDraw.get(), m_submenuWindow);
+        }
+
+        openCat  = catIdx;
+        subSel   = -1;
+        subDrawn = false;   // wait for Expose before drawing into it
+    };
+
+    // The whole pointer policy, in one place, driven by root coordinates.
+    auto pointerAt = [&](int rx, int ry) {
+        const bool inSub = (openCat >= 0) &&
+                           rx >= subX && rx < subX + subW &&
+                           ry >= subY && ry < subY + subH;
+
+        if (inSub) {
+            // Inside the submenu the OUTER selection deliberately stays put, so
+            // the category row you came from remains highlighted.
+            setSubSel(rowAt(ry - subY, n2, subSel));
+            return;
+        }
+
+        setSubSel(-1);
+
+        const bool inOuter = rx >= outerX && rx < outerX + outerW &&
+                             ry >= outerY && ry < outerY + outerH;
+        if (!inOuter) {
+            // Outside both popups: clear the outer highlight but leave the
+            // submenu MAPPED, so a diagonal path from the category row into the
+            // submenu does not dismiss it halfway across.
+            setOuterSel(-1);
+            return;
+        }
+
+        const int row = rowAt(ry - outerY, n, outerSel);
+        setOuterSel(row);
+
+        if (row >= nh && row < nh + numCategories) {
+            const int cat = row - nh;
+            if (cat != openCat) {
+                closeSubmenu();
+                openSubmenu(cat, row);
+            }
+        } else {
+            closeSubmenu();
+        }
+    };
+
+    // Invariant 1: this is the only grab, and releaseGrab() below is the only
+    // ungrab, for the entire interaction.
     if (attemptGrab(m_menuWindow, None, MenuGrabMask, e->time) != GrabSuccess) {
         XUnmapWindow(display(), m_menuWindow);
         return;
     }
 
     bool done = false;
-    bool drawn = false;
+    int  chosenOuter = -1;
+    bool haveChosenApp = false;
+    AppEntry chosenApp;
     XEvent event;
 
     while (!done) {
@@ -303,344 +538,70 @@ void WindowManager::menu(XButtonEvent *e)
         case ButtonPress:
             break;
 
-        case ButtonRelease:
-            {
-                int sel = -1;
-                if (drawn) {
-                    if (event.xbutton.button != e->button) break;
-                    x = event.xbutton.x;
-                    y = event.xbutton.y - 11;
-                    sel = y / entryHeight;
-
-                    if (selecting >= 0 && y >= selecting * entryHeight - 3 &&
-                        y <= (selecting + 1) * entryHeight - 3) sel = selecting;
-
-                    if (x < 0 || x > maxWidth || y < -3) sel = -1;
-                    else if (sel < 0 || sel >= n) sel = -1;
-                }
-
-                if (!nobuttons(&event.xbutton)) sel = -1;
-                releaseGrab(&event.xbutton);
-                XUnmapWindow(display(), m_menuWindow);
-                selecting = sel;
-                done = true;
+        case Expose:
+            if (event.xexpose.window == m_menuWindow) {
+                outerDrawn = true;
+                paintOuter();
+            } else if (event.xexpose.window == m_submenuWindow && openCat >= 0) {
+                subDrawn = true;
+                paintSub();
             }
             break;
 
         case MotionNotify:
-            if (!drawn) break;
-            x = event.xbutton.x;
-            y = event.xbutton.y - 11;
-            prev = selecting;
-            selecting = y / entryHeight;
-
-            if (prev >= 0 && y >= prev * entryHeight - 3 &&
-                y <= (prev + 1) * entryHeight - 3) selecting = prev;
-
-            if (x < 0 || x > maxWidth || y < -3) selecting = -1;
-            else if (selecting < 0 || selecting > n) selecting = -1;
-
-            if (selecting == prev) break;
-
-            if (prev >= 0 && prev < n) {
-                // Unhighlight previous: fill with background color, then put the
-                // label back -- the fill has just erased it.
-                XftDrawRect(m_menuDraw.get(), m_menuBgColor.get(),
-                            4, prev * entryHeight + 9,
-                            maxWidth - 8, entryHeight);
-                drawRowLabel(prev);
-            }
-
-            if (selecting >= 0 && selecting < n) {
-                // Highlight new selection: fill with highlight color, then
-                // redraw the label ON TOP of it. The fill goes down first so the
-                // text is never the thing that gets painted over.
-                XftDrawRect(m_menuDraw.get(), m_menuHlColor.get(),
-                            4, selecting * entryHeight + 9,
-                            maxWidth - 8, entryHeight);
-                drawRowLabel(selecting);
-            }
-
-            if (selecting >= nh && selecting < nh + numCategories) {
-                // D-03/D-04: hovering a category row opens its submenu
-                // immediately, without requiring a click. openCategorySubmenu()
-                // resolves the whole two-level interaction (launch or dismiss)
-                // and unmaps both popups before returning, so menu() has
-                // nothing left to do.
-                openCategorySubmenu(m_appCategories[selecting - nh], e, winX, winY, maxWidth, selecting);
-                return;
-            }
+            pointerAt(event.xmotion.x_root, event.xmotion.y_root);
             break;
 
-        case Expose:
-            // Clear menu background
-            XftDrawRect(m_menuDraw.get(), m_menuBgColor.get(), 0, 0,
-                        maxWidth, totalHeight);
+        case ButtonRelease:
+            if (event.xbutton.button != e->button) break;
 
-            // Draw border outline (4 sides, 1px each)
-            XftDrawRect(m_menuDraw.get(), m_menuFgColor.get(), 2, 7,
-                        maxWidth - 5, 1);         // top
-            XftDrawRect(m_menuDraw.get(), m_menuFgColor.get(), 2,
-                        totalHeight - 4, maxWidth - 5, 1);  // bottom
-            XftDrawRect(m_menuDraw.get(), m_menuFgColor.get(), 2, 7,
-                        1, totalHeight - 10);      // left
-            XftDrawRect(m_menuDraw.get(), m_menuFgColor.get(),
-                        maxWidth - 3, 7, 1, totalHeight - 10);  // right
+            // Settle the selection against the release position before acting
+            // on it: the release may carry a position no motion event reported.
+            pointerAt(event.xbutton.x_root, event.xbutton.y_root);
 
-            // ORDER IS LOAD-BEARING: the highlight fill goes down BEFORE the
-            // labels, so the text is drawn on top of it. This used to be the
-            // other way round -- every label drawn, then the selected row filled
-            // over the top -- which blanked the selected row on every exposure.
-            if (selecting >= 0 && selecting < n) {
-                XftDrawRect(m_menuDraw.get(), m_menuHlColor.get(),
-                            4, selecting * entryHeight + 9,
-                            maxWidth - 8, entryHeight);
+            if (nobuttons(&event.xbutton)) {
+                if (openCat >= 0 && subSel >= 0 && subEntries) {
+                    // Copied, not referenced: closeSubmenu() below drops
+                    // subEntries, and the dispatch happens after the loop.
+                    chosenApp     = (*subEntries)[subSel];
+                    haveChosenApp = true;
+                } else {
+                    chosenOuter = outerSel;
+                }
             }
 
-            for (int i = 0; i < n; ++i) {
-                drawRowLabel(i);
-            }
-
-            drawn = true;
+            releaseGrab(&event.xbutton);
+            closeSubmenu();
+            XUnmapWindow(display(), m_menuWindow);
+            done = true;
+            break;
         }
     }
 
-    if (selecting == n - 1 && allowExit) {
+    // Dispatch happens after everything is unmapped and ungrabbed, so an action
+    // that itself opens windows or blocks cannot do so underneath a live grab.
+    if (haveChosenApp) {
+        launchApp(chosenApp);
+        return;
+    }
+
+    if (chosenOuter < 0) return;
+
+    if (allowExit && chosenOuter == n - 1) {
         m_signalled = 1;
         return;
     }
 
-    if (selecting >= 0) {
-        if (selecting == 0) {
-            spawn();
-        } else if (selecting < nh) {
-            clients[selecting - 1]->unhide(true);
-        } else if (selecting < nh + numCategories) {
-            // Defensive fallback: a ButtonRelease landed directly on a
-            // category row without a preceding MotionNotify (e.g. a very
-            // fast click). The primary open path is the hover-triggered one
-            // in the MotionNotify case above.
-            openCategorySubmenu(m_appCategories[selecting - nh], e, winX, winY, maxWidth, selecting);
-        } else if (selecting < n) {
-            clients[selecting - 1]->mapRaised();
-            clients[selecting - 1]->ensureVisible();
-        }
-    }
-}
-
-
-void WindowManager::openCategorySubmenu(const std::pair<std::string, std::vector<AppEntry>>& category,
-                                          XButtonEvent* e, int outerX, int outerY,
-                                          int outerMaxWidth, int rowIndex)
-{
-    int n2 = static_cast<int>(category.second.size());
-    if (n2 == 0) {
-        // Nothing to show. Release the outer menu's still-held grab and
-        // close it the same way the normal (non-empty) path eventually does
-        // (XUngrabPointer + unmap m_menuWindow below), so an empty category
-        // -- unreachable today via buildAppCategories(), but not guaranteed
-        // by the type system -- can never leave the pointer grabbed
-        // session-wide (WR-01).
-        XUngrabPointer(display(), e->time);
-        XUnmapWindow(display(), m_menuWindow);
-        return;
-    }
-
-    int mx = screenWidth() - 1;
-    int my = screenHeight() - 1;
-
-    // Measure submenu width exactly as the outer menu does, but over the
-    // category's app names instead of menuLabelFn().
-    int submenuWidth, submenuMaxWidth = 10;
-    for (int i = 0; i < n2; ++i) {
-        const char* label = category.second[i].name.c_str();
-        int len = static_cast<int>(std::strlen(label));
-        XGlyphInfo extents;
-        XftTextExtentsUtf8(display(), m_menuFont,
-            reinterpret_cast<const FcChar8*>(label), len, &extents);
-        submenuWidth = extents.width;
-        if (submenuWidth > submenuMaxWidth) submenuMaxWidth = submenuWidth;
-    }
-    submenuMaxWidth += 32;
-
-    // Same font -> same per-row metrics as the outer menu.
-    int entryHeight = m_menuFont->ascent + m_menuFont->descent + 4;
-    int totalHeight = entryHeight * n2 + 13;
-
-    // Anchor to the right of the outer menu, at the hovered row's top edge;
-    // flip to the left of the outer menu if it would cross the right screen
-    // edge, mirroring the outer menu's own edge-avoidance logic.
-    int subX = outerX + outerMaxWidth;
-    int subY = outerY + rowIndex * entryHeight;
-
-    if (subX + submenuMaxWidth >= mx) subX = outerX - submenuMaxWidth;
-    if (subX < 0) subX = 0;
-    if (subX + submenuMaxWidth >= mx) subX = mx - submenuMaxWidth;
-
-    if (subY + totalHeight >= my) subY = my - totalHeight;
-    if (subY < 0) subY = 0;
-
-    XMoveResizeWindow(display(), m_submenuWindow, subX, subY, submenuMaxWidth, totalHeight);
-    XSelectInput(display(), m_submenuWindow, MenuMask);
-    XMapRaised(display(), m_submenuWindow);
-
-    if (!m_submenuDraw) {
-        m_submenuDraw = x11::XftDrawPtr(XftDrawCreate(display(), m_submenuWindow,
-            DefaultVisual(display(), m_screenNumber),
-            DefaultColormap(display(), m_screenNumber)));
-    } else {
-        XftDrawChange(m_submenuDraw.get(), m_submenuWindow);
-    }
-
-    // The submenu's equivalent of menu()'s drawRowLabel. Submenu rows are always
-    // plain app entries -- no "New" and no Exit row -- so everything is
-    // left-aligned and there is no right-aligned special case here.
-    //
-    // The submenu carried the IDENTICAL pair of defects as the outer menu (fill
-    // without redraw on motion, labels then fill on exposure) and is fixed the
-    // same way, because it is the same bug and not a similar one.
-    auto drawSubRowLabel = [&](int i) {
-        if (i < 0 || i >= n2) return;
-        const char* label = category.second[i].name.c_str();
-        int len = static_cast<int>(std::strlen(label));
-        int dy = i * entryHeight + m_menuFont->ascent + 10;
-        XftDrawStringUtf8(m_submenuDraw.get(), m_menuFgColor.get(),
-            m_menuFont, 8, dy,
-            reinterpret_cast<const FcChar8*>(label), len);
-    };
-
-    // T-7-09: release the outer menu's grab before attempting the submenu's
-    // grab, and if the submenu grab fails, re-grab the outer menu so the
-    // pointer is never left ungrabbed mid-interaction.
-    XUngrabPointer(display(), e->time);
-
-    if (attemptGrab(m_submenuWindow, None, MenuGrabMask, e->time) != GrabSuccess) {
-        XUnmapWindow(display(), m_submenuWindow);
-        // WR-02: if re-grabbing the outer menu also fails (e.g. another
-        // client grabbed the pointer in between), abort the whole menu
-        // interaction instead of leaving it in a degraded, ungrabbed state
-        // -- mirroring how menu() itself handles its initial grab failure.
-        if (attemptGrab(m_menuWindow, None, MenuGrabMask, e->time) != GrabSuccess) {
-            XUnmapWindow(display(), m_menuWindow);
-        }
-        return;
-    }
-
-    bool done2 = false;
-    bool drawn2 = false;
-    int selecting2 = -1, prev2 = -1, sel2 = -1;
-    XEvent event;
-
-    while (!done2) {
-        XMaskEvent(display(), MenuMask, &event);
-
-        switch (event.type) {
-
-        default:
-            std::fprintf(stderr, "wm2: unknown event type %d\n", event.type);
-            break;
-
-        case ButtonPress:
-            break;
-
-        case ButtonRelease:
-            {
-                sel2 = -1;
-                if (drawn2) {
-                    if (event.xbutton.button != e->button) break;
-                    int rx = event.xbutton.x;
-                    int ry = event.xbutton.y - 11;
-                    sel2 = ry / entryHeight;
-
-                    if (selecting2 >= 0 && ry >= selecting2 * entryHeight - 3 &&
-                        ry <= (selecting2 + 1) * entryHeight - 3) sel2 = selecting2;
-
-                    if (rx < 0 || rx > submenuMaxWidth || ry < -3) sel2 = -1;
-                    else if (sel2 < 0 || sel2 >= n2) sel2 = -1;
-                }
-
-                if (!nobuttons(&event.xbutton)) sel2 = -1;
-                releaseGrab(&event.xbutton);
-                XUnmapWindow(display(), m_submenuWindow);
-                done2 = true;
-            }
-            break;
-
-        case MotionNotify:
-            if (!drawn2) break;
-            {
-                int rx = event.xbutton.x;
-                int ry = event.xbutton.y - 11;
-                prev2 = selecting2;
-                selecting2 = ry / entryHeight;
-
-                if (prev2 >= 0 && ry >= prev2 * entryHeight - 3 &&
-                    ry <= (prev2 + 1) * entryHeight - 3) selecting2 = prev2;
-
-                if (rx < 0 || rx > submenuMaxWidth || ry < -3) selecting2 = -1;
-                else if (selecting2 < 0 || selecting2 > n2) selecting2 = -1;
-
-                if (selecting2 == prev2) break;
-
-                if (prev2 >= 0 && prev2 < n2) {
-                    // Unhighlight previous, then put its label back.
-                    XftDrawRect(m_submenuDraw.get(), m_menuBgColor.get(),
-                                4, prev2 * entryHeight + 9,
-                                submenuMaxWidth - 8, entryHeight);
-                    drawSubRowLabel(prev2);
-                }
-
-                if (selecting2 >= 0 && selecting2 < n2) {
-                    // Highlight new selection, then redraw its label on top.
-                    XftDrawRect(m_submenuDraw.get(), m_menuHlColor.get(),
-                                4, selecting2 * entryHeight + 9,
-                                submenuMaxWidth - 8, entryHeight);
-                    drawSubRowLabel(selecting2);
-                }
-            }
-            break;
-
-        case Expose:
-            // Clear submenu background
-            XftDrawRect(m_submenuDraw.get(), m_menuBgColor.get(), 0, 0,
-                        submenuMaxWidth, totalHeight);
-
-            // Draw border outline (4 sides, 1px each)
-            XftDrawRect(m_submenuDraw.get(), m_menuFgColor.get(), 2, 7,
-                        submenuMaxWidth - 5, 1);         // top
-            XftDrawRect(m_submenuDraw.get(), m_menuFgColor.get(), 2,
-                        totalHeight - 4, submenuMaxWidth - 5, 1);  // bottom
-            XftDrawRect(m_submenuDraw.get(), m_menuFgColor.get(), 2, 7,
-                        1, totalHeight - 10);      // left
-            XftDrawRect(m_submenuDraw.get(), m_menuFgColor.get(),
-                        submenuMaxWidth - 3, 7, 1, totalHeight - 10);  // right
-
-            // ORDER IS LOAD-BEARING, exactly as in menu()'s Expose handler: the
-            // highlight fill goes down BEFORE the labels so the text lands on
-            // top of it, not under it.
-            if (selecting2 >= 0 && selecting2 < n2) {
-                XftDrawRect(m_submenuDraw.get(), m_menuHlColor.get(),
-                            4, selecting2 * entryHeight + 9,
-                            submenuMaxWidth - 8, entryHeight);
-            }
-
-            for (int i = 0; i < n2; ++i) {
-                drawSubRowLabel(i);
-            }
-
-            drawn2 = true;
-        }
-    }
-
-    // Both popups resolve as a single unit: whether an app was launched or
-    // the user backed out, close the outer menu too (RESEARCH.md's
-    // recommended simplest-viable design over a full bidirectional
-    // grab-transfer state machine).
-    XUnmapWindow(display(), m_menuWindow);
-
-    // T-7-10: sel2 is bounds-checked against n2 before dispatch.
-    if (sel2 >= 0 && sel2 < n2) {
-        launchApp(category.second[sel2]);
+    if (chosenOuter == 0) {
+        spawn();
+    } else if (chosenOuter < nh) {
+        clients[chosenOuter - 1]->unhide(true);
+    } else if (chosenOuter < nh + numCategories) {
+        // A category row released with nothing chosen in its submenu: the
+        // submenu opens on hover, so this means "backed out". Nothing to do.
+    } else if (chosenOuter < n) {
+        clients[chosenOuter - 1]->mapRaised();
+        clients[chosenOuter - 1]->ensureVisible();
     }
 }
 

@@ -239,10 +239,12 @@ private:
     Window m_wmCheckWindow;
 
     static const char* const m_menuCreateLabel;
+    // menu() owns the WHOLE root-menu interaction, submenu included: one grab,
+    // one event loop, the submenu a state of that loop. openCategorySubmenu()
+    // is deliberately gone rather than merely unused -- it was a second nested
+    // loop with a second grab, and splitting one pointer interaction across two
+    // of each is what made the outer menu unreachable once a submenu opened.
     void menu(XButtonEvent *e);
-    void openCategorySubmenu(const std::pair<std::string, std::vector<AppEntry>>& category,
-                              XButtonEvent* e, int outerX, int outerY,
-                              int outerMaxWidth, int rowIndex);
     void spawn();
     void spawnArgv(const std::vector<std::string>& argv);
     void launchApp(const AppEntry& entry);

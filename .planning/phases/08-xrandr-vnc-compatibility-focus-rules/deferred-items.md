@@ -237,7 +237,18 @@ circulate would wedge the WM. The wedge is gone; the comment is now history rath
 than a live constraint. Left in place because rewriting that file is not 08-07's
 job, but it should not be read as a standing restriction.
 
-## 7. The WM manages its own menu/submenu/WM-check windows as clients (PRE-EXISTING)
+## 7. The WM manages its own menu/submenu/WM-check windows as clients (PRE-EXISTING) -- RESOLVED in 08-14 (`12f6de8`)
+
+**Resolution.** The popups and the EWMH WM-check window were created with plain
+`XCreateSimpleWindow`, so they were ordinary top-level children of the root and
+`eventCreate()` adopted each as a client. They are now created override-redirect
+via `XCreateWindow`, with the flag IN THE CREATION VALUEMASK -- setting it
+afterwards with `XChangeWindowAttributes` does not work, because `CreateNotify`
+carries the creation-time value and `eventCreate()` reads it off that event.
+Measured on a live WM: `_NET_CLIENT_LIST` went from four WM-owned windows plus
+the real client, to the real client alone. `scanInitialWindows()`'s
+`wins[i] == m_menuWindow` special case is gone with it -- it named one of the
+four affected windows and was never a general fix.
 
 **Found during:** 08-04 Task 2, reading `_NET_CLIENT_LIST` from the geometry suite.
 
@@ -852,7 +863,23 @@ once and will again: any future case that drives the tab button must activate
 the client first (`tests/test_wm_runtime.cpp` does, and says why at the call
 site).
 
-## 17. The WM's own menu window can be invalid, so the root menu silently never opens (PRE-EXISTING)
+## 17. The WM's own menu window can be invalid, so the root menu silently never opens (PRE-EXISTING) -- CAUSE PARTLY REMOVED in 08-14, STILL OPEN
+
+**Status after 08-14.** Item 7 -- the WM adopting its own menu window as a
+client, which put every client lifecycle path in a position to invalidate the
+very window `menu()` was about to map -- is fixed (`12f6de8`), and that removes
+the most plausible mechanism for the `BadWindow` form of this failure.
+
+**It does NOT close this item, and the retry mitigation stays.** The
+`[wm_menureopen]` case still fails intermittently with the menu simply never
+appearing. MEASURED, 12 isolated runs each: 11/1 with the one-grab rewrite,
+11/1 with the settle added, and 11/1 against the PRE-EXISTING two-loop
+`menu()`. The identical rate on the old implementation is what establishes that
+this is not caused by the rewrite. One captured failure carried
+`X_UnmapWindow (0x600024): BadWindow`, but on a `0x6...` XID -- another
+connection's client window, not the WM's own menu -- so it is not this item's
+signature either. Cause still unknown; do not remove `openRootMenuVerified()`'s
+retry until it is understood.
 
 **Found during:** 08-14, by the new `[wm_menulabel]` cases. Not caused by the
 menu-label fix those cases exist for: the failing requests are the ones

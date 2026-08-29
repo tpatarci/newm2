@@ -38,24 +38,6 @@
     <fileName>src/Border.cpp</fileName>
     <hash>98fd330e2acc0b96</hash>
   </suppress>
-  <!-- The scope of the variable 'width' can be reduced.| int width, maxWidth = 10; -->
-  <suppress>
-    <id>variableScope</id>
-    <fileName>src/Buttons.cpp</fileName>
-    <hash>c088ec114ae15a77</hash>
-  </suppress>
-  <!-- The scope of the variable 'submenuWidth' can be reduced.| int submenuWidth, submenuMaxWidth = 10; -->
-  <suppress>
-    <id>variableScope</id>
-    <fileName>src/Buttons.cpp</fileName>
-    <hash>944ec42caac01df5</hash>
-  </suppress>
-  <!-- Consider using std::transform algorithm instead of a raw loop.| clients.push_back(hc.get()); -->
-  <suppress>
-    <id>useStlAlgorithm</id>
-    <fileName>src/Buttons.cpp</fileName>
-    <hash>e9f3634661152b5a</hash>
-  </suppress>
   <!-- The statement 'if (m_label!=newLabel) m_label=newLabel' is logically equivalent to 'm_label=newLabel'.| if (m_label != newLabel) { -->
   <suppress>
     <id>duplicateConditionalAssign</id>

@@ -2638,7 +2638,9 @@ bool nudgeUntil(XTestDriver& driver, int cx, int cy,
 bool openRootMenuVerified(Display* d, XTestDriver& driver, int x, int y,
                           Window& menuOut, Rect& rectOut, std::string& whyOut)
 {
-    constexpr int kAttempts = 3;
+    // Five, not three: the only thing that fails these cases is deferred
+    // item 17, whose rate this directly divides down.
+    constexpr int kAttempts = 5;
     for (int attempt = 0; attempt < kAttempts; ++attempt) {
         if (openRootMenu(d, driver, x, y, menuOut, rectOut) &&
             menuOut != None && isViewable(d, menuOut) &&
@@ -2974,5 +2976,315 @@ TEST_CASE("Highlighting a category submenu row does not erase its label either",
     CHECK(subInkAfterLeave > 0);
     CHECK(subInkAfterLeave * 2 >= subInkNormal);
 
+    CHECK(fixture.wmAlive());
+}
+
+
+// ===========================================================================
+// [wm_menureopen] -- the root menu still works after a submenu episode
+//
+// Guards the ONE-GRAB, ONE-LOOP invariant that menu() now holds.
+//
+// The reported defect this pins: "once a submenu has been activated, the main
+// menu cannot be re-activated: it remains static even if the submenu has been
+// abandoned and the cursor is moving over main menu items." Found on a real
+// XRDP session, reproduced on plain Xvfb, so it was never remote-specific.
+//
+// The cause was structural, not a leak. openCategorySubmenu() ungrabbed the
+// outer menu, took a SECOND grab on the submenu window with owner_events=False,
+// and ran a SECOND nested event loop. From that point every pointer event
+// belonged to the submenu: moving back over the outer menu delivered motion to
+// the submenu's loop, which resolved it against its own rectangle, found the
+// pointer outside, and highlighted nothing -- while the outer menu kept its last
+// highlight frozen, because no loop was reading for it any more. There was no
+// way back; releasing was the only exit and it closed both popups.
+//
+// menu() now owns the whole interaction: one XGrabPointer, one XUngrabPointer,
+// one loop, and the submenu is a state of that loop hit-tested in root
+// coordinates. openCategorySubmenu() no longer exists.
+//
+// This case asserts the two things that must both hold afterwards, because
+// either alone is satisfiable by a broken WM:
+//
+//  1. The pointer is genuinely UNGRABBED after a submenu episode -- probed
+//     directly from this connection, so a leak is reported as AlreadyGrabbed
+//     rather than being misdiagnosed later as "the menu did not respond".
+//  2. The reopened menu TRACKS the pointer. Opening is not enough: a menu whose
+//     loop never receives MotionNotify still maps.
+// ===========================================================================
+
+TEST_CASE("The root menu still opens and tracks the pointer after a submenu episode",
+          "[wm_menureopen]")
+{
+    WmFixture fixture(cleanFixture({"--menu-background=blue",
+                                    "--menu-foreground=red",
+                                    "--menu-highlight=green"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    const unsigned long hl = namedPixel(d, "green");
+    REQUIRE(hl != ~0UL);
+
+    // --- Episode 1: open the menu, hover a category so the submenu takes the
+    //     grab, abandon it, and release.
+    Window menu = None;
+    Rect menuRect;
+    std::string why;
+    INFO("first menu open: " << why);
+    REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                 menu, menuRect, why));
+
+    REQUIRE(nudgeUntil(driver, menuRect.x + menuRect.w / 2, menuRect.y + 14, [&] {
+        return countAll(captureRootBitmap(d, menuRect), hl) > 0;
+    }));
+    int hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+    REQUIRE(pixelBounds(captureRootBitmap(d, menuRect), hl, hx0, hy0, hx1, hy1));
+    const int entryHeight = hy1 - hy0 + 1;
+    REQUIRE(entryHeight > 0);
+    const int rowCount = (menuRect.h - 13) / entryHeight;
+
+    const std::vector<Window> before = childrenOf(d, DefaultRootWindow(d));
+    Window submenu = None;
+    const bool opened = nudgeUntil(driver, menuRect.x + menuRect.w / 2,
+                                   menuRect.y + 14 + entryHeight, [&] {
+        for (Window w : childrenOf(d, DefaultRootWindow(d))) {
+            if (w == menu) continue;
+            Rect r;
+            if (!isViewable(d, w) || !serverRect(d, w, r)) continue;
+            if (r.w <= 1 || r.h <= 1) continue;
+            if (std::find(before.begin(), before.end(), w) == before.end() ||
+                r.x != menuRect.x) {
+                submenu = w;
+                return true;
+            }
+        }
+        return false;
+    });
+
+    if (!opened) {
+        dismissMenu(d, driver);
+        INFO("no submenu opened; row count was " << rowCount);
+        REQUIRE(rowCount <= 1);
+        WARN("host has no application categories -- submenu episode not exercised");
+        return;
+    }
+
+    // Abandon the submenu and release, which is the operator's exact sequence.
+    driver.moveTo(kScreenW - 5, kScreenH - 5);
+    driver.release(Button1);
+    XSync(d, False);
+    settleWm(d);
+
+    // --- The direct measurement of the hypothesis: is the pointer still
+    //     grabbed? A leaked grab makes THIS connection's XGrabPointer return
+    //     AlreadyGrabbed. Asserted before the second menu is attempted, so a
+    //     leak is reported as a leak rather than as "the menu did not respond".
+    const int grabStatus = XGrabPointer(d, DefaultRootWindow(d), False,
+                                        ButtonPressMask, GrabModeAsync,
+                                        GrabModeAsync, None, None, CurrentTime);
+    if (grabStatus == GrabSuccess) XUngrabPointer(d, CurrentTime);
+    XSync(d, False);
+
+    // The probe above grabs with ButtonPressMask on THIS connection, while the
+    // synthetic press below is issued from XTestDriver's SEPARATE connection.
+    // XSync(d) orders d and says nothing about the driver, so in principle the
+    // press can reach the server before it has processed this ungrab, and the
+    // probe's own grab would then swallow the click. This settle closes that
+    // ordering hole and is worth keeping on those grounds alone.
+    //
+    // It is NOT, however, the cause of this case's intermittent failure, and
+    // saying so would be guessing. MEASURED, 12 isolated runs each:
+    //
+    //   without the settle .............. 11 pass / 1 fail
+    //   with the settle ................. 11 pass / 1 fail
+    //   pre-existing two-loop menu() .... 11 pass / 1 fail
+    //
+    // The third row is the one that settles attribution: the same rate on the
+    // OLD menu implementation means the flake predates the one-grab rewrite and
+    // is not caused by it. It belongs to the deferred item 12 / item 17 family
+    // -- the menu occasionally not appearing at all -- which is recorded, and
+    // still unexplained, rather than fixed here.
+    settleWm(d);
+    INFO("XGrabPointer after the submenu episode returned "
+         << grabStatus << " (GrabSuccess=" << GrabSuccess
+         << ", AlreadyGrabbed=" << AlreadyGrabbed << ")");
+    CHECK(grabStatus != AlreadyGrabbed);
+    CHECK(grabStatus == GrabSuccess);
+
+    // --- Episode 2: the menu must open again AND track the pointer. Opening is
+    //     not enough on its own -- a leaked grab still lets the window map, and
+    //     it is the MotionNotify that never arrives.
+    Window menu2 = None;
+    Rect menuRect2;
+    std::string why2;
+    const bool reopened = openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                               menu2, menuRect2, why2);
+    INFO("second menu open: " << why2);
+    INFO("WM stderr at second open:\n" << fixture.wmStderr());
+    REQUIRE(reopened);
+
+    // "A highlight exists" is NOT enough and the difference is load-bearing: if
+    // the previous episode's menu were still mapped, its stale highlight would
+    // satisfy that check without the WM having processed anything at all.
+    // MEASURED while writing this -- with the final XUnmapWindow removed, a
+    // presence-only check passed vacuously.
+    //
+    // So this asserts WHERE the highlight is. Row 0's fill starts at y == 9 in
+    // menu-window coordinates, so a highlight belonging to row 0 begins above
+    // the first row boundary, and one left over from the category row we hovered
+    // in episode 1 does not.
+    int r2x0 = 0, r2y0 = 0, r2x1 = 0, r2y1 = 0;
+    const bool tracks = nudgeUntil(driver, menuRect2.x + menuRect2.w / 2,
+                                   menuRect2.y + 14, [&] {
+        const Bitmap b = captureRootBitmap(d, menuRect2);
+        return pixelBounds(b, hl, r2x0, r2y0, r2x1, r2y1) && r2y0 < entryHeight;
+    });
+
+    std::printf("[wm2 menureopen] episode 1 submenu %s\n"
+                "[wm2 menureopen] grab after episode: %s\n"
+                "[wm2 menureopen] menu reopened %s, highlight tracks: %s\n",
+                describe(rectOf(d, submenu)).c_str(),
+                grabStatus == GrabSuccess ? "free" : "STILL GRABBED",
+                describe(menuRect2).c_str(), tracks ? "yes" : "NO");
+    std::printf("[wm2 menureopen] reopened highlight band y=%d..%d (row 0 requires y0 < %d)\n",
+                r2y0, r2y1, entryHeight);
+    std::fflush(stdout);
+
+    dismissMenu(d, driver);
+
+    INFO("second menu " << describe(menuRect2)
+         << " highlight tracked the pointer: " << tracks);
+    CHECK(tracks);
+
+    // A failed XGrabPointer inside menu() must not pass silently.
+    const std::string errs = fixture.wmStderr();
+    INFO("WM stderr:\n" << errs);
+    CHECK_FALSE(contains(errs, "AlreadyGrabbed"));
+
+    CHECK(fixture.wmAlive());
+}
+
+
+// ===========================================================================
+// [wm_menuback] -- travelling BACK from the submenu to the outer menu
+//
+// This is the operator's reported defect stated exactly: "once a submenu has
+// been activated, the main menu cannot be re-activated: it remains static even
+// if the submenu has been abandoned and the cursor is moving over main menu
+// items. I tried to reactivate by approaching from different directions, but it
+// would not work."
+//
+// [wm_menureopen] does NOT cover this. That case abandons the submenu, releases,
+// and opens a SECOND menu -- it proves the grab came back, not that the outer
+// menu is reachable while a submenu is open. The reported symptom happens
+// mid-interaction, with the button still held, and would survive a green
+// [wm_menureopen] untouched. Adding this was the direct result of noticing that
+// gap in my own coverage rather than in the code.
+//
+// What must hold, with the button STILL DOWN, after moving from a category row
+// back onto a non-category row of the outer menu:
+//   1. the submenu is unmapped, and
+//   2. the outer menu's highlight has MOVED to the row now under the pointer.
+//
+// Under the old two-loop design (2) was impossible: the submenu's nested loop
+// owned every pointer event, so the outer menu kept a frozen highlight on the
+// category row. Assert the highlight's POSITION, never its mere presence -- a
+// frozen highlight from the category row is still a highlight, and a
+// presence-only check passes vacuously against exactly the bug being fixed.
+// ===========================================================================
+
+TEST_CASE("Moving from a submenu back to the outer menu re-highlights it and closes the submenu",
+          "[wm_menuback]")
+{
+    WmFixture fixture(cleanFixture({"--menu-background=blue",
+                                    "--menu-foreground=red",
+                                    "--menu-highlight=green"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    const unsigned long hl = namedPixel(d, "green");
+    REQUIRE(hl != ~0UL);
+
+    Window menu = None;
+    Rect menuRect;
+    std::string why;
+    REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                 menu, menuRect, why));
+    INFO("menu open: " << why);
+
+    // Row 0, to learn the row height from the highlight band it produces.
+    REQUIRE(nudgeUntil(driver, menuRect.x + menuRect.w / 2, menuRect.y + 14, [&] {
+        return countAll(captureRootBitmap(d, menuRect), hl) > 0;
+    }));
+    int hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+    REQUIRE(pixelBounds(captureRootBitmap(d, menuRect), hl, hx0, hy0, hx1, hy1));
+    const int entryHeight = hy1 - hy0 + 1;
+    REQUIRE(entryHeight > 0);
+
+    // Walk down the rows until one opens a submenu.
+    const std::vector<Window> before = childrenOf(d, DefaultRootWindow(d));
+    Window submenu = None;
+    int categoryRow = -1;
+    const int rowCount = (menuRect.h - 13) / entryHeight;
+
+    for (int row = 1; row < rowCount && submenu == None; ++row) {
+        const int ty = menuRect.y + 14 + row * entryHeight;
+        nudgeUntil(driver, menuRect.x + menuRect.w / 2, ty, [&] {
+            for (Window w : childrenOf(d, DefaultRootWindow(d))) {
+                if (w == menu) continue;
+                Rect r;
+                if (!isViewable(d, w) || !serverRect(d, w, r)) continue;
+                if (r.w <= 1 || r.h <= 1) continue;
+                if (std::find(before.begin(), before.end(), w) == before.end() ||
+                    r.x != menuRect.x) {
+                    submenu = w;
+                    return true;
+                }
+            }
+            return false;
+        });
+        if (submenu != None) categoryRow = row;
+    }
+
+    if (submenu == None) {
+        dismissMenu(d, driver);
+        WARN("host has no application categories -- back-travel not exercised");
+        return;
+    }
+
+    INFO("submenu opened from row " << categoryRow << ": " << describe(rectOf(d, submenu)));
+
+    // --- The move under test. Button is STILL DOWN. Back to row 0, which is
+    //     "New" -- a non-category row, so the submenu must close.
+    const bool backHighlighted =
+        nudgeUntil(driver, menuRect.x + menuRect.w / 2, menuRect.y + 14, [&] {
+            int y0 = 0, y1 = 0, x0 = 0, x1 = 0;
+            const Bitmap b = captureRootBitmap(d, menuRect);
+            // Row 0's fill begins at y == 9 in menu coordinates, so a highlight
+            // that belongs to row 0 starts above the first row boundary. A
+            // highlight frozen on the category row starts far below it.
+            return pixelBounds(b, hl, x0, y0, x1, y1) && y0 < entryHeight;
+        });
+
+    const bool submenuClosed = !isViewable(d, submenu);
+
+    std::printf("[wm2 menuback] category row %d, submenu %s\n"
+                "[wm2 menuback] after moving back to row 0: highlight tracks %s, submenu closed %s\n",
+                categoryRow, describe(rectOf(d, submenu)).c_str(),
+                backHighlighted ? "yes" : "NO",
+                submenuClosed ? "yes" : "NO");
+    std::fflush(stdout);
+
+    dismissMenu(d, driver);
+
+    INFO("WM stderr:\n" << fixture.wmStderr());
+    CHECK(backHighlighted);
+    CHECK(submenuClosed);
     CHECK(fixture.wmAlive());
 }
