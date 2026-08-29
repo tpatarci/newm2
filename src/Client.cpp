@@ -1106,6 +1106,62 @@ void Client::clampGeometryToScreen()
 }
 
 
+void Client::clampToKeepHandleOnScreen(int &x, int &y)
+{
+    // wm2 has no full-width titlebar. The sideways tab is the ONLY thing a
+    // pointer can grab to move, hide or close a window, and it sits in the
+    // frame's left strip starting at the frame's own origin -- so a frame whose
+    // origin leaves the screen takes its handle with it and the window can never
+    // be recovered by mouse again.
+    //
+    // Getting there needs no bug, just ordinary drag arithmetic:
+    // Border::eventButton() sends a press on the FRAME (on a large window its
+    // top strip is the only exposed part) to move(), which records the grab
+    // offset as `xIndent() - e->x`. Grab that strip near its right end and the
+    // origin trails the pointer by most of the window's width; drag left and it
+    // goes far negative. MEASURED on an 800x700 window at +100+100: grabbed at
+    // root (882,104), dragged to (40,6), settled at frame x = -740 with its
+    // whole 24px tab off-screen.
+    //
+    // So this bounds the FRAME ORIGIN, not the window. The body may still hang
+    // off any edge -- that is a thing users want and this deliberately keeps it.
+    // What it guarantees is a tabWidth-square of the tab's top corner, the
+    // square that carries the button, staying reachable on every edge.
+    //
+    // x and y arrive in CLIENT space: m_x/m_y are where the client window would
+    // sit unframed, and Border::moveTo() places the frame at
+    // (x - xIndent, y - yIndent). Convert to frame space, clamp, convert back.
+    // Doing that algebra inline invites precisely the off-by-an-indent this
+    // function exists to prevent -- the first cut of it clamped client space and
+    // still let the frame reach x = -24, one xIndent past the edge.
+    const int ix = m_border->xIndent();
+    const int iy = m_border->yIndent();
+
+    int frameX = x - ix;
+    int frameY = y - iy;
+
+    // The tab's thickness is xIndent minus the frame border, but using the whole
+    // indent as the handle size costs a pixel or two of travel and keeps this
+    // readable. Transients have no tab; their indent is the thin border, which
+    // is also exactly the strip Border::eventButton() lets them be dragged by.
+    const int handle = ix;
+
+    const int maxX = windowManager()->screenWidth()  - handle;
+    const int maxY = windowManager()->screenHeight() - handle;
+
+    // Upper bound first, then the floor, so a screen narrower than the handle
+    // itself resolves to 0 rather than to a negative maxX. Same ordering as
+    // ensureVisible() above, for the same reason.
+    if (frameX > maxX) frameX = maxX;
+    if (frameY > maxY) frameY = maxY;
+    if (frameX < 0) frameX = 0;
+    if (frameY < 0) frameY = 0;
+
+    x = frameX + ix;
+    y = frameY + iy;
+}
+
+
 void Client::getTransient()
 {
     Window t = None;
@@ -1537,11 +1593,21 @@ void Client::move(XButtonEvent *e)
             break;
 
         case MotionNotify:
-            x = event.xbutton.x; y = event.xbutton.y;
-            if (x + xoff != m_x || y + yoff != m_y) {
-                windowManager()->showGeometry(x + xoff, y + yoff);
-                m_border->moveTo(x + xoff, y + yoff);
-                doSomething = true;
+            {
+                x = event.xbutton.x; y = event.xbutton.y;
+
+                // Clamped HERE as well as at the commit below, not only there:
+                // the drag paints itself through moveTo() on every motion, so
+                // clamping only the final value would let the window follow the
+                // pointer off the edge and then snap back on release.
+                int nx = x + xoff, ny = y + yoff;
+                clampToKeepHandleOnScreen(nx, ny);
+
+                if (nx != m_x || ny != m_y) {
+                    windowManager()->showGeometry(nx, ny);
+                    m_border->moveTo(nx, ny);
+                    doSomething = true;
+                }
             }
             break;
         }
@@ -1552,6 +1618,7 @@ void Client::move(XButtonEvent *e)
     if (x >= 0 && doSomething) {
         m_x = x + xoff;
         m_y = y + yoff;
+        clampToKeepHandleOnScreen(m_x, m_y);
     }
 
     m_border->moveTo(m_x, m_y);
@@ -1815,6 +1882,32 @@ void Client::eventMapRequest(XMapRequestEvent *)
 
 void Client::eventConfigureRequest(XConfigureRequestEvent *e)
 {
+    // A ConfigureRequest can name the FRAME as well as the client. The frame is
+    // a root child and the WM holds SubstructureRedirect on root, so any client
+    // that walks the window tree and configures a frame is redirected here --
+    // and windowToClient() resolves a frame to its client, so `this` is reached
+    // with e->window set to the frame.
+    //
+    // The frame is ours, not a client's to place, and honouring the request
+    // through the rest of this function actively corrupts the window: the tail
+    // positions e->window at xIndent()/yIndent(), which is where the CLIENT sits
+    // INSIDE the frame and is meaningless applied to the frame itself.
+    // MEASURED before this guard: two requests, for (60,60) and for (950,120),
+    // both put the frame at exactly (24,8) in root coordinates. And because
+    // m_x/m_y were assigned the requested values on the way past, the model and
+    // the screen then disagreed permanently -- the next drag would have snapped
+    // the window somewhere else again.
+    //
+    // Declining outright rather than translating it into a frame move: no
+    // client is entitled to place another window, and a WM that let one do so
+    // would hand any X client on the display a window-teleport primitive.
+    if (e->window != m_window) {
+        std::fprintf(stderr,
+                     "wm2: warning: ignoring configure request for frame window %lx\n",
+                     e->window);
+        return;
+    }
+
     XWindowChanges wc;
     bool doRaise = false;
 
@@ -1834,7 +1927,9 @@ void Client::eventConfigureRequest(XConfigureRequestEvent *e)
         e->value_mask &= ~CWStackMode;
     }
 
-    if (parent() != root() && m_window == e->window) {
+    // The `m_window == e->window` half of this test used to live here too; the
+    // guard at the top of the function now makes it a tautology.
+    if (parent() != root()) {
         m_border->configure(m_x, m_y, m_w, m_h, e->value_mask, e->detail);
         sendConfigureNotify();
     }

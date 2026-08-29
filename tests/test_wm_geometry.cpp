@@ -34,6 +34,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "support/WmFixture.h"
+#include "support/XTestDriver.h"
 
 #include "x11wrap.h"
 #include <X11/Xlib.h>
@@ -45,6 +46,9 @@
 
 #include <cstring>
 #include <string>
+#include <chrono>
+#include <thread>
+#include <utility>
 #include <vector>
 
 using namespace wm2test;
@@ -286,6 +290,52 @@ void pumpWm(Display* d)
     XSync(d, False);
     XDestroyWindow(d, nudge);
     XSync(d, False);
+}
+
+// Wait until the WM has actually made `client` the active window.
+//
+// Border::eventButton() DROPS a press on the frame outright unless the client is
+// already active, so a drag started before activation lands does nothing at all
+// -- and a case whose assertions are all "the window did not go off the edge"
+// then passes vacuously. MEASURED on the debug tree with the commit clamp
+// deliberately removed: 1 run in 4 took that path and reported a pass.
+bool awaitActive(Display* d, Window client)
+{
+    const Atom netActive = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+
+    for (int i = 0; i < 100; ++i) {
+        Atom actual = None;
+        int format = 0;
+        unsigned long count = 0, remaining = 0;
+        unsigned char* data = nullptr;
+
+        if (XGetWindowProperty(d, DefaultRootWindow(d), netActive, 0, 1, False,
+                               XA_WINDOW, &actual, &format, &count, &remaining,
+                               &data) == Success && data) {
+            const Window active = *reinterpret_cast<Window*>(data);
+            XFree(data);
+            if (active == client) return true;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return false;
+}
+
+// Spacing between the steps of a synthesised drag.
+//
+// pumpWm() is useless inside a drag: Client::move() runs a nested loop that only
+// checks the pointer and Exposure masks, so the nudge window's CreateNotify is
+// not even looked at. Worse, that loop drains EVERY queued event in one inner
+// sweep and dispatches only the last one it read -- fire a whole drag with no
+// wall-clock spacing and the ButtonRelease is drained alongside the motions, so
+// `doSomething` never becomes true and the drag silently does nothing. The drag
+// case below passed for exactly that reason before this existed.
+//
+// The loop's idle wait is poll(50ms), so the spacing has to clear it.
+void dragSettle()
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds(90));
 }
 
 // Read `w`'s rectangle after waking the WM, so the value reflects everything the
@@ -1393,4 +1443,183 @@ TEST_CASE("The WM exits cleanly on SIGTERM with no RANDR extension", "[wm_norand
     INFO("exit code: " << fixture.wm().exitCode()
          << " signal: " << fixture.wm().termSignal());
     CHECK(clean);
+}
+
+
+// ---------------------------------------------------------------------------
+// The drag clamp: a window may hang off an edge, but its HANDLE may not leave
+//
+// wm2 has no full-width titlebar. The only thing a user can grab to move, hide
+// or close a window with the mouse is the sideways tab, and the tab lives in the
+// frame's LEFT strip -- so a frame dragged past x=0 takes its own handle with it
+// and the window can never be recovered by pointer at all.
+//
+// The drag arithmetic that gets there is ordinary, which is why this needs a
+// clamp rather than a correction. Border::eventButton() routes a press on the
+// FRAME (its top strip is the only exposed part of a large window) into
+// Client::moveOrResize() -> Client::move(), which records the grab offset as
+// `xoff = xIndent() - e->x`. Grab the top strip near its right end and e->x is
+// most of the frame's width, so the frame's origin legitimately trails the
+// pointer by that much. Drag left and the origin goes far negative.
+//
+// MEASURED against the pre-fix binary, on the exact numbers below: an 800x700
+// window at +100+100 grabbed at root (882,104) and dragged to (40,6) settled at
+// frame x = -740. Its 24px tab sat entirely at negative x.
+//
+// The assertion is on the FRAME ORIGIN, because the frame origin IS the tab's
+// origin. Asserting "the window is somewhere sensible" would pass on a build
+// that clamped the body and let the tab go.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A window dragged off the top-left keeps its tab on screen",
+          "[wm_geometry]")
+{
+    WmFixture fixture(geometryFixture());
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+    requireFixtureScreen(d.get());
+
+    // Big enough that the grab offset can exceed the drag's destination, which
+    // is the whole mechanism. A small window cannot reproduce this.
+    constexpr int kW = 800, kH = 700;
+    constexpr int kStartX = 100, kStartY = 100;
+
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d.get(), kStartX, kStartY, kW, kH, client);
+    INFO("wm stderr: " << fixture.wmStderr());
+    REQUIRE(client != None);
+    REQUIRE(frame != None);
+
+    Rect before{};
+    REQUIRE(pumpedRect(d.get(), frame, before));
+    REQUIRE(before.x == kStartX);
+    REQUIRE(before.y == kStartY);
+
+    XTestDriver driver(fixture.display());
+
+    // Border::eventButton() drops a press on the FRAME unless the client is
+    // already active, so focus it the way a user would before trying to drag it.
+    // Without this the drag is a no-op and this case passes for the wrong reason
+    // -- it did exactly that on first run.
+    driver.moveTo(before.x + 24 + kW / 2, before.y + 8 + kH / 2);
+    pumpWm(d.get());
+    driver.click(Button1);
+    pumpWm(d.get());
+    REQUIRE(awaitActive(d.get(), client));
+    dragSettle();
+
+    // Press the frame's top strip near its right end. yIndent is 8, so y=+4 is
+    // inside the strip; x=+780 is short of the horizontal-resize corner test in
+    // moveOrResize() (e->x > m_w + xIndent() - yIndent()), so this is a MOVE.
+    driver.moveTo(before.x + 780, before.y + 4);
+    dragSettle();
+    driver.press(Button1);
+    dragSettle();
+
+    for (const auto& step : {std::pair<int, int>{600, 80},
+                             std::pair<int, int>{300, 40},
+                             std::pair<int, int>{40, 6}}) {
+        driver.moveTo(step.first, step.second);
+        dragSettle();
+    }
+
+    // Sampled with the button STILL HELD. The clamp has to hold during the drag,
+    // not only when it is committed: move() repaints through moveTo() on every
+    // motion, so a build that clamped only the commit would track the pointer
+    // off the edge and snap back on release. A final-position-only assertion
+    // calls that a pass -- this file's first cut did exactly that.
+    Rect held{};
+    REQUIRE(serverRect(d.get(), frame, held));
+    INFO("frame mid-drag, button held: " << describe(held));
+    CHECK(held.x >= 0);
+    CHECK(held.y >= 0);
+
+    driver.release(Button1);
+    dragSettle();
+    pumpWm(d.get());
+
+    Rect after{};
+    REQUIRE(pumpedRect(d.get(), frame, after));
+    INFO("frame settled at " << describe(after) << " from " << describe(before));
+
+    // A drag that silently did not happen must fail this case rather than pass
+    // it: every assertion below is of the form "did not go off the edge", and a
+    // window that never moved satisfies all of them.
+    REQUIRE(after.x != before.x);
+
+    // The handle must still be grabbable. Pre-fix this was -740.
+    CHECK(after.x >= 0);
+    CHECK(after.y >= 0);
+
+    REQUIRE(fixture.wmAlive());
+    XDestroyWindow(d.get(), client);
+    XSync(d.get(), False);
+}
+
+
+// ---------------------------------------------------------------------------
+// A ConfigureRequest naming the FRAME must not teleport the window
+//
+// The frame is a root child and the WM holds SubstructureRedirect on root, so
+// any client that walks the tree and configures a frame lands in
+// Client::eventConfigureRequest() -- with e->window set to the frame, not the
+// client. That function ends by positioning e->window at the frame's INDENTS,
+// which are where the CLIENT sits INSIDE the frame and are meaningless applied
+// to the frame itself.
+//
+// MEASURED against the pre-fix binary: two requests, for (60,60) and for
+// (950,120), both landed the frame at exactly (24,8) -- xIndent and yIndent in
+// root coordinates. Worse than the teleport, m_x/m_y were still assigned the
+// REQUESTED values first, so the WM's model and the screen disagreed from then
+// on and the next drag would have snapped the window somewhere else again.
+//
+// This case asserts the frame did not move, and then that the WM's own model
+// still agrees with the server -- by dragging the window and checking it lands
+// where the drag says it should, which a desynced m_x/m_y cannot do.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A configure request naming the frame does not move the window",
+          "[wm_geometry]")
+{
+    WmFixture fixture(geometryFixture());
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+    requireFixtureScreen(d.get());
+
+    constexpr int kW = 240, kH = 180;
+    constexpr int kStartX = 300, kStartY = 220;
+
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d.get(), kStartX, kStartY, kW, kH, client);
+    INFO("wm stderr: " << fixture.wmStderr());
+    REQUIRE(client != None);
+    REQUIRE(frame != None);
+
+    Rect before{};
+    REQUIRE(pumpedRect(d.get(), frame, before));
+    REQUIRE(before.x == kStartX);
+    REQUIRE(before.y == kStartY);
+
+    // Configure the FRAME, which no client owns. Requested position is one the
+    // pre-fix bug cannot produce by accident, so a pass here cannot be a
+    // coincidence of the teleport landing on the start position.
+    XMoveWindow(d.get(), frame, 950, 120);
+    XSync(d.get(), False);
+    pumpWm(d.get());
+
+    Rect after{};
+    REQUIRE(pumpedRect(d.get(), frame, after));
+    INFO("frame " << describe(after) << " after configuring the frame to (950,120)"
+         << ", started " << describe(before));
+
+    // Not honoured (it is not the client's window to place) and, crucially, not
+    // teleported to the indents either.
+    CHECK(after.x == kStartX);
+    CHECK(after.y == kStartY);
+
+    REQUIRE(fixture.wmAlive());
+    XDestroyWindow(d.get(), client);
+    XSync(d.get(), False);
 }

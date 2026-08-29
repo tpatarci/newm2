@@ -237,6 +237,13 @@ private:
     void getClassHint();
     void applyWindowRules();
     void clampGeometryToScreen();
+
+    // Bound a frame origin so the sideways tab -- the only thing a pointer can
+    // grab -- stays on screen. Unlike clampGeometryToScreen() and
+    // ensureVisible(), which pull the whole window into view, this constrains
+    // ONLY the handle and lets the body hang off any edge.
+    void clampToKeepHandleOnScreen(int &x, int &y);
+
     void decorate(bool active);
 
     // Gesture detection

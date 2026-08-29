@@ -396,9 +396,14 @@ if(BUILD_TESTS)
         # from that size to observe a resolution change; this server's RANDR
         # maximum equals the size it was started with, so it can never grow.
         add_executable(test_wm_geometry tests/test_wm_geometry.cpp)
+        # XTEST is here for the drag cases only: the tab-reachability clamp can
+        # only be proven by a real pointer drag, and the fake events must come
+        # from a connection with grab control enabled (RESEARCH Pitfall 10),
+        # because Client::move() holds a pointer grab for the whole drag.
         target_link_libraries(test_wm_geometry PRIVATE
             Catch2::Catch2WithMain
             PkgConfig::X11
+            PkgConfig::XTST
         )
         target_include_directories(test_wm_geometry PRIVATE
             ${CMAKE_SOURCE_DIR}/include
