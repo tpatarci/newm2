@@ -294,9 +294,30 @@ void WindowManager::eventDestroy(XDestroyWindowEvent *e)
         const bool wasDock = dying.isDock();
 
         // STEP 1: Clear focus tracking BEFORE destroying the Client (Pitfall 1)
-        if (m_focusChanging && c == m_focusCandidate) {
-            stopConsideringFocus();
+        //
+        // The scrub is NOT conditional on m_focusChanging, and that is the fix
+        // for a second heap-use-after-free in this same path (threat T-8-UAF,
+        // found by the sanitizer gate while landing plan 08-11).
+        //
+        // m_focusChanging and m_focusCandidate are set together but cleared
+        // apart: stopConsideringFocus() clears the flag and LEAVES the candidate
+        // pointer where it was, and Client::focusIfAppropriate() calls it on the
+        // ordinary success path. So by the time a client is destroyed the flag is
+        // routinely false while the candidate still names that client -- and the
+        // old guard read the flag first, so it declined to clear the very pointer
+        // that was about to dangle. The next considerFocusChange() to find the
+        // flag true again dereferences it through
+        // stopConsideringFocus() -> Client::selectOnMotion() -> Client::root(),
+        // which is exactly the read AddressSanitizer reported.
+        //
+        // Clearing whenever the dying client IS the recorded candidate costs
+        // nothing and removes the whole class: a freed Client can never remain
+        // reachable through this pair. Same discipline as the skipInRevert()
+        // scrub below, for the same reason.
+        if (c == m_focusCandidate) {
+            if (m_focusChanging) stopConsideringFocus();
             m_focusCandidate = nullptr;
+            m_focusCandidateWindow = None;
         }
 
         // STEP 2: Clear active client if this is it
