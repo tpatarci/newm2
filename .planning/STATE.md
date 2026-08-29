@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 08
 current_phase_name: xrandr-vnc-compatibility-focus-rules
 status: executing
-stopped_at: Completed 08-08-PLAN.md
-last_updated: "2026-08-29T08:59:28.173Z"
+stopped_at: Completed 08-09-PLAN.md
+last_updated: "2026-08-29T09:25:16.693Z"
 last_activity: 2026-08-11
 last_activity_desc: gathered Phase 8 context across 8 gray areas (32 decisions captured)
-state_head: 642c4a3fa71d19faf3bacaf250eb48f21150ce42
+state_head: 40314dc7ec695b02427f023f9c3973144f39bf52
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 36
-  completed_plans: 30
+  completed_plans: 31
 milestone_name: milestone
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 08 (xrandr-vnc-compatibility-focus-rules) — EXECUTING
-Plan: 9 of 14
+Plan: 10 of 14
 Status: Ready to execute
 Last activity: 2026-08-11 — Phase 08 execution started
 
@@ -86,6 +86,7 @@ Progress: [████████░░] 81% (7/9 phases complete)
 | Phase 08 P06 | 71min | 3 tasks | 9 files |
 | Phase 08 P07 | 55min | 4 tasks | 11 files |
 | Phase 08 P08 | 115min | 4 tasks | 11 files |
+| Phase 08 P09 | 60min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -146,6 +147,10 @@ Recent decisions affecting current work:
 - [Phase 08]: 08-08: _NET_ACTIVE_WINDOW arbitrated by EWMH source indication (pager granted, application arbitrated, legacy granted) — supersedes Phase 6 D-10, amended append-only in 06-CONTEXT.md
 - [Phase 08]: 08-08: map-time focus granting is NOT gated on the pointer-entry policy; the resulting conflict with 08-07 behaviours 1-2 was resolved by constructing their unfocused precondition with a zero _NET_WM_USER_TIME, leaving every assertion intact
 - [Phase 08]: 08-08: _NET_WM_USER_TIME of zero means do-not-focus-me at map time, but absent evidence (arbitrated as stale) on an activation request
+- [Phase 08]: RuleTriState uses Off/On, not False/True: Xlib #defines both macros and Config.h now reaches every X11-including translation unit
+- [Phase 08]: rule-match-class is tested against both WM_CLASS fields; rule-match-name against the instance name only (asymmetry asserted negatively)
+- [Phase 08]: Rule group state is two explicit fields (ruleOpen + ruleLastWasAction), reset per file so a system-config rule cannot absorb a user-config match key
+- [Phase 08]: No CLI flags for rules: repeated ordered key groups have no getopt expression
 
 ### Pending Todos
 
@@ -175,6 +180,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-29T08:59:20.348Z
-Stopped at: Completed 08-08-PLAN.md
+Last session: 2026-08-29T09:25:09.129Z
+Stopped at: Completed 08-09-PLAN.md
 Resume file: None
