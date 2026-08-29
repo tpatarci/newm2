@@ -76,6 +76,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -2466,4 +2467,512 @@ TEST_CASE("A long title on a short window is shortened to fit its tab, still leg
     CHECK_FALSE(contains(errs, "BadValue"));
     CHECK_FALSE(contains(errs, "BadDrawable"));
     CHECK_FALSE(contains(errs, "RenderBadPicture"));
+}
+
+
+// ===========================================================================
+// [wm_menulabel] -- the root menu highlight must not erase the row's label
+//
+// Found by the operator's manual XRDP pass and reproduced on plain Xvfb, so it
+// is not remote-desktop-specific. Both of menu()'s drawing paths fill a row
+// rectangle and never redraw the text inside it:
+//
+//   MotionNotify -- fills the PREVIOUS row with the background colour (erasing
+//                   its label) and the NEW row with the highlight colour
+//                   (painting over its label). Neither redraws the label.
+//   Expose       -- draws every label in a loop and THEN fills the selected row
+//                   on top of the text it has just drawn.
+//
+// So the row under the pointer goes blank, and the row you just left stays
+// blank. openCategorySubmenu() has the identical pair of bugs.
+//
+// GEOMETRY IS DISCOVERED, NOT ASSUMED. The menu's row height depends on the
+// font and its row COUNT depends on how many applications the host has
+// installed (08-13's flake note), so this case never computes a row rectangle.
+// It finds the highlight fill by its COLOUR -- the bounding box of the
+// configured highlight pixel -- and counts foreground ink strictly inside that
+// box. The box excludes the menu's 1 px border verticals by construction,
+// which matters: the border is drawn in the FOREGROUND colour and would
+// otherwise contribute a constant ~40 px of "ink" to every measurement and mask
+// the very loss this case exists to detect.
+//
+// EVERY CAPTURE HAPPENS WHILE BUTTON1 IS HELD. menu() runs a nested event loop
+// under a pointer grab and unmaps the window on release, so a capture taken
+// after the release would find nothing at all. The root menu is Button1, not
+// Button3.
+// ===========================================================================
+
+namespace {
+
+// A raw pixel grid, because this case needs pixel POSITIONS and not just a
+// histogram: it locates the highlight band before it can count ink inside it.
+struct Bitmap {
+    int w = 0, h = 0;
+    std::vector<unsigned long> px;
+    bool valid() const { return w > 0 && h > 0 && !px.empty(); }
+    unsigned long at(int x, int y) const {
+        return px[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)];
+    }
+};
+
+// Read through ROOT for the same reason captureRoot() does: menu windows are
+// plain rectangles, but reading root keeps one convention for every pixel
+// assertion in this file.
+Bitmap captureRootBitmap(Display* d, const Rect& r)
+{
+    Bitmap b;
+    if (r.w <= 0 || r.h <= 0) return b;
+
+    const int x = std::max(0, r.x);
+    const int y = std::max(0, r.y);
+    const int w = std::min(r.w, kScreenW - x);
+    const int h = std::min(r.h, kScreenH - y);
+    if (w <= 0 || h <= 0) return b;
+
+    XImage* img = XGetImage(d, DefaultRootWindow(d), x, y,
+                            static_cast<unsigned>(w), static_cast<unsigned>(h),
+                            AllPlanes, ZPixmap);
+    if (!img) return b;
+
+    b.w = w;
+    b.h = h;
+    b.px.resize(static_cast<size_t>(w) * static_cast<size_t>(h));
+    for (int iy = 0; iy < h; ++iy) {
+        for (int ix = 0; ix < w; ++ix) {
+            b.px[static_cast<size_t>(iy) * static_cast<size_t>(w) +
+                 static_cast<size_t>(ix)] = XGetPixel(img, ix, iy);
+        }
+    }
+    XDestroyImage(img);
+    return b;
+}
+
+// Bounding box of every pixel equal to `pixel`. Returns false when there are
+// none, which is how "no row is highlighted" is observed.
+bool pixelBounds(const Bitmap& b, unsigned long pixel,
+                 int& x0, int& y0, int& x1, int& y1)
+{
+    x0 = b.w; y0 = b.h; x1 = -1; y1 = -1;
+    for (int y = 0; y < b.h; ++y) {
+        for (int x = 0; x < b.w; ++x) {
+            if (b.at(x, y) != pixel) continue;
+            if (x < x0) x0 = x;
+            if (y < y0) y0 = y;
+            if (x > x1) x1 = x;
+            if (y > y1) y1 = y;
+        }
+    }
+    return x1 >= 0 && y1 >= 0;
+}
+
+long countInBox(const Bitmap& b, unsigned long pixel,
+                int x0, int y0, int x1, int y1)
+{
+    long count = 0;
+    for (int y = std::max(0, y0); y <= std::min(b.h - 1, y1); ++y) {
+        for (int x = std::max(0, x0); x <= std::min(b.w - 1, x1); ++x) {
+            if (b.at(x, y) == pixel) ++count;
+        }
+    }
+    return count;
+}
+
+long countAll(const Bitmap& b, unsigned long pixel)
+{
+    return countInBox(b, pixel, 0, 0, b.w - 1, b.h - 1);
+}
+
+}  // namespace
+
+
+// Move the pointer to (cx,cy) REPEATEDLY until `pred` holds.
+//
+// A single moveTo() is not enough and the reason is a real property of the code
+// under test, not a timing guess. menu()'s MotionNotify handler opens with
+//
+//     if (!drawn) break;
+//
+// so a motion that arrives before the Expose handler has run is DISCARDED
+// OUTRIGHT, and nothing ever replays it -- the pointer is already where we put
+// it, so no further motion is generated and the highlight never appears.
+// openRootMenu() waits for the menu to be "drawn", but it infers that from the
+// pixels on screen, which can show a second colour slightly before the WM has
+// finished its Expose handler.
+//
+// MEASURED: 2 failures in 20 ASan runs, both this exact wait timing out at 20 s,
+// and 0 in the debug tree -- the sanitizer widens the map-to-Expose window. This
+// is the same family as 08-13's three flake fixes and as deferred item 9.
+//
+// The nudge alternates x by one pixel so every iteration is a genuine position
+// CHANGE (XTEST emits nothing for a move to where the pointer already is), and
+// stays within the same row so it cannot select a different entry.
+bool nudgeUntil(XTestDriver& driver, int cx, int cy,
+                const std::function<bool()>& pred, int timeoutMs = 20000)
+{
+    int toggle = 0;
+    return WmFixture::pollUntil([&] {
+        driver.moveTo(cx + (toggle++ % 2), cy);
+        return pred();
+    }, timeoutMs);
+}
+
+
+// openRootMenu(), but VERIFIED and retried.
+//
+// The WM's own menu window is sometimes already invalid by the time menu() runs:
+// XMoveResizeWindow, XMapRaised and XUnmapWindow all come back BadWindow for it
+// and no menu ever appears. MEASURED on the ASan tree, 1 run in 10, with the
+// WM's stderr showing exactly that request triple against its own m_menuWindow
+// id. It is a PRE-EXISTING defect -- see deferred item 17 -- and user-visible:
+// the root menu simply does not open.
+//
+// findOpenMenu() falls back to "the first viewable child" when nothing contains
+// the press point, so when the menu is missing the caller silently receives some
+// unrelated window and every later assertion measures the wrong pixels. This
+// wrapper closes that hole: it insists the window it returns is viewable AND
+// contains the press point, and retries the whole press/release cycle if not.
+//
+// Retrying rather than waiting longer is 08-06's remedy for deferred item 10,
+// for the same reason: no amount of extra waiting fixes an interaction that
+// never started.
+bool openRootMenuVerified(Display* d, XTestDriver& driver, int x, int y,
+                          Window& menuOut, Rect& rectOut, std::string& whyOut)
+{
+    constexpr int kAttempts = 3;
+    for (int attempt = 0; attempt < kAttempts; ++attempt) {
+        if (openRootMenu(d, driver, x, y, menuOut, rectOut) &&
+            menuOut != None && isViewable(d, menuOut) &&
+            x >= rectOut.x && x < rectOut.x + rectOut.w &&
+            y >= rectOut.y && y < rectOut.y + rectOut.h) {
+            return true;
+        }
+        whyOut = "attempt " + std::to_string(attempt + 1) +
+                 ": menu=" + std::to_string(menuOut) +
+                 " rect=" + describe(rectOut) +
+                 " viewable=" + std::to_string(menuOut != None && isViewable(d, menuOut));
+        // Release the press this attempt is still holding before trying again,
+        // clear of the menu so nothing is selected.
+        driver.moveTo(kScreenW - 5, kScreenH - 5);
+        driver.release(Button1);
+        XSync(d, False);
+        settleWm(d);
+    }
+    return false;
+}
+
+TEST_CASE("Highlighting a root-menu row does not erase its label, and neither "
+          "does leaving it", "[wm_menulabel]")
+{
+    WmFixture fixture(cleanFixture({"--menu-background=blue",
+                                    "--menu-foreground=red",
+                                    "--menu-highlight=green"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());   // throws if XTEST is unavailable
+    parkPointer(d);
+
+    const unsigned long fg = namedPixel(d, "red");
+    const unsigned long hl = namedPixel(d, "green");
+    REQUIRE(fg != ~0UL);
+    REQUIRE(hl != ~0UL);
+    REQUIRE(fg != hl);
+
+    Window menu = None;
+    Rect menuRect;
+    std::string why;
+    INFO("menu open diagnostics: " << why);
+    REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                 menu, menuRect, why));
+
+    // --- A: nothing hovered. selecting is -1 until the first MotionNotify, so
+    //     the initial Expose draws every label and highlights nothing.
+    const Bitmap before = captureRootBitmap(d, menuRect);
+    REQUIRE(before.valid());
+    REQUIRE(countAll(before, hl) == 0);          // control: no highlight yet
+
+    // --- B: hover row 0. Row 0 is always the "New" entry (menuLabelFn), never a
+    //     category row -- deliberately, because hovering a CATEGORY row opens a
+    //     submenu (D-03/D-04) and this case would then be measuring the wrong
+    //     window. The y offset is selectFirstMenuEntry()'s, which lands in row 0
+    //     whatever the font's entry height is.
+    REQUIRE(nudgeUntil(driver, menuRect.x + menuRect.w / 2, menuRect.y + 14, [&] {
+        return countAll(captureRootBitmap(d, menuRect), hl) > 0;
+    }));
+    const Bitmap hovered = captureRootBitmap(d, menuRect);
+    REQUIRE(hovered.valid());
+
+    // The highlight fill IS the row rectangle. Discovering it by colour avoids
+    // recomputing entryHeight, which depends on the font.
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    REQUIRE(pixelBounds(hovered, hl, x0, y0, x1, y1));
+
+    // --- B2: RE-EXPOSE the menu while row 0 is still selected.
+    //
+    // menu()'s Expose handler has its own ordering of the same two operations,
+    // and it is only wrong when a row IS selected -- the FIRST exposure always
+    // happens with selecting == -1, so the initial draw looks correct however
+    // the handler is ordered. Without this step the Expose ordering is an
+    // uncovered branch: measured, the mutation that reverts it stayed green.
+    //
+    // Damage is inflicted the way a real desktop inflicts it -- another window
+    // briefly covering the menu. The cover is override-redirect so the WM
+    // ignores it entirely (eventCreate returns immediately) and it cannot be
+    // framed or managed.
+    {
+        XSetWindowAttributes at;
+        at.override_redirect = True;
+        Window cover = XCreateSimpleWindow(d, DefaultRootWindow(d),
+                                           menuRect.x, menuRect.y,
+                                           static_cast<unsigned>(menuRect.w),
+                                           static_cast<unsigned>(menuRect.h),
+                                           0, BlackPixel(d, DefaultScreen(d)),
+                                           BlackPixel(d, DefaultScreen(d)));
+        XChangeWindowAttributes(d, cover, CWOverrideRedirect, &at);
+        XMapRaised(d, cover);
+        XSync(d, False);
+        // The menu really is hidden before we uncover it, or the Expose we are
+        // waiting for may never be generated at all.
+        REQUIRE(WmFixture::pollUntil([&] {
+            return countAll(captureRootBitmap(d, menuRect), hl) == 0;
+        }, 20000));
+        XDestroyWindow(d, cover);
+        XSync(d, False);
+    }
+    // The WM has repainted when the highlight is back on screen.
+    REQUIRE(WmFixture::pollUntil([&] {
+        return countAll(captureRootBitmap(d, menuRect), hl) > 0;
+    }, 20000));
+    const Bitmap reExposed = captureRootBitmap(d, menuRect);
+    REQUIRE(reExposed.valid());
+
+    // --- C: leave the row without entering another. Same y, far off to the
+    //     right: menu() reads menu-relative coordinates (owner_events=False), so
+    //     x > maxWidth sets selecting = -1 and takes the UNHIGHLIGHT branch for
+    //     row 0. Moving along the same row cannot cross a category row, so no
+    //     submenu can open behind our backs. XTEST delivers one motion event at
+    //     the destination rather than a swept path, so there are no intermediate
+    //     rows either.
+    REQUIRE(nudgeUntil(driver, kScreenW - 6, menuRect.y + 14, [&] {
+        return countAll(captureRootBitmap(d, menuRect), hl) == 0;
+    }));
+    const Bitmap left = captureRootBitmap(d, menuRect);
+    REQUIRE(left.valid());
+
+    const long inkNormal      = countInBox(before,    fg, x0, y0, x1, y1);
+    const long inkHighlighted = countInBox(hovered,   fg, x0, y0, x1, y1);
+    const long inkReExposed   = countInBox(reExposed, fg, x0, y0, x1, y1);
+    const long inkAfterLeave  = countInBox(left,      fg, x0, y0, x1, y1);
+
+    std::printf("[wm2 menulabel] menu %s, highlight box (%d,%d)-(%d,%d)\n"
+                "[wm2 menulabel]   row 0 label ink, not hovered  %4ld px\n"
+                "[wm2 menulabel]   row 0 label ink, HOVERED      %4ld px\n"
+                "[wm2 menulabel]   row 0 label ink, RE-EXPOSED   %4ld px\n"
+                "[wm2 menulabel]   row 0 label ink, after LEAVE  %4ld px\n",
+                describe(menuRect).c_str(), x0, y0, x1, y1,
+                inkNormal, inkHighlighted, inkReExposed, inkAfterLeave);
+    std::fflush(stdout);
+
+    // Release before asserting: menu() holds a pointer grab in a nested loop,
+    // and a failed REQUIRE would otherwise leave the whole display grabbed and
+    // take every following case with it.
+    dismissMenu(d, driver);
+
+    // POSITIVE CONTROL. If row 0 draws no ink even unhovered, the colours or the
+    // capture are wrong and every assertion below would pass or fail for a
+    // reason that has nothing to do with the defect.
+    INFO("row 0 ink when not hovered: " << inkNormal << " px");
+    REQUIRE(inkNormal > 0);
+
+    // 1. THE HOVERED ROW KEEPS ITS LABEL. Before the fix the highlight fill is
+    //    painted over the text and nothing redraws it: measured ZERO.
+    INFO("ink " << inkNormal << " -> " << inkHighlighted << " while hovered");
+    CHECK(inkHighlighted > 0);
+    CHECK(inkHighlighted * 2 >= inkNormal);
+
+    // 2. AND IT SURVIVES A REPAINT. The Expose handler draws the whole menu
+    //    from scratch, and it is the one path where the ordering of "fill the
+    //    selected row" against "draw the labels" is only observable when a row
+    //    is actually selected.
+    INFO("ink " << inkNormal << " -> " << inkReExposed << " after re-exposure");
+    CHECK(inkReExposed > 0);
+    CHECK(inkReExposed * 2 >= inkNormal);
+
+    // 3. AND SO DOES THE ROW YOU JUST LEFT. This is the second half of the same
+    //    defect and it needs its own assertion: a fix that redrew the label only
+    //    on the highlight branch would satisfy (1) and still leave a blank row
+    //    behind the pointer.
+    INFO("ink " << inkNormal << " -> " << inkAfterLeave << " after leaving");
+    CHECK(inkAfterLeave > 0);
+    CHECK(inkAfterLeave * 2 >= inkNormal);
+
+    CHECK(fixture.wmAlive());
+}
+
+TEST_CASE("Highlighting a category submenu row does not erase its label either",
+          "[wm_menulabel]")
+{
+    // openCategorySubmenu() carried the IDENTICAL pair of defects as menu() and
+    // was fixed the same way. Without this case both submenu fixes are uncovered
+    // branches -- and a symmetric fix applied to two places is exactly the shape
+    // of change where one of the two silently gets missed.
+    //
+    // The submenu is only reachable if the host has applications to categorise,
+    // and 08-13 warned that menu content is host-dependent. That dependency is
+    // handled by PROVING the alternative rather than skipping: if no submenu
+    // opens, the menu must have had exactly one row, which is the only state in
+    // which there is no category to hover.
+    WmFixture fixture(cleanFixture({"--menu-background=blue",
+                                    "--menu-foreground=red",
+                                    "--menu-highlight=green"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    const unsigned long fg = namedPixel(d, "red");
+    const unsigned long hl = namedPixel(d, "green");
+    REQUIRE(fg != ~0UL);
+    REQUIRE(hl != ~0UL);
+
+    Window menu = None;
+    Rect menuRect;
+    std::string why;
+    INFO("menu open diagnostics: " << why);
+    REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                 menu, menuRect, why));
+
+    // Row height is MEASURED, not computed: hover row 0 and read back the
+    // height of the highlight fill. entryHeight depends on the menu font.
+    const bool gotHl = nudgeUntil(driver, menuRect.x + menuRect.w / 2,
+                                  menuRect.y + 14, [&] {
+        return countAll(captureRootBitmap(d, menuRect), hl) > 0;
+    });
+    INFO("DIAG menu=" << menu << " rect=" << describe(menuRect)
+         << " viewable=" << isViewable(d, menu)
+         << " nowRect=" << describe(rectOf(d, menu))
+         << " distinctPixels=" << captureRoot(d, menuRect).size()
+         << " rootChildren=" << childrenOf(d, DefaultRootWindow(d)).size());
+    INFO("DIAG wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(gotHl);
+
+    int hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+    REQUIRE(pixelBounds(captureRootBitmap(d, menuRect), hl, hx0, hy0, hx1, hy1));
+    const int entryHeight = hy1 - hy0 + 1;
+    REQUIRE(entryHeight > 0);
+
+    const int rowCount = (menuRect.h - 13) / entryHeight;
+    INFO("menu " << describe(menuRect) << ", entryHeight " << entryHeight
+         << ", rows " << rowCount);
+
+    // With no hidden clients, row 0 is "New" and row 1 is the first CATEGORY
+    // row -- hovering it opens the submenu (D-03/D-04), which is the behaviour
+    // this case needs and which the operator has decided to leave as designed.
+    const std::vector<Window> beforeChildren = childrenOf(d, DefaultRootWindow(d));
+
+    Window submenu = None;
+    // Nudged for the same reason as every other hover here: a motion that beats
+    // the Expose handler is dropped and never replayed.
+    const bool opened = nudgeUntil(driver, menuRect.x + menuRect.w / 2,
+                                   menuRect.y + 14 + entryHeight, [&] {
+        for (Window w : childrenOf(d, DefaultRootWindow(d))) {
+            if (w == menu) continue;
+            if (std::find(beforeChildren.begin(), beforeChildren.end(), w) !=
+                beforeChildren.end()) {
+                // Present before too -- only interesting if it has just become
+                // viewable, which is how the reused m_submenuWindow appears.
+                Rect r;
+                if (!isViewable(d, w) || !serverRect(d, w, r)) continue;
+                if (r.w <= 1 || r.h <= 1) continue;
+                if (w == menu) continue;
+                submenu = w;
+                return true;
+            }
+        }
+        return false;
+    });
+
+    if (!opened) {
+        // PROVE the alternative rather than skipping: the only state with no
+        // category to hover is a one-row menu.
+        dismissMenu(d, driver);
+        INFO("no submenu opened; menu row count was " << rowCount);
+        REQUIRE(rowCount <= 1);
+        WARN("host has no application categories -- submenu path not exercised");
+        return;
+    }
+
+    Rect subRect;
+    REQUIRE(serverRect(d, submenu, subRect));
+    REQUIRE(WmFixture::pollUntil([&] {
+        return captureRootBitmap(d, subRect).valid() &&
+               captureRoot(d, subRect).size() >= 2;         // drawn, not just mapped
+    }, 20000));
+
+    const Bitmap subBefore = captureRootBitmap(d, subRect);
+    REQUIRE(subBefore.valid());
+
+    // Hover the submenu's first row.
+    const bool subHighlighted =
+        nudgeUntil(driver, subRect.x + subRect.w / 2, subRect.y + 14, [&] {
+            return countAll(captureRootBitmap(d, subRect), hl) > 0;
+        });
+
+    Bitmap subHovered;
+    int sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0;
+    long subInkNormal = 0, subInkHighlighted = 0;
+    if (subHighlighted) {
+        subHovered = captureRootBitmap(d, subRect);
+        if (pixelBounds(subHovered, hl, sx0, sy0, sx1, sy1)) {
+            subInkNormal      = countInBox(subBefore,  fg, sx0, sy0, sx1, sy1);
+            subInkHighlighted = countInBox(subHovered, fg, sx0, sy0, sx1, sy1);
+        }
+    }
+
+    // Leave the submenu row along the SAME row, so prev2 is a valid index and
+    // openCategorySubmenu()'s UNHIGHLIGHT branch runs. Without this the submenu
+    // case only ever enters one row and never leaves it, so that branch is
+    // uncovered -- measured, the mutation that removes its redraw stayed green.
+    // Coordinates are submenu-relative (owner_events=False), so a large x is
+    // outside the submenu and sets selecting2 = -1.
+    long subInkAfterLeave = 0;
+    bool subLeft = false;
+    if (subHighlighted) {
+        subLeft = nudgeUntil(driver, kScreenW - 6, subRect.y + 14, [&] {
+            return countAll(captureRootBitmap(d, subRect), hl) == 0;
+        });
+        if (subLeft) {
+            subInkAfterLeave = countInBox(captureRootBitmap(d, subRect), fg,
+                                          sx0, sy0, sx1, sy1);
+        }
+    }
+
+    std::printf("[wm2 menulabel] submenu %s\n"
+                "[wm2 menulabel]   row 0 label ink, not hovered  %4ld px\n"
+                "[wm2 menulabel]   row 0 label ink, HOVERED      %4ld px\n"
+                "[wm2 menulabel]   row 0 label ink, after LEAVE  %4ld px\n",
+                describe(subRect).c_str(),
+                subInkNormal, subInkHighlighted, subInkAfterLeave);
+    std::fflush(stdout);
+
+    // Release well clear of both popups, so no application is launched: a
+    // release over a submenu row RUNS that entry.
+    driver.moveTo(kScreenW - 5, kScreenH - 5);
+    driver.release(Button1);
+    XSync(d, False);
+    settleWm(d);
+
+    REQUIRE(subHighlighted);
+    INFO("submenu ink " << subInkNormal << " -> " << subInkHighlighted
+         << " -> " << subInkAfterLeave);
+    REQUIRE(subInkNormal > 0);                    // positive control
+    CHECK(subInkHighlighted > 0);
+    CHECK(subInkHighlighted * 2 >= subInkNormal);
+
+    REQUIRE(subLeft);
+    CHECK(subInkAfterLeave > 0);
+    CHECK(subInkAfterLeave * 2 >= subInkNormal);
+
+    CHECK(fixture.wmAlive());
 }

@@ -237,6 +237,43 @@ void WindowManager::menu(XButtonEvent *e)
         XftDrawChange(m_menuDraw.get(), m_menuWindow);
     }
 
+    // Draw one row's label. Extracted so that EVERY path which fills a row
+    // rectangle can put the text back afterwards.
+    //
+    // Filling a row -- to highlight it, or to un-highlight the one before it --
+    // paints over the label that was there. Before this existed, no caller
+    // redrew it: the row under the pointer went blank and the row you had just
+    // left stayed blank. Found on a real XRDP session and reproduced on plain
+    // Xvfb, so it was never remote-desktop-specific.
+    //
+    // One definition, used by the Expose path and both MotionNotify branches, so
+    // a row drawn on hover cannot drift out of step with the same row drawn on
+    // exposure -- which is exactly the kind of duplication that let the two get
+    // out of step in the first place. The right-aligned Exit row is part of that
+    // shared definition rather than a special case at one call site.
+    auto drawRowLabel = [&](int i) {
+        if (i < 0 || i >= n) return;
+        const char* label = menuLabelFn(i);
+        int len = static_cast<int>(std::strlen(label));
+        XGlyphInfo extents;
+        XftTextExtentsUtf8(display(), m_menuFont,
+            reinterpret_cast<const FcChar8*>(label), len, &extents);
+        int dy = i * entryHeight + m_menuFont->ascent + 10;
+
+        if (allowExit && i == n - 1) {
+            // Right-aligned items (exit option only -- category rows also fall
+            // at index >= nh but must stay left-aligned)
+            XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
+                m_menuFont, maxWidth - 8 - static_cast<int>(extents.width), dy,
+                reinterpret_cast<const FcChar8*>(label), len);
+        } else {
+            // Left-aligned items
+            XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
+                m_menuFont, 8, dy,
+                reinterpret_cast<const FcChar8*>(label), len);
+        }
+    };
+
     if (attemptGrab(m_menuWindow, None, MenuGrabMask, e->time) != GrabSuccess) {
         XUnmapWindow(display(), m_menuWindow);
         return;
@@ -298,17 +335,22 @@ void WindowManager::menu(XButtonEvent *e)
             if (selecting == prev) break;
 
             if (prev >= 0 && prev < n) {
-                // Unhighlight previous: fill with background color
+                // Unhighlight previous: fill with background color, then put the
+                // label back -- the fill has just erased it.
                 XftDrawRect(m_menuDraw.get(), m_menuBgColor.get(),
                             4, prev * entryHeight + 9,
                             maxWidth - 8, entryHeight);
+                drawRowLabel(prev);
             }
 
             if (selecting >= 0 && selecting < n) {
-                // Highlight new selection: fill with highlight color
+                // Highlight new selection: fill with highlight color, then
+                // redraw the label ON TOP of it. The fill goes down first so the
+                // text is never the thing that gets painted over.
                 XftDrawRect(m_menuDraw.get(), m_menuHlColor.get(),
                             4, selecting * entryHeight + 9,
                             maxWidth - 8, entryHeight);
+                drawRowLabel(selecting);
             }
 
             if (selecting >= nh && selecting < nh + numCategories) {
@@ -337,33 +379,18 @@ void WindowManager::menu(XButtonEvent *e)
             XftDrawRect(m_menuDraw.get(), m_menuFgColor.get(),
                         maxWidth - 3, 7, 1, totalHeight - 10);  // right
 
-            for (int i = 0; i < n; ++i) {
-                const char* label = menuLabelFn(i);
-                int len = static_cast<int>(std::strlen(label));
-                XGlyphInfo extents;
-                XftTextExtentsUtf8(display(), m_menuFont,
-                    reinterpret_cast<const FcChar8*>(label), len, &extents);
-                int dx = extents.width;
-                int dy = i * entryHeight + m_menuFont->ascent + 10;
-
-                if (allowExit && i == n - 1) {
-                    // Right-aligned items (exit option only -- category rows
-                    // also fall at index >= nh but must stay left-aligned)
-                    XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
-                        m_menuFont, maxWidth - 8 - dx, dy,
-                        reinterpret_cast<const FcChar8*>(label), len);
-                } else {
-                    // Left-aligned items
-                    XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
-                        m_menuFont, 8, dy,
-                        reinterpret_cast<const FcChar8*>(label), len);
-                }
-            }
-
+            // ORDER IS LOAD-BEARING: the highlight fill goes down BEFORE the
+            // labels, so the text is drawn on top of it. This used to be the
+            // other way round -- every label drawn, then the selected row filled
+            // over the top -- which blanked the selected row on every exposure.
             if (selecting >= 0 && selecting < n) {
                 XftDrawRect(m_menuDraw.get(), m_menuHlColor.get(),
                             4, selecting * entryHeight + 9,
                             maxWidth - 8, entryHeight);
+            }
+
+            for (int i = 0; i < n; ++i) {
+                drawRowLabel(i);
             }
 
             drawn = true;
@@ -457,6 +484,23 @@ void WindowManager::openCategorySubmenu(const std::pair<std::string, std::vector
         XftDrawChange(m_submenuDraw.get(), m_submenuWindow);
     }
 
+    // The submenu's equivalent of menu()'s drawRowLabel. Submenu rows are always
+    // plain app entries -- no "New" and no Exit row -- so everything is
+    // left-aligned and there is no right-aligned special case here.
+    //
+    // The submenu carried the IDENTICAL pair of defects as the outer menu (fill
+    // without redraw on motion, labels then fill on exposure) and is fixed the
+    // same way, because it is the same bug and not a similar one.
+    auto drawSubRowLabel = [&](int i) {
+        if (i < 0 || i >= n2) return;
+        const char* label = category.second[i].name.c_str();
+        int len = static_cast<int>(std::strlen(label));
+        int dy = i * entryHeight + m_menuFont->ascent + 10;
+        XftDrawStringUtf8(m_submenuDraw.get(), m_menuFgColor.get(),
+            m_menuFont, 8, dy,
+            reinterpret_cast<const FcChar8*>(label), len);
+    };
+
     // T-7-09: release the outer menu's grab before attempting the submenu's
     // grab, and if the submenu grab fails, re-grab the outer menu so the
     // pointer is never left ungrabbed mid-interaction.
@@ -531,17 +575,19 @@ void WindowManager::openCategorySubmenu(const std::pair<std::string, std::vector
                 if (selecting2 == prev2) break;
 
                 if (prev2 >= 0 && prev2 < n2) {
-                    // Unhighlight previous
+                    // Unhighlight previous, then put its label back.
                     XftDrawRect(m_submenuDraw.get(), m_menuBgColor.get(),
                                 4, prev2 * entryHeight + 9,
                                 submenuMaxWidth - 8, entryHeight);
+                    drawSubRowLabel(prev2);
                 }
 
                 if (selecting2 >= 0 && selecting2 < n2) {
-                    // Highlight new selection
+                    // Highlight new selection, then redraw its label on top.
                     XftDrawRect(m_submenuDraw.get(), m_menuHlColor.get(),
                                 4, selecting2 * entryHeight + 9,
                                 submenuMaxWidth - 8, entryHeight);
+                    drawSubRowLabel(selecting2);
                 }
             }
             break;
@@ -561,21 +607,17 @@ void WindowManager::openCategorySubmenu(const std::pair<std::string, std::vector
             XftDrawRect(m_submenuDraw.get(), m_menuFgColor.get(),
                         submenuMaxWidth - 3, 7, 1, totalHeight - 10);  // right
 
-            for (int i = 0; i < n2; ++i) {
-                // Submenu rows are always plain app entries -- no
-                // "New"/Exit rows, so everything is left-aligned.
-                const char* label = category.second[i].name.c_str();
-                int len = static_cast<int>(std::strlen(label));
-                int dy = i * entryHeight + m_menuFont->ascent + 10;
-                XftDrawStringUtf8(m_submenuDraw.get(), m_menuFgColor.get(),
-                    m_menuFont, 8, dy,
-                    reinterpret_cast<const FcChar8*>(label), len);
-            }
-
+            // ORDER IS LOAD-BEARING, exactly as in menu()'s Expose handler: the
+            // highlight fill goes down BEFORE the labels so the text lands on
+            // top of it, not under it.
             if (selecting2 >= 0 && selecting2 < n2) {
                 XftDrawRect(m_submenuDraw.get(), m_menuHlColor.get(),
                             4, selecting2 * entryHeight + 9,
                             submenuMaxWidth - 8, entryHeight);
+            }
+
+            for (int i = 0; i < n2; ++i) {
+                drawSubRowLabel(i);
             }
 
             drawn2 = true;
