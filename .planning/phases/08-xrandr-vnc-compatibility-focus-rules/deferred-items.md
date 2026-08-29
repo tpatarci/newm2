@@ -851,3 +851,59 @@ and the button belongs to the active decoration. Recorded because it cost time
 once and will again: any future case that drives the tab button must activate
 the client first (`tests/test_wm_runtime.cpp` does, and says why at the call
 site).
+
+## 17. The WM's own menu window can be invalid, so the root menu silently never opens (PRE-EXISTING)
+
+**Found during:** 08-14, by the new `[wm_menulabel]` cases. Not caused by the
+menu-label fix those cases exist for: the failing requests are the ones
+`menu()` has always issued.
+
+**Symptom:** a Button1 press on root produces **no menu at all**. The WM keeps
+running and logs three protocol errors against **its own** menu window id:
+
+```
+wm2: X_ConfigureWindow (0x600023): BadWindow (invalid Window parameter)
+wm2: X_MapWindow       (0x600023): BadWindow (invalid Window parameter)
+wm2: X_UnmapWindow     (0x600023): BadWindow (invalid Window parameter)
+```
+
+Those are exactly `menu()`'s opening `XMoveResizeWindow`, its `XMapRaised`, and
+the `XUnmapWindow` on the way back out — so `m_menuWindow` is already a dead XID
+by the time the user clicks.
+
+**Measured:** 1 run in 10 on the ASan tree; not observed in the debug tree. The
+sanitizer is slower, which is consistent with a lifetime race rather than a
+deterministic bug.
+
+**Why it matters to a user:** the root menu is the *entire* interface for
+launching a window, restoring a hidden one, and exiting the window manager. When
+this fires, clicking the root does nothing at all and the only feedback is a line
+on stderr nobody is reading.
+
+**Likely mechanism, NOT confirmed:** deferred item 7 — the WM adopts its own
+menu, submenu and EWMH check windows as ordinary clients via
+`scanInitialWindows()`, because they are created with plain
+`XCreateSimpleWindow` and so are not `override_redirect`. Anything that takes a
+`Client` through a destroy path is then holding one of the WM's own windows. That
+is a hypothesis from the shape of the evidence, not a traced cause; nobody has
+caught it under a debugger.
+
+**Harness workaround in place, and it is a workaround:**
+`openRootMenuVerified()` in `tests/test_wm_runtime.cpp` insists the window it
+returns is viewable AND contains the press point, and retries the whole
+press/release cycle up to three times. This is 08-06's remedy for item 10 applied
+to the same class of problem — retry rather than wait longer, because no amount
+of waiting fixes an interaction that never started. Measured after the change:
+**0 failures in 25 ASan runs**, from 1 in 10 before.
+
+The wrapper also closes a real hole in `findOpenMenu()`, which falls back to "the
+first viewable child" when nothing contains the press point. When the menu is
+missing, that silently hands the caller an unrelated window and every later
+assertion measures the wrong pixels — which is how this defect spent its first
+hour disguised as a flaky test.
+
+**Disposition:** deferred. It is a genuine user-facing defect and it should be
+fixed at the source, most plausibly by giving the three WM-internal windows
+`override_redirect` at creation (which also closes item 7) rather than by
+hardening `menu()` against its own window having been destroyed. Natural owner is
+whoever takes item 7.
