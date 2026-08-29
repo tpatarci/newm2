@@ -162,6 +162,29 @@ bool awaitFramed(Display* d, Window w, int timeoutMs)
 //
 // WM_TRANSIENT_FOR is set BEFORE the map, because Client::getTransient() runs
 // during MapRequest handling.
+// Ask the WM not to focus this window when it is mapped.
+//
+// Added by plan 08-08. FOCUS-01 gave the WM a map-time focus decision it did not
+// previously have: a normal window that publishes no _NET_WM_USER_TIME is now
+// GRANTED focus as it is mapped (deliberately -- D-19, so legacy X clients do
+// not feel broken). Two cases in this file need a managed window that is NOT
+// focused, and until 08-08 they got that for free because the WM focused nothing
+// at map time.
+//
+// A user-time of exactly zero is the EWMH's explicit "do not focus me on map",
+// so this is the mechanism the spec provides for constructing that precondition
+// rather than a trick. It must be set BEFORE the map request: the WM reads the
+// property during Client::manage(), and a write afterwards would race the very
+// read it is meant to govern.
+void setDoNotFocusOnMap(Display* d, Window w)
+{
+    static Atom userTime = None;
+    if (userTime == None) userTime = XInternAtom(d, "_NET_WM_USER_TIME", False);
+    unsigned long zero = 0;
+    XChangeProperty(d, w, userTime, XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&zero), 1);
+}
+
 Window createTransientWindow(Display* d, int x, int y, int w, int h)
 {
     Window root = DefaultRootWindow(d);
@@ -173,6 +196,10 @@ Window createTransientWindow(Display* d, int x, int y, int w, int h)
     // honoured (Client::getTransient() only rejects a SELF-referencing hint)
     // and no second client is created as a side effect.
     XSetTransientForHint(d, win, root);
+    // The circulate case below requires that nothing is active, so that
+    // circulate(true) cannot short-circuit on m_activeClient. See
+    // setDoNotFocusOnMap() for why that is no longer the default.
+    setDoNotFocusOnMap(d, win);
     XMapWindow(d, win);
     XSync(d, False);
     return win;
@@ -399,6 +426,13 @@ TEST_CASE("Synthesised XTEST input on a client's tab activates that window",
     Window target = XCreateSimpleWindow(d.get(), root, 320, 200, 220, 160, 0,
                                         BlackPixel(d.get(), DefaultScreen(d.get())),
                                         WhitePixel(d.get(), DefaultScreen(d.get())));
+    // Neither may be focused simply by appearing: the case asserts that a TAB
+    // CLICK activates the target, and since plan 08-08 a window that publishes
+    // no user-time is granted focus at map time, which would have made the
+    // post-click assertion pass without the click. See setDoNotFocusOnMap().
+    setDoNotFocusOnMap(d.get(), first);
+    setDoNotFocusOnMap(d.get(), target);
+
     XMapWindow(d.get(), first);
     XMapWindow(d.get(), target);
     XSync(d.get(), False);
