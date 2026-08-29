@@ -213,7 +213,7 @@ TEST_CASE("The class criterion is tested against both the instance and the class
 // -----------------------------------------------------------------------------
 TEST_CASE("A rule with no criteria matches nothing", "[rules]") {
     WindowRule r;
-    r.noDecorate = RuleTriState::True;  // an action, but nothing to match on
+    r.noDecorate = RuleTriState::On;  // an action, but nothing to match on
 
     REQUIRE_FALSE(ruleMatches(r, facts("navigator", "Firefox")));
     REQUIRE_FALSE(ruleMatches(r, facts("", "")));
@@ -229,7 +229,7 @@ TEST_CASE("A rule with no criteria matches nothing", "[rules]") {
 // -----------------------------------------------------------------------------
 TEST_CASE("Folding matching rules yields the last value set for each action", "[rules]") {
     WindowRule broad = classRule("Firefox");
-    broad.noDecorate = RuleTriState::True;
+    broad.noDecorate = RuleTriState::On;
     broad.hasPosition = true;
     broad.posX = 100;
     broad.posY = 100;
@@ -250,7 +250,7 @@ TEST_CASE("Folding matching rules yields the last value set for each action", "[
                                  facts("navigator", "Firefox"));
 
     // Only the broad rule set no-decorate, so its value survives.
-    REQUIRE(out.noDecorate == RuleTriState::True);
+    REQUIRE(out.noDecorate == RuleTriState::On);
     // Both set position; the later one wins.
     REQUIRE(out.hasPosition);
     REQUIRE(out.posX == 640);
@@ -269,16 +269,16 @@ TEST_CASE("Folding matching rules yields the last value set for each action", "[
 // -----------------------------------------------------------------------------
 TEST_CASE("A later rule setting an action false overrides an earlier true", "[rules]") {
     WindowRule first = classRule("Firefox");
-    first.noDecorate = RuleTriState::True;
-    first.skipTaskbar = RuleTriState::True;
+    first.noDecorate = RuleTriState::On;
+    first.skipTaskbar = RuleTriState::On;
 
     WindowRule second = classRule("Firefox");
-    second.noDecorate = RuleTriState::False;
+    second.noDecorate = RuleTriState::Off;
 
     RuleOutcome out = applyRules({first, second}, facts("navigator", "Firefox"));
 
-    REQUIRE(out.noDecorate == RuleTriState::False);
-    REQUIRE(out.skipTaskbar == RuleTriState::True);
+    REQUIRE(out.noDecorate == RuleTriState::Off);
+    REQUIRE(out.skipTaskbar == RuleTriState::On);
 }
 
 // =============================================================================
@@ -337,14 +337,14 @@ TEST_CASE("A match line following an action line opens a second rule", "[rules]"
 
     REQUIRE(cfg.rules[0].hasMatchClass);
     REQUIRE(cfg.rules[0].matchClass == "Firefox");
-    REQUIRE(cfg.rules[0].noDecorate == RuleTriState::True);
+    REQUIRE(cfg.rules[0].noDecorate == RuleTriState::On);
     // The second rule's criterion must NOT have leaked backwards.
     REQUIRE_FALSE(cfg.rules[0].hasMatchType);
     REQUIRE(cfg.rules[0].skipTaskbar == RuleTriState::Unset);
 
     REQUIRE(cfg.rules[1].hasMatchType);
     REQUIRE(cfg.rules[1].matchType == RuleWindowType::Dialog);
-    REQUIRE(cfg.rules[1].skipTaskbar == RuleTriState::True);
+    REQUIRE(cfg.rules[1].skipTaskbar == RuleTriState::On);
     // ... and the first rule's criterion must not have leaked forwards.
     REQUIRE_FALSE(cfg.rules[1].hasMatchClass);
     REQUIRE(cfg.rules[1].noDecorate == RuleTriState::Unset);
@@ -374,7 +374,7 @@ TEST_CASE("Consecutive match and mode lines attach to the same rule", "[rules]")
     REQUIRE(r.hasMatchType);
     REQUIRE(r.matchType == RuleWindowType::Normal);
     REQUIRE(r.mode == RuleMatchMode::Exact);
-    REQUIRE(r.noDecorate == RuleTriState::True);
+    REQUIRE(r.noDecorate == RuleTriState::On);
 
     // All four criteria are AND-ed, and the mode really did take effect.
     REQUIRE(ruleMatches(r, facts("navigator", "Firefox", RuleWindowType::Normal)));
@@ -422,7 +422,7 @@ TEST_CASE("An action with no preceding match line warns and produces no rule", "
 
     REQUIRE(cfg2.rules.size() == 1);
     REQUIRE(cfg2.rules[0].matchClass == "Firefox");
-    REQUIRE(cfg2.rules[0].noDecorate == RuleTriState::True);
+    REQUIRE(cfg2.rules[0].noDecorate == RuleTriState::On);
     REQUIRE_FALSE(cfg2.rules[0].hasPosition);
 
     removeTempFile(orphanOnly);
@@ -539,7 +539,7 @@ TEST_CASE("A malformed position or size warns and leaves that action unset", "[r
     REQUIRE(sizeText.find("rule-size") != std::string::npos);
     REQUIRE(sizeCfg.rules.size() == 1);
     REQUIRE_FALSE(sizeCfg.rules[0].hasSize);
-    REQUIRE(sizeCfg.rules[0].skipTaskbar == RuleTriState::True);
+    REQUIRE(sizeCfg.rules[0].skipTaskbar == RuleTriState::On);
 
     removeTempFile(path);
     removeTempFile(noComma);
@@ -578,10 +578,10 @@ TEST_CASE("A config file of only rule lines produces no unknown-key warnings", "
     REQUIRE(cfg.rules[0].hasMatchName);
     REQUIRE(cfg.rules[0].hasMatchType);
     REQUIRE(cfg.rules[0].mode == RuleMatchMode::Substring);
-    REQUIRE(cfg.rules[0].noDecorate == RuleTriState::True);
+    REQUIRE(cfg.rules[0].noDecorate == RuleTriState::On);
     REQUIRE(cfg.rules[0].hasPosition);
     REQUIRE(cfg.rules[0].hasSize);
-    REQUIRE(cfg.rules[0].skipTaskbar == RuleTriState::True);
+    REQUIRE(cfg.rules[0].skipTaskbar == RuleTriState::On);
 
     removeTempFile(path);
 }
@@ -652,7 +652,7 @@ TEST_CASE("Rules append across the system-then-user chain without merging groups
     // User rule, appended after the system rules in file order.
     REQUIRE(cfg.rules[2].hasMatchClass);
     REQUIRE(cfg.rules[2].matchClass == "XTerm");
-    REQUIRE(cfg.rules[2].noDecorate == RuleTriState::True);
+    REQUIRE(cfg.rules[2].noDecorate == RuleTriState::On);
 
     // The mirror case: a system file ending on an ACTION line followed by a
     // user file beginning with a match key gives two rules, not one.

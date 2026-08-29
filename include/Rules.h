@@ -61,10 +61,14 @@ struct RuleWindowFacts {
 // rule did not mention no-decorate" from "this rule turned no-decorate off" if
 // the field is a plain bool -- every later rule would carry a default-false
 // value and unconditionally clobber whatever an earlier rule had set.
+// The enumerator names avoid True/False deliberately: Xlib #defines both as
+// object-like macros, and Config.h includes this header, so any translation
+// unit that includes X11 before Config.h would have the enumerators textually
+// replaced by 0 and 1 and fail to compile.
 enum class RuleTriState {
     Unset,
-    False,
-    True
+    Off,
+    On
 };
 
 // One rule: the criteria that select a window, and the actions to apply to it.

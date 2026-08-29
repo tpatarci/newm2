@@ -85,6 +85,13 @@ void Config::applyFile(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) return;  // File doesn't exist -- skip silently
 
+    // Rule grouping state is PER FILE (D-20). A rule left open at the end of
+    // the system config file must not swallow the first match key of the user
+    // config file, and a trailing action there must not be the boundary that
+    // opens the user file's first rule. The accumulated `rules` vector is
+    // deliberately NOT reset -- rules append across layers in file order.
+    RuleParseState ruleState;
+
     std::string line;
     int lineNum = 0;
     while (std::getline(file, line)) {
@@ -125,7 +132,7 @@ void Config::applyFile(const std::string& path) {
             continue;
         }
 
-        applyKeyValue(key, value);
+        applyKeyValue(key, value, ruleState);
     }
 }
 
@@ -134,6 +141,11 @@ void Config::applyFile(const std::string& path) {
 // =============================================================================
 
 void Config::applyKeyValue(const std::string& key, const std::string& value) {
+    applyKeyValue(key, value, ruleParseState);
+}
+
+void Config::applyKeyValue(const std::string& key, const std::string& value,
+                           RuleParseState& ruleState) {
     // String settings (colors)
     if (key == "tab-foreground")      { tabForeground = value; return; }
     if (key == "tab-background")      { tabBackground = value; return; }
@@ -223,6 +235,178 @@ void Config::applyKeyValue(const std::string& key, const std::string& value) {
             return;
         }
         manualMenuEntries.back().category = value;
+        return;
+    }
+
+    // =========================================================================
+    // Window rules (RULES-01, D-20/D-21/D-22)
+    //
+    // Rules are repeated ORDERED key groups in this same key=value file. There
+    // is deliberately no second file format and no numbered-key scheme
+    // (rule-1-match-class=); this follows the menu-entry accumulator above,
+    // which is the precedent D-20 names.
+    //
+    // The grouping rule is one sentence a non-programmer can hold:
+    //
+    //     A NEW RULE BEGINS AT THE FIRST MATCH-OR-MODE LINE THAT FOLLOWS AN
+    //     ACTION LINE, OR AT THE VERY FIRST RULE LINE IN THE FILE.
+    //
+    // Consecutive match and mode lines attach to the rule currently open and
+    // are AND-ed (D-21); action lines attach to that same open rule. Keys that
+    // are not rule keys are transparent -- they leave the grouping state
+    // exactly as they found it. So:
+    //
+    //     rule-match-class = Firefox      # opens rule 1
+    //     rule-match-name  = navigator    # AND-ed into rule 1
+    //     rule-position    = 100,100      # action on rule 1
+    //     rule-size        = 800x600      # action on rule 1
+    //     rule-match-type  = dialog       # action boundary crossed -> rule 2
+    //     rule-no-decorate = true         # action on rule 2
+    //
+    // ruleState is per-file when the caller is applyFile(), and a member when
+    // the caller is the public single-pair applyKeyValue(). Both are explicit
+    // for the same reason: implicit "is a rule open?" state derived from
+    // rules.empty() would let a system file's last rule absorb the first match
+    // key of the user file.
+    //
+    // Deliberately NO CLI flags for any of this. Repeated ordered groups do not
+    // map onto getopt's scalar option model -- there is no way to express "this
+    // --rule-position belongs to that --rule-match-class" on a command line --
+    // and the existing enable/negate flag pairs exist for scalar booleans only.
+    // The omission is a decision, not an oversight.
+    // =========================================================================
+
+    const bool isRuleMatchKey =
+        (key == "rule-match-class" || key == "rule-match-name" ||
+         key == "rule-match-type"  || key == "rule-match-mode");
+
+    const bool isRuleActionKey =
+        (key == "rule-no-decorate" || key == "rule-position" ||
+         key == "rule-size"        || key == "rule-skip-taskbar");
+
+    if (isRuleMatchKey) {
+        if (!ruleState.ruleOpen || ruleState.ruleLastWasAction) {
+            rules.push_back(WindowRule());
+            ruleState.ruleOpen = true;
+        }
+        ruleState.ruleLastWasAction = false;
+
+        WindowRule& rule = rules.back();
+
+        if (key == "rule-match-class") {
+            rule.hasMatchClass = true;
+            rule.matchClass = value;
+            return;
+        }
+
+        if (key == "rule-match-name") {
+            rule.hasMatchName = true;
+            rule.matchName = value;
+            return;
+        }
+
+        if (key == "rule-match-type") {
+            // Exactly the four types the WM distinguishes. UTILITY, SPLASH and
+            // TOOLBAR are collapsed into Normal at runtime (D-04), so accepting
+            // those spellings here would hand the user a rule that silently
+            // never fires -- a warning is strictly more useful than that.
+            std::string lower = toLower(value);
+            if      (lower == "normal")       rule.matchType = RuleWindowType::Normal;
+            else if (lower == "dock")         rule.matchType = RuleWindowType::Dock;
+            else if (lower == "dialog")       rule.matchType = RuleWindowType::Dialog;
+            else if (lower == "notification") rule.matchType = RuleWindowType::Notification;
+            else {
+                std::fprintf(stderr,
+                             "wm2: warning: config key 'rule-match-type': unknown window type '%s' "
+                             "(accepted: normal, dock, dialog, notification)\n",
+                             value.c_str());
+                return;  // criterion left unset -- see the comment above
+            }
+            rule.hasMatchType = true;
+            return;
+        }
+
+        // rule-match-mode
+        std::string lower = toLower(value);
+        if      (lower == "exact")     rule.mode = RuleMatchMode::Exact;
+        else if (lower == "substring") rule.mode = RuleMatchMode::Substring;
+        else {
+            std::fprintf(stderr,
+                         "wm2: warning: config key 'rule-match-mode': unknown match mode '%s' "
+                         "(accepted: exact, substring)\n",
+                         value.c_str());
+        }
+        return;
+    }
+
+    if (isRuleActionKey) {
+        if (!ruleState.ruleOpen) {
+            std::fprintf(stderr,
+                         "wm2: warning: config key '%s': action with no preceding rule-match-* key\n",
+                         key.c_str());
+            // An orphan action is still a syntactic action BOUNDARY even though
+            // it contributes nothing, so the next match key opens a fresh rule
+            // rather than silently inheriting whatever came before.
+            ruleState.ruleLastWasAction = true;
+            return;
+        }
+        ruleState.ruleLastWasAction = true;
+
+        WindowRule& rule = rules.back();
+
+        if (key == "rule-no-decorate") {
+            rule.noDecorate = parseBool(value) ? RuleTriState::On : RuleTriState::Off;
+            return;
+        }
+
+        if (key == "rule-skip-taskbar") {
+            rule.skipTaskbar = parseBool(value) ? RuleTriState::On : RuleTriState::Off;
+            return;
+        }
+
+        if (key == "rule-position") {
+            // "X,Y"
+            auto comma = value.find(',');
+            if (comma == std::string::npos) {
+                std::fprintf(stderr,
+                             "wm2: warning: config key 'rule-position': expected X,Y but got '%s'\n",
+                             value.c_str());
+                return;
+            }
+            try {
+                int x = clampInt(std::stoi(value.substr(0, comma)), -65535, 65535);
+                int y = clampInt(std::stoi(value.substr(comma + 1)), -65535, 65535);
+                rule.posX = x;
+                rule.posY = y;
+                rule.hasPosition = true;
+            } catch (const std::invalid_argument&) {
+                std::fprintf(stderr, "wm2: warning: config key 'rule-position': invalid integer '%s'\n", value.c_str());
+            } catch (const std::out_of_range&) {
+                std::fprintf(stderr, "wm2: warning: config key 'rule-position': value out of range '%s'\n", value.c_str());
+            }
+            return;
+        }
+
+        // rule-size: "WxH"
+        std::string lower = toLower(value);
+        auto sep = lower.find('x');
+        if (sep == std::string::npos) {
+            std::fprintf(stderr,
+                         "wm2: warning: config key 'rule-size': expected WxH but got '%s'\n",
+                         value.c_str());
+            return;
+        }
+        try {
+            int w = clampInt(std::stoi(lower.substr(0, sep)), 1, 65535);
+            int h = clampInt(std::stoi(lower.substr(sep + 1)), 1, 65535);
+            rule.width = w;
+            rule.height = h;
+            rule.hasSize = true;
+        } catch (const std::invalid_argument&) {
+            std::fprintf(stderr, "wm2: warning: config key 'rule-size': invalid integer '%s'\n", value.c_str());
+        } catch (const std::out_of_range&) {
+            std::fprintf(stderr, "wm2: warning: config key 'rule-size': value out of range '%s'\n", value.c_str());
+        }
         return;
     }
 

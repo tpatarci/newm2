@@ -1,9 +1,21 @@
 #pragma once
 
 #include "AppEntry.h"
+#include "Rules.h"
 
 #include <string>
 #include <vector>
+
+// Parser bookkeeping for the repeated rule-* key groups (RULES-01, D-20).
+//
+// Two pieces of state, both explicit, because the grouping rule needs both:
+// whether a rule is currently open for keys to attach to, and whether the last
+// rule key seen was an action (which is what makes the NEXT match key open a
+// fresh group). A file boundary resets both -- see Config::applyFile.
+struct RuleParseState {
+    bool ruleOpen = false;
+    bool ruleLastWasAction = false;
+};
 
 struct Config {
     // Colors (tab)
@@ -56,14 +68,29 @@ struct Config {
     // Manual menu entries (APPS-04)
     std::vector<AppEntry> manualMenuEntries;
 
+    // Window rules (RULES-01), in file order across every config layer. The
+    // fold in src/Rules.cpp is later-wins, so this order is load-bearing.
+    std::vector<WindowRule> rules;
+
+    // Grouping state for the sequential applyKeyValue() entry point below.
+    // Bookkeeping, not a setting: applyFile() uses its own per-file instance.
+    RuleParseState ruleParseState;
+
     // Load config: defaults -> system config -> user config -> CLI overrides
     static Config load(int argc, char** argv);
 
     // Apply a config file (only sets keys present in the file)
     void applyFile(const std::string& path);
 
-    // Apply a single key=value pair
+    // Apply a single key=value pair. Rule grouping uses the member state above,
+    // so repeated sequential calls behave exactly like consecutive lines of one
+    // file -- which is what makes rule parsing deterministic in unit tests.
     void applyKeyValue(const std::string& key, const std::string& value);
+
+    // As above, but with caller-owned grouping state. applyFile() uses this so
+    // an open rule cannot survive the end of the file that opened it.
+    void applyKeyValue(const std::string& key, const std::string& value,
+                       RuleParseState& ruleState);
 
     // Apply CLI arguments (getopt_long)
     void applyCliArgs(int argc, char** argv);
