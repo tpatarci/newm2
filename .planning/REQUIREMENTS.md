@@ -83,7 +83,7 @@
 - [x] **FOCUS-01**: Focus stealing prevention using _NET_WM_USER_TIME timestamps
 - [x] **FOCUS-02**: Configurable focus policy (click-to-focus, focus-follows-pointer, auto-raise)
 - [ ] **RULES-01**: Window matching rules in config file (match by WM_CLASS, WM_NAME, window type)
-- [ ] **RULES-02**: Per-rule actions: no-decorate, specific position/size, skip-taskbar. (Amended in Phase 8, plan 08-10, D-23. The original wording also named a fourth action, sending a window to a nominated workspace; that action is deliberately excluded because the WM is single-desktop by design — Phase 6 fixed `_NET_NUMBER_OF_DESKTOPS` at 1 and `_NET_CURRENT_DESKTOP` at 0 — so there is no second workspace for a rule to send a window to. Implementing it would require a desktop model this window manager does not have and does not intend to acquire, and promising it here would leave a requirement that can never be checked off.)
+- [x] **RULES-02**: Per-rule actions: no-decorate, specific position/size, skip-taskbar. (Amended in Phase 8, plan 08-10, D-23. The original wording also named a fourth action, sending a window to a nominated workspace; that action is deliberately excluded because the WM is single-desktop by design — Phase 6 fixed `_NET_NUMBER_OF_DESKTOPS` at 1 and `_NET_CURRENT_DESKTOP` at 0 — so there is no second workspace for a rule to send a window to. Implementing it would require a desktop model this window manager does not have and does not intend to acquire, and promising it here would leave a requirement that can never be checked off.)
 
 ### Testing
 
@@ -181,7 +181,7 @@
 | FOCUS-01 | Phase 8 | Complete |
 | FOCUS-02 | Phase 8 | Complete |
 | RULES-01 | Phase 8 | Pending |
-| RULES-02 | Phase 8 | Pending |
+| RULES-02 | Phase 8 | Complete |
 | CGUI-01 | Phase 9 | Pending |
 | CGUI-02 | Phase 9 | Pending |
 | CGUI-03 | Phase 9 | Pending |

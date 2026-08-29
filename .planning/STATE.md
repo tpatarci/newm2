@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 08
 current_phase_name: xrandr-vnc-compatibility-focus-rules
 status: executing
-stopped_at: Completed 08-09-PLAN.md
-last_updated: "2026-08-29T09:25:16.693Z"
+stopped_at: Completed 08-10-PLAN.md
+last_updated: "2026-08-29T09:53:10.579Z"
 last_activity: 2026-08-11
 last_activity_desc: gathered Phase 8 context across 8 gray areas (32 decisions captured)
-state_head: 40314dc7ec695b02427f023f9c3973144f39bf52
+state_head: 2e61da93da7c7baa97f393212c689ac8b6c0b9aa
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 36
-  completed_plans: 31
+  completed_plans: 32
 milestone_name: milestone
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 08 (xrandr-vnc-compatibility-focus-rules) — EXECUTING
-Plan: 10 of 14
+Plan: 11 of 14
 Status: Ready to execute
 Last activity: 2026-08-11 — Phase 08 execution started
 
@@ -87,6 +87,7 @@ Progress: [████████░░] 81% (7/9 phases complete)
 | Phase 08 P07 | 55min | 4 tasks | 11 files |
 | Phase 08 P08 | 115min | 4 tasks | 11 files |
 | Phase 08 P09 | 60min | 3 tasks | 7 files |
+| Phase 08 P10 | 21min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -151,6 +152,9 @@ Recent decisions affecting current work:
 - [Phase 08]: rule-match-class is tested against both WM_CLASS fields; rule-match-name against the instance name only (asymmetry asserted negatively)
 - [Phase 08]: Rule group state is two explicit fields (ruleOpen + ruleLastWasAction), reset per file so a system-config rule cannot absorb a user-config match key
 - [Phase 08]: No CLI flags for rules: repeated ordered key groups have no getopt expression
+- [Phase 08]: RULES-02: m_ruleNoDecorate kept distinct from isDock() -- both reach the unframed path but only a dock may recompute the workarea
+- [Phase 08]: RULES-02: rule geometry is overlaid on the client's request between the size-hint floors and the clamps, never applied after mapping as a second geometry authority
+- [Phase 08]: D-23: RULES-02 amended in the requirement text -- three shipping actions, workspace action excluded because the WM is single-desktop by design (Phase 6, D-11)
 
 ### Pending Todos
 
@@ -180,6 +184,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-29T09:25:09.129Z
-Stopped at: Completed 08-09-PLAN.md
+Last session: 2026-08-29T09:53:10.401Z
+Stopped at: Completed 08-10-PLAN.md
 Resume file: None
