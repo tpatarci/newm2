@@ -241,7 +241,7 @@ and they are what makes `m_clients` non-empty in item 6.
 `override_redirect` on the three WM-internal windows at creation, or filter them
 out in `updateClientList()`. The EWMH work (Phase 6) is the natural owner.
 
-## 8. EWMH fullscreen sizes the window correctly but leaves it at its old position and Withdrawn (PRE-EXISTING)
+## 8. EWMH fullscreen sizes the window correctly but leaves it at its old position and Withdrawn (PRE-EXISTING) -- RESOLVED in 08-12 (`3ff6d97`)
 
 **Found during:** 08-04 Task 2, writing the fullscreen geometry case.
 
@@ -269,9 +269,53 @@ The likely fix is to set `m_reparenting` around the strip/restore reparents the
 same way `Client::manage()` does, but that is a decision for the owner of the
 fullscreen path.
 
-**Disposition:** deferred. `tests/test_wm_geometry.cpp` pins the size (which is
-the D-27 accessor claim) and deliberately does NOT pin the position, so the
-correct fix will not have to fight a test that cemented the defect.
+**Disposition:** ~~deferred.~~ **RESOLVED** -- see below. `tests/test_wm_geometry.cpp`
+pins the size (which is the D-27 accessor claim) and deliberately does NOT pin
+the position, which is exactly why the fix landed without a test to fight.
+
+### RESOLVED (08-12): the diagnosis above was half right, and the smaller half
+
+Plan 08-12's `[wm_fsmax]` group could not be written at all without fixing this,
+so it was fixed with a reproducing test first.
+
+**The reparent is not the trigger.** Setting `m_reparenting` around the
+strip/restore reparents -- the fix item 8 itself proposed -- was implemented and
+was *not sufficient*. Tracing `Client::eventUnmap` on the real binary showed why:
+
+```
+TRACE eventUnmap win=<frame> state=Normal reparenting=1  -> guard consumed
+TRACE eventUnmap win=<tab>   state=Normal reparenting=0  -> withdraw()
+```
+
+`WindowManager::eventUnmap()` resolves the event window through
+`windowToClient()`, whose fallback scan calls `Client::hasWindow()` -- and that
+is true for the **frame, the tab, the button and the resize handle** as well as
+for `m_window`. `Border::stripForFullscreen()` calls `XUnmapWindow` on three of
+them, so all three arrived in `Client::eventUnmap()` as though the application
+had unmapped its own window. The first consumed the reparent guard; the **tab's**
+unmap then took the withdraw path. `gravitate(true)` put the window back at its
+pre-fullscreen coordinates -- the reported symptom, exactly -- and
+`setState(Withdrawn)` took it out of management.
+
+`Client::hide()` escaped the same fate only by timing: it calls
+`Border::unmap()` and then `setState(Iconic)` synchronously, so by the time those
+three events are processed the switch lands on the Iconic arm. Luck, not design.
+
+**Fixed in three places** (`3ff6d97`, `cddb979`):
+
+- `Client::eventUnmap()` acts only on `m_window`'s own unmap. The ICCCM synthetic
+  withdraw a client sends by hand carries the client window in `e->window`, so
+  this does not interfere with it.
+- `Client::markReparenting()` arms the existing guard around both fullscreen
+  reparents, the way `Client::manage()` already does for its own. It queries map
+  state first -- a hidden client's reparent generates no `UnmapNotify`, and an
+  unconditional flag would survive to swallow a real withdraw.
+- `setFullscreen()` records the fullscreen rect in `m_x/m_y/m_w/m_h`, so the WM's
+  coordinates agree with what it told the server.
+
+**Mutation-verified:** deleting the `eventUnmap` guard reddens 2 cases; deleting
+both `markReparenting()` calls reddens the same 2. Neither alone is sufficient,
+which is why the original one-line diagnosis would not have worked.
 
 ## 9. The WM does not flush its X output until its event loop wakes again (PRE-EXISTING)
 
@@ -571,3 +615,43 @@ this plan, so the exclusion costs one error code, not the assertion.
 
 **Disposition:** deferred. Natural owner is whoever next revisits frame
 construction in `src/Border.cpp`.
+
+## 14. Stale ASan report files fail an innocent test on a reused display (HARNESS)
+
+**Found during:** 08-12 Task 3, while mutation-testing the property-reader
+hardening.
+
+**Symptom:** after a mutation run in which the WM child genuinely tripped the
+sanitizer, every subsequent `[wm_props]` run was red at
+`CHECK(fixture.asanReports().empty())` — with a clean WM stderr, a passing WM,
+and no fault of its own. Measured: 9 of 9 cases red on a tree whose source was
+back at its correct state, green again the moment five files were deleted.
+
+**Cause:** `WmFixture::globAsanReports()` globs `workDir()/asan<display>*`, and
+the display number is drawn from a small reused pool. A report written by an
+*earlier* run on display :122 is therefore attributed to the *next* fixture that
+happens to be handed :122. Nothing cleans the prefix at fixture startup.
+
+```
+build/asan/wm-process-tests/asan-122.1378304   <- written by a mutation run
+build/asan/wm-process-tests/asan-122.1378363
+...
+```
+
+**Not a defect this plan caused, and not one it can hit in normal use:** a
+green tree never writes a report, so the files only accumulate when someone is
+deliberately breaking the WM — which is precisely what mutation testing is. It
+cost roughly twenty minutes of chasing a phantom regression in
+`updateWorkarea()`, and it will cost the same again to whoever next mutates this
+suite.
+
+**Fix (one line, not applied here):** unlink the fixture's own
+`m_asanLogPrefix*` glob in `WmFixture::start()`, before the WM child is
+launched. Deliberately not done in 08-12: `WmFixture.h` is shared by six
+process-level suites and this plan had no other reason to touch it.
+
+**Workaround meanwhile:** `rm -f build/*/wm-process-tests/asan-*` between
+mutation runs.
+
+**Disposition:** deferred to 08-13, which owns the remaining test-infrastructure
+work.

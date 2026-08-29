@@ -174,14 +174,22 @@ ldd build/release/wm2-born-again
       invalid/zero increments.
 - [ ] Add tests for all window gravity modes used by `Client::gravitate()`
       (`src/Client.cpp:702`).
-- [ ] Add tests for EWMH client messages handled in `WindowManager::eventClient()`
+- [x] Add tests for EWMH client messages handled in `WindowManager::eventClient()`
       (`src/Events.cpp:292`): `_NET_ACTIVE_WINDOW`, `_NET_WM_STATE` add/remove,
       toggle, and simultaneous two-property state changes.
-- [ ] Add tests for fullscreen and maximize geometry restore
+      DONE (plan 08-12): `tests/test_wm_state.cpp` `[wm_state]`, 8 cases.
+      Found and fixed a tampering defect -- state messages were applied to
+      windows the WM had a `Client` for but had never managed.
+- [x] Add tests for fullscreen and maximize geometry restore
       (`src/Client.cpp:270`, `src/Client.cpp:311`), including toggling while
       hidden, destroying while fullscreen, and dock workarea interactions.
-- [ ] Add tests for malformed client properties: wrong type, wrong format, empty
+      DONE (plan 08-12): `tests/test_wm_state.cpp` `[wm_fsmax]`, 7 cases.
+      Closed deferred item 8 and fixed three further geometry defects.
+- [x] Add tests for malformed client properties: wrong type, wrong format, empty
       arrays, oversized arrays, deleted properties, and absurd strut values.
+      DONE (plan 08-12): `tests/test_wm_state.cpp` `[wm_props]`, 9 cases.
+      Found a heap-buffer-overflow in the shared property reader and an
+      invertible `_NET_WORKAREA`; both fixed.
 - [ ] Add repeated create/map/unmap/destroy stress tests under ASan for at least
       100 windows.
 
