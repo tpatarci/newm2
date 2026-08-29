@@ -1154,8 +1154,21 @@ void Border::restoreFromFullscreen(int x, int y, int w, int h)
     wc.height = h + yIndent() + 1;
     XConfigureWindow(display(), m_parent, CWX | CWY | CWWidth | CWHeight, &wc);
 
-    // Resize child to saved size
-    XMoveResizeWindow(display(), m_child, 0, 0, w, h);
+    // Resize child to saved size, AT THE FRAME'S CONTENT OFFSET.
+    //
+    // Not (0, 0): the reparent two statements above deliberately places the
+    // child at (xIndent, yIndent), and moving it to the frame's origin here
+    // undid that -- putting the client underneath the sideways tab and the top
+    // border, and leaving it xIndent pixels left and yIndent pixels above where
+    // the window manager's own m_x/m_y say it is.
+    //
+    // MEASURED before this fix (plan 08-12): a client the WM had placed at
+    // (175,128 300x220) came back from fullscreen at (150,120 300x220) -- off
+    // by exactly the indent, every single round trip. Fixed alongside the two
+    // identical spellings in Client::setMaximized(); this window manager has
+    // exactly one convention for where a client sits inside its frame, and
+    // these three call sites were the only places that did not follow it.
+    XMoveResizeWindow(display(), m_child, xIndent(), yIndent(), w, h);
 
     // Map all frame components
     map();

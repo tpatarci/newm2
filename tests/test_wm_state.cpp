@@ -515,6 +515,45 @@ bool awaitState(Display* d, Pred pred, int timeoutMs = 8000)
     }, timeoutMs);
 }
 
+// ---------------------------------------------------------------------------
+// Docks -- what makes "workarea" and "screen" different observable things
+// ---------------------------------------------------------------------------
+
+constexpr int kDockHeight = 40;
+
+// An undecorated dock at the bottom of the screen carrying
+// _NET_WM_WINDOW_TYPE_DOCK and a bottom strut. Its whole purpose here is to
+// make _NET_WORKAREA differ from the screen rectangle: without a dock the two
+// are identical, and every "maximize uses the workarea, fullscreen uses the
+// screen" assertion would pass for either implementation.
+//
+// The type and the strut are written BEFORE the map, because the WM reads the
+// window type during Client::manage() and a property written afterwards would
+// race the read it is supposed to govern.
+Window createDock(Display* d, int strutBottom = kDockHeight)
+{
+    Window root = DefaultRootWindow(d);
+    Window dock = XCreateSimpleWindow(d, root, 0, kScreenH - kDockHeight,
+                                      kScreenW, kDockHeight, 0,
+                                      BlackPixel(d, DefaultScreen(d)),
+                                      WhitePixel(d, DefaultScreen(d)));
+
+    Atom typeProp = XInternAtom(d, "_NET_WM_WINDOW_TYPE", False);
+    Atom dockType = XInternAtom(d, "_NET_WM_WINDOW_TYPE_DOCK", False);
+    XChangeProperty(d, dock, typeProp, XA_ATOM, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&dockType), 1);
+
+    // left, right, top, bottom, then the eight start/end values.
+    Atom strutPartial = XInternAtom(d, "_NET_WM_STRUT_PARTIAL", False);
+    long struts[12] = {0, 0, 0, strutBottom, 0, 0, 0, 0, 0, 0, 0, kScreenW - 1};
+    XChangeProperty(d, dock, strutPartial, XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(struts), 12);
+
+    XMapWindow(d, dock);
+    XSync(d, False);
+    return dock;
+}
+
 const char* const kFullscreen = "_NET_WM_STATE_FULLSCREEN";
 const char* const kMaxVert    = "_NET_WM_STATE_MAXIMIZED_VERT";
 const char* const kMaxHorz    = "_NET_WM_STATE_MAXIMIZED_HORZ";
@@ -885,4 +924,515 @@ TEST_CASE("A state message naming an unmanaged window is ignored and does not cr
     XDestroyWindow(d, orWin);
     XDestroyWindow(d, unmanaged);
     XSync(d, False);
+}
+
+
+// ===========================================================================
+// [wm_fsmax] -- fullscreen and maximize geometry restore, in the awkward
+//               orderings (checklist coverage item 11)
+// ===========================================================================
+
+namespace {
+
+// The mapped children of a window, sorted. For a frame this is {tab, button,
+// client}; the resize handle is a child of the CLIENT, not of the frame.
+//
+// Captured before a state change and compared after the restore, this is the
+// "frame and tab intact" assertion: an implementation that rebuilt the frame
+// but forgot to remap the tab, or that left a component behind, fails it. A
+// count would not -- the identities are what make it a restore rather than a
+// replacement.
+std::vector<Window> mappedChildren(Display* d, Window w)
+{
+    std::vector<Window> out;
+    for (Window c : childrenOf(d, w)) {
+        if (isMapped(d, c)) out.push_back(c);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+bool awaitWorkarea(Display* d, const Rect& want, int timeoutMs = 8000)
+{
+    return WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return workareaOf(d) == want;
+    }, timeoutMs);
+}
+
+bool awaitRect(Display* d, Window w, const Rect& want, int timeoutMs = 8000)
+{
+    return WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return rectOf(d, w) == want;
+    }, timeoutMs);
+}
+
+// The frame's content offset, measured at run time rather than hardcoded: it
+// depends on the tab width, which depends on the font, which depends on what
+// fontconfig resolves on the host. The client sits at exactly this offset
+// inside its frame on every geometry path in the WM
+// (Border::reparent(), Client::resize()).
+Rect frameIndent(Display* d, Window client, Window frame)
+{
+    const Rect c = rectOf(d, client);
+    const Rect f = rectOf(d, frame);
+    Rect out;
+    out.x = c.x - f.x;
+    out.y = c.y - f.y;
+    return out;
+}
+
+const Rect kScreenRect{0, 0, kScreenW, kScreenH};
+
+}  // namespace
+
+
+TEST_CASE("Fullscreen covers the whole screen including the dock, and restores exactly",
+          "[wm_fsmax]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    // A dock, so "the whole screen" and "the workarea" are different rectangles
+    // and the assertion below can tell them apart.
+    const Window dock = createDock(d);
+    REQUIRE(dock != None);
+    REQUIRE(awaitWorkarea(d, Rect{0, 0, kScreenW, kScreenH - kDockHeight}));
+
+    Window win = None;
+    const Window frame = mapClientAndAwaitFrame(d, 150, 120, 300, 220, win);
+    REQUIRE(frame != None);
+
+    settleWm(d);
+    const Rect clientBefore = rectOf(d, win);
+    const Rect frameBefore  = rectOf(d, frame);
+    const std::vector<Window> childrenBefore = mappedChildren(d, frame);
+    REQUIRE(clientBefore.w == 300);
+    REQUIRE(childrenBefore.size() >= 2);   // tab and button, at least
+
+    const Atom fs = XInternAtom(d, kFullscreen, False);
+    sendStateMessage(d, win, kStateAdd, fs, None);
+
+    // Per D-05 fullscreen covers the SCREEN, not the workarea -- so the dock's
+    // 40 rows are covered too. Asserting the exact screen rect is what
+    // distinguishes the two: a workarea-based implementation gives 1024x728.
+    INFO("workarea: " << describe(workareaOf(d)));
+    REQUIRE(awaitRect(d, win, kScreenRect));
+    CHECK(rectOf(d, win).h == kScreenH);
+    CHECK(rectOf(d, win).h != workareaOf(d).h);
+
+    // The frame is out of the way while fullscreen -- the client is a direct
+    // child of root, not sitting inside a frame that would clip it.
+    CHECK(parentOf(d, win) == DefaultRootWindow(d));
+
+    sendStateMessage(d, win, kStateRemove, fs, None);
+    REQUIRE(awaitRect(d, win, clientBefore));
+
+    settleWm(d);
+    INFO("client " << describe(clientBefore) << " -> " << describe(rectOf(d, win)));
+    INFO("frame  " << describe(frameBefore)  << " -> " << describe(rectOf(d, frame)));
+    CHECK(rectOf(d, win) == clientBefore);
+    CHECK(rectOf(d, frame) == frameBefore);
+    CHECK(parentOf(d, win) == frame);
+    CHECK(isMapped(d, frame));
+    CHECK(mappedChildren(d, frame) == childrenBefore);
+
+    REQUIRE(fixture.wmAlive());
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+}
+
+TEST_CASE("Maximize fills the workarea rather than the screen, and restores exactly",
+          "[wm_fsmax]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const Window dock = createDock(d);
+    REQUIRE(dock != None);
+    const Rect wa{0, 0, kScreenW, kScreenH - kDockHeight};
+    REQUIRE(awaitWorkarea(d, wa));
+
+    Window win = None;
+    const Window frame = mapClientAndAwaitFrame(d, 150, 120, 300, 220, win);
+    REQUIRE(frame != None);
+
+    settleWm(d);
+    const Rect clientBefore = rectOf(d, win);
+    const Rect frameBefore  = rectOf(d, frame);
+    const Rect indent       = frameIndent(d, win, frame);
+    const std::vector<Window> childrenBefore = mappedChildren(d, frame);
+    REQUIRE(indent.x > 0);                 // the sideways tab is on the left
+    REQUIRE(indent.y > 0);
+
+    const Atom mv = XInternAtom(d, kMaxVert, False);
+    const Atom mh = XInternAtom(d, kMaxHorz, False);
+    sendStateMessage(d, win, kStateAdd, mv, mh);
+    REQUIRE(awaitState(d, [&] {
+        return hasState(d, win, kMaxVert) && hasState(d, win, kMaxHorz);
+    }));
+    settleWm(d);
+
+    const Rect frameMax  = rectOf(d, frame);
+    const Rect clientMax = rectOf(d, win);
+    INFO("workarea " << describe(wa) << "  frame " << describe(frameMax)
+         << "  client " << describe(clientMax) << "  indent " << describe(indent));
+
+    // Unlike fullscreen, maximize KEEPS the frame -- so what has to fill the
+    // workarea is the frame, not the bare client. The whole decorated window
+    // must be inside the workarea: a maximized window whose tab has been pushed
+    // off the left edge of the screen is not maximized, it is lost.
+    CHECK(frameMax.x >= wa.x);
+    CHECK(frameMax.y >= wa.y);
+    CHECK(frameMax.x + frameMax.w <= wa.x + wa.w);
+    CHECK(frameMax.y + frameMax.h <= wa.y + wa.h);
+
+    // It fills it rather than merely fitting in it -- within the one-pixel
+    // slack Border::configure() adds to the frame's own width and height.
+    CHECK(frameMax.w >= wa.w - 2);
+    CHECK(frameMax.h >= wa.h - 2);
+
+    // The workarea, NOT the screen: the dock's rows are still the dock's.
+    CHECK(frameMax.y + frameMax.h <= kScreenH - kDockHeight);
+
+    // The client stays at the frame's content offset -- the same relationship
+    // every other geometry path in the WM maintains. At (0,0) it would be drawn
+    // underneath the sideways tab and the frame border.
+    CHECK(clientMax.x - frameMax.x == indent.x);
+    CHECK(clientMax.y - frameMax.y == indent.y);
+
+    // Frame and tab intact throughout -- maximize does not strip them.
+    CHECK(isMapped(d, frame));
+    CHECK(parentOf(d, win) == frame);
+    CHECK(mappedChildren(d, frame) == childrenBefore);
+
+    sendStateMessage(d, win, kStateRemove, mv, mh);
+    REQUIRE(awaitRect(d, win, clientBefore));
+    settleWm(d);
+    CHECK(rectOf(d, win) == clientBefore);
+    CHECK(rectOf(d, frame) == frameBefore);
+
+    REQUIRE(fixture.wmAlive());
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+}
+
+TEST_CASE("Single-axis maximize changes only that axis, and restores exactly",
+          "[wm_fsmax]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const Window dock = createDock(d);
+    REQUIRE(dock != None);
+    const Rect wa{0, 0, kScreenW, kScreenH - kDockHeight};
+    REQUIRE(awaitWorkarea(d, wa));
+
+    Window win = None;
+    const Window frame = mapClientAndAwaitFrame(d, 150, 120, 300, 220, win);
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    const Rect clientBefore = rectOf(d, win);
+    const Rect frameBefore  = rectOf(d, frame);
+
+    const Atom mv = XInternAtom(d, kMaxVert, False);
+    const Atom mh = XInternAtom(d, kMaxHorz, False);
+
+    SECTION("vertical only")
+    {
+        sendStateMessage(d, win, kStateAdd, mv, None);
+        REQUIRE(awaitState(d, [&] { return hasState(d, win, kMaxVert); }));
+        settleWm(d);
+
+        const Rect f = rectOf(d, frame);
+        const Rect c = rectOf(d, win);
+        INFO("frame " << describe(frameBefore) << " -> " << describe(f)
+             << "  client " << describe(clientBefore) << " -> " << describe(c));
+
+        // The vertical axis moved to fill the workarea...
+        CHECK(f.y >= wa.y);
+        CHECK(f.y + f.h <= wa.y + wa.h);
+        CHECK(f.h >= wa.h - 2);
+        // ...and the horizontal axis did NOT.
+        CHECK(c.x == clientBefore.x);
+        CHECK(c.w == clientBefore.w);
+        CHECK(f.x == frameBefore.x);
+        CHECK(f.w == frameBefore.w);
+        CHECK_FALSE(hasState(d, win, kMaxHorz));
+
+        // The restore must reach the geometry the window actually had. The
+        // saved-geometry slot is only useful if a SINGLE-axis maximize fills
+        // it: an implementation that saves only on the both-axes transition
+        // restores this window to whatever the slot was initialised with.
+        sendStateMessage(d, win, kStateRemove, mv, None);
+        REQUIRE(awaitRect(d, win, clientBefore));
+        settleWm(d);
+        CHECK(rectOf(d, win) == clientBefore);
+        CHECK(rectOf(d, frame) == frameBefore);
+    }
+
+    SECTION("horizontal only")
+    {
+        sendStateMessage(d, win, kStateAdd, mh, None);
+        REQUIRE(awaitState(d, [&] { return hasState(d, win, kMaxHorz); }));
+        settleWm(d);
+
+        const Rect f = rectOf(d, frame);
+        const Rect c = rectOf(d, win);
+        INFO("frame " << describe(frameBefore) << " -> " << describe(f)
+             << "  client " << describe(clientBefore) << " -> " << describe(c));
+
+        CHECK(f.x >= wa.x);
+        CHECK(f.x + f.w <= wa.x + wa.w);
+        CHECK(f.w >= wa.w - 2);
+        CHECK(c.y == clientBefore.y);
+        CHECK(c.h == clientBefore.h);
+        CHECK(f.y == frameBefore.y);
+        CHECK(f.h == frameBefore.h);
+        CHECK_FALSE(hasState(d, win, kMaxVert));
+
+        sendStateMessage(d, win, kStateRemove, mh, None);
+        REQUIRE(awaitRect(d, win, clientBefore));
+        settleWm(d);
+        CHECK(rectOf(d, win) == clientBefore);
+        CHECK(rectOf(d, frame) == frameBefore);
+    }
+
+    REQUIRE(fixture.wmAlive());
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+}
+
+TEST_CASE("Fullscreen requested while hidden takes effect when the client is unhidden",
+          "[wm_fsmax]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window win = None;
+    const Window frame = mapClientAndAwaitFrame(d, 150, 120, 300, 220, win);
+    REQUIRE(frame != None);
+    settleWm(d);
+    const Rect clientBefore = rectOf(d, win);
+
+    // Hide it. A hidden client is still MANAGED -- which is exactly why the
+    // eventClient guard is !isWithdrawn() and not !isNormal().
+    requestIconify(d, win);
+    REQUIRE(awaitState(d, [&] { return hasState(d, win, kHidden); }));
+    settleWm(d);
+    REQUIRE_FALSE(isMapped(d, frame));
+
+    const Atom fs = XInternAtom(d, kFullscreen, False);
+    sendStateMessage(d, win, kStateAdd, fs, None);
+    REQUIRE(awaitState(d, [&] { return hasState(d, win, kFullscreen); }));
+
+    // Now bring it back. The window must come back FULLSCREEN, not at the
+    // geometry it had when it was hidden -- and not as a fullscreen client with
+    // an abandoned empty frame still on screen behind it.
+    XMapWindow(d, win);
+    XSync(d, False);
+    REQUIRE(awaitState(d, [&] { return !hasState(d, win, kHidden); }));
+
+    INFO("client " << describe(clientBefore) << " -> " << describe(rectOf(d, win)));
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(awaitRect(d, win, kScreenRect));
+    CHECK(isMapped(d, win));
+    CHECK(parentOf(d, win) == DefaultRootWindow(d));
+
+    // No stale frame left mapped over the desktop.
+    CHECK_FALSE(isMapped(d, frame));
+
+    // And it can still be un-fullscreened afterwards, back to the geometry it
+    // had before any of this.
+    sendStateMessage(d, win, kStateRemove, fs, None);
+    REQUIRE(awaitRect(d, win, clientBefore));
+    CHECK(isMapped(d, frame));
+
+    REQUIRE(fixture.wmAlive());
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+}
+
+TEST_CASE("Destroying a client while it is fullscreen leaves nothing behind",
+          "[wm_fsmax]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    // A second client, so "the active window is not the dead one" is a real
+    // observation rather than a comparison against None either way.
+    Window other = None;
+    REQUIRE(mapClientAndAwaitFrame(d, 600, 400, 200, 160, other) != None);
+
+    Window win = None;
+    const Window frame = mapClientAndAwaitFrame(d, 150, 120, 300, 220, win);
+    REQUIRE(frame != None);
+
+    const Atom fs = XInternAtom(d, kFullscreen, False);
+    sendStateMessage(d, win, kStateAdd, fs, None);
+    REQUIRE(awaitRect(d, win, kScreenRect));
+    REQUIRE(listed(d, win));
+
+    // The teardown ordering this case exists for: the fullscreen path has
+    // STRIPPED the frame -- the client is reparented to root and the frame
+    // components are unmapped -- so ~Client()/~Border() run against a structure
+    // the ordinary destroy case never sees.
+    XDestroyWindow(d, win);
+    XSync(d, False);
+
+    REQUIRE(WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return !listed(d, win);
+    }, 8000));
+
+    settleWm(d);
+    CHECK(occurrences(d, win) == 0);
+    CHECK(activeWindow(d) != win);
+    CHECK(listed(d, other));
+    REQUIRE(fixture.wmAlive());
+
+    // Still managing afterwards.
+    Window later = None;
+    CHECK(mapClientAndAwaitFrame(d, 700, 100, 120, 90, later) != None);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+    CHECK(fixture.asanReports().empty());
+}
+
+TEST_CASE("A dock mapped after a window is maximized leaves its restore geometry intact",
+          "[wm_fsmax]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    // No dock yet: the workarea IS the screen.
+    REQUIRE(awaitWorkarea(d, kScreenRect));
+
+    Window win = None;
+    const Window frame = mapClientAndAwaitFrame(d, 150, 120, 300, 220, win);
+    REQUIRE(frame != None);
+    settleWm(d);
+    const Rect clientBefore = rectOf(d, win);
+    const Rect frameBefore  = rectOf(d, frame);
+
+    const Atom mv = XInternAtom(d, kMaxVert, False);
+    const Atom mh = XInternAtom(d, kMaxHorz, False);
+    sendStateMessage(d, win, kStateAdd, mv, mh);
+    REQUIRE(awaitState(d, [&] {
+        return hasState(d, win, kMaxVert) && hasState(d, win, kMaxHorz);
+    }));
+    settleWm(d);
+    const Rect frameMaxBefore = rectOf(d, frame);
+
+    // Now the workarea shrinks UNDERNEATH an already-maximized window.
+    const Window dock = createDock(d);
+    REQUIRE(dock != None);
+    REQUIRE(awaitWorkarea(d, Rect{0, 0, kScreenW, kScreenH - kDockHeight}));
+    settleWm(d);
+
+    INFO("frame while maximized: " << describe(frameMaxBefore) << " -> "
+         << describe(rectOf(d, frame)));
+    INFO("wm stderr:\n" << fixture.wmStderr());
+
+    // The WM stays consistent: the window is still managed, still maximized,
+    // still framed, and no protocol error was logged on the way.
+    CHECK(occurrences(d, win) == 1);
+    CHECK(hasState(d, win, kMaxVert));
+    CHECK(hasState(d, win, kMaxHorz));
+    CHECK(isMapped(d, frame));
+    CHECK(parentOf(d, win) == frame);
+    REQUIRE(fixture.wmAlive());
+
+    // And the saved geometry is not collateral damage: unmaximizing returns the
+    // window to where the USER left it, not to something derived from whatever
+    // the workarea happened to be at the time.
+    sendStateMessage(d, win, kStateRemove, mv, mh);
+    REQUIRE(awaitRect(d, win, clientBefore));
+    settleWm(d);
+    CHECK(rectOf(d, win) == clientBefore);
+    CHECK(rectOf(d, frame) == frameBefore);
+
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+}
+
+TEST_CASE("Maximizing straight after leaving fullscreen uses workarea geometry",
+          "[wm_fsmax]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const Window dock = createDock(d);
+    REQUIRE(dock != None);
+    const Rect wa{0, 0, kScreenW, kScreenH - kDockHeight};
+    REQUIRE(awaitWorkarea(d, wa));
+
+    Window win = None;
+    const Window frame = mapClientAndAwaitFrame(d, 150, 120, 300, 220, win);
+    REQUIRE(frame != None);
+    settleWm(d);
+    const Rect clientBefore = rectOf(d, win);
+    const Rect frameBefore  = rectOf(d, frame);
+
+    const Atom fs = XInternAtom(d, kFullscreen, False);
+    const Atom mv = XInternAtom(d, kMaxVert, False);
+    const Atom mh = XInternAtom(d, kMaxHorz, False);
+
+    // Fullscreen on, then off.
+    sendStateMessage(d, win, kStateAdd, fs, None);
+    REQUIRE(awaitRect(d, win, kScreenRect));
+    sendStateMessage(d, win, kStateRemove, fs, None);
+    REQUIRE(awaitRect(d, win, clientBefore));
+
+    // Then maximize, immediately. This is the aliasing check: if the two saved
+    // geometry slots were one slot, the fullscreen exit would have left the
+    // SCREEN rectangle in it and the maximize below would cover the dock.
+    sendStateMessage(d, win, kStateAdd, mv, mh);
+    REQUIRE(awaitState(d, [&] {
+        return hasState(d, win, kMaxVert) && hasState(d, win, kMaxHorz);
+    }));
+    settleWm(d);
+
+    const Rect f = rectOf(d, frame);
+    INFO("workarea " << describe(wa) << "  frame after fullscreen->maximize "
+         << describe(f));
+    CHECK_FALSE(hasState(d, win, kFullscreen));
+    CHECK(f.y + f.h <= wa.y + wa.h);            // workarea, not screen
+    CHECK(f.h >= wa.h - 2);
+    CHECK(parentOf(d, win) == frame);           // framed, not stripped
+
+    // And the restore still reaches the geometry from BEFORE the fullscreen
+    // round trip -- the slot the fullscreen exit repopulated is the one
+    // maximize saved from, so a shared slot shows up here too.
+    sendStateMessage(d, win, kStateRemove, mv, mh);
+    REQUIRE(awaitRect(d, win, clientBefore));
+    settleWm(d);
+    CHECK(rectOf(d, win) == clientBefore);
+    CHECK(rectOf(d, frame) == frameBefore);
+
+    REQUIRE(fixture.wmAlive());
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
 }

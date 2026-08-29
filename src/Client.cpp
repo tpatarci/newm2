@@ -559,7 +559,17 @@ void Client::setMaximized(bool vert, bool horz)
 
     if (newVert == m_isMaximizedVert && newHorz == m_isMaximizedHorz) return;
 
-    if (newVert && newHorz && !m_isMaximizedVert && !m_isMaximizedHorz) {
+    // Save the restore geometry on the transition into maximized-in-ANY-axis,
+    // not only into maximized-in-BOTH (plan 08-12).
+    //
+    // The old condition was `newVert && newHorz && !m_isMaximizedVert &&
+    // !m_isMaximizedHorz`, so a single-axis maximize never populated the slot
+    // and the matching restore configured the window to the zero-initialised
+    // one. MEASURED before the fix: a vertical-only maximize followed by
+    // un-maximize never returned the window to its geometry at all, and the
+    // restore ran XConfigureWindow/XMoveResizeWindow with width 0 and height 0
+    // -- an invalid request that the WM's error handler swallows.
+    if ((newVert || newHorz) && !m_isMaximizedVert && !m_isMaximizedHorz) {
         // Going from normal to maximized -- save geometry
         m_preMaximizedX = m_x;
         m_preMaximizedY = m_y;
@@ -569,6 +579,21 @@ void Client::setMaximized(bool vert, bool horz)
 
     m_isMaximizedVert = newVert;
     m_isMaximizedHorz = newHorz;
+
+    // The frame's content offset. Per D-07 maximize KEEPS the tab and border --
+    // so what has to fit the workarea is the whole decorated window, and the
+    // client is the workarea inset by the decoration, not the workarea itself.
+    //
+    // Border::configure(x, y, w, h) places the frame at (x - xIndent,
+    // y - yIndent) with size (w + xIndent + 1, h + yIndent + 1), because x/y/w/h
+    // describe the CLIENT. Passing the raw workarea therefore pushed the frame
+    // up and to the LEFT of the screen. MEASURED before this fix, on a 1024x768
+    // screen with a 40px bottom dock: workarea (0,0 1024x728) produced a frame
+    // at (-25,-8 1050x737) -- the entire sideways tab and the top border off
+    // the screen, on the one operation whose whole point is to make a window
+    // fully visible.
+    const int xi = m_border->xIndent();
+    const int yi = m_border->yIndent();
 
     if (newVert || newHorz) {
         // Per D-07: expand to fill workarea, keep tab+border
@@ -584,13 +609,31 @@ void Client::setMaximized(bool vert, bool horz)
             int ww = workarea[2], wh = workarea[3];
             XFree(workarea);
 
-            int newX = newHorz ? wx : (m_isMaximizedHorz ? m_preMaximizedX : m_x);
-            int newY = newVert ? wy : (m_isMaximizedVert ? m_preMaximizedY : m_y);
-            int newW = newHorz ? ww : (m_isMaximizedHorz ? m_preMaximizedW : m_w);
-            int newH = newVert ? wh : (m_isMaximizedVert ? m_preMaximizedH : m_h);
+            // Inset by the decoration so the FRAME lands on the workarea. The
+            // strictly-positive floor is not decoration: _NET_WORKAREA is
+            // derived from client-supplied dock struts, and a hostile or merely
+            // confused dock can drive it below the decoration's own size --
+            // at which point an unclamped subtraction reaches XConfigureWindow
+            // with a negative int in an unsigned width (threat T-8-STRUT, the
+            // same shape as the 64536-pixel window plan 08-11 fixed).
+            int maxX = wx + xi;
+            int maxY = wy + yi;
+            int maxW = ww - xi - 1;
+            int maxH = wh - yi - 1;
+            if (maxW < 1) maxW = 1;
+            if (maxH < 1) maxH = 1;
+
+            int newX = newHorz ? maxX : (m_isMaximizedHorz ? m_preMaximizedX : m_x);
+            int newY = newVert ? maxY : (m_isMaximizedVert ? m_preMaximizedY : m_y);
+            int newW = newHorz ? maxW : (m_isMaximizedHorz ? m_preMaximizedW : m_w);
+            int newH = newVert ? maxH : (m_isMaximizedVert ? m_preMaximizedH : m_h);
 
             m_border->configure(newX, newY, newW, newH, CWX | CWY | CWWidth | CWHeight, Above);
-            XMoveResizeWindow(display(), m_window, 0, 0, newW, newH);
+            // At (0, 0) the client is drawn UNDERNEATH the sideways tab and the
+            // frame border. Every other geometry path in this window manager --
+            // Border::reparent(), Client::resize() -- places it at the content
+            // offset, and this one is the odd one out rather than the exception.
+            XMoveResizeWindow(display(), m_window, xi, yi, newW, newH);
             m_x = newX; m_y = newY; m_w = newW; m_h = newH;
         }
     } else {
@@ -598,7 +641,7 @@ void Client::setMaximized(bool vert, bool horz)
         m_border->configure(m_preMaximizedX, m_preMaximizedY,
                             m_preMaximizedW, m_preMaximizedH,
                             CWX | CWY | CWWidth | CWHeight, Above);
-        XMoveResizeWindow(display(), m_window, 0, 0,
+        XMoveResizeWindow(display(), m_window, xi, yi,
                           m_preMaximizedW, m_preMaximizedH);
         m_x = m_preMaximizedX; m_y = m_preMaximizedY;
         m_w = m_preMaximizedW; m_h = m_preMaximizedH;
@@ -1196,6 +1239,25 @@ void Client::rename()
 
 void Client::mapRaised()
 {
+    // A fullscreen client has had its frame STRIPPED: the client window is a
+    // direct child of root and every frame component is unmapped
+    // (Border::stripForFullscreen). Mapping the frame here would put an empty
+    // decorated rectangle back on the desktop at the window's pre-fullscreen
+    // position, on top of nothing, while the real window is elsewhere.
+    //
+    // MEASURED before this guard (plan 08-12): iconify a client, ask for
+    // fullscreen while it is hidden, then unhide it. Client::unhide() maps
+    // m_window and calls mapRaised(), so the client came back correctly
+    // fullscreen -- with a stale 300x220 frame ghost mapped over it.
+    //
+    // Raise the client itself instead, which is what mapRaised() means for a
+    // window whose decoration is not currently part of it.
+    if (m_isFullscreen) {
+        XRaiseWindow(display(), m_window);
+        windowManager()->raiseTransients(this);
+        return;
+    }
+
     m_border->mapRaised();
     windowManager()->raiseTransients(this);
 }
