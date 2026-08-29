@@ -677,6 +677,239 @@ std::string sentinelPath(const char* tag)
            std::to_string(::getpid()) + "-" + std::to_string(++counter);
 }
 
+// ---------------------------------------------------------------------------
+// Running the binary as a subprocess that is EXPECTED TO DIE
+//
+// WindowManager::fatal() prints and calls std::exit (src/Manager.cpp:373), and
+// the initialisation-time arm of errorHandler() does the same. An in-process
+// test cannot observe either: there is nothing left to assert on. So every
+// [wm_errors] case forks, execs, and asserts on the captured exit status and
+// stderr -- which is also the only way to distinguish "exited with the wrong
+// code" from "did not exit at all", the failure a deadline exists to catch.
+// ---------------------------------------------------------------------------
+
+struct RunResult {
+    bool timedOut = false;
+    bool exitedNormally = false;
+    int exitCode = -1;
+    int signal = 0;
+    long elapsedMs = 0;
+    std::string output;
+};
+
+std::string readWholeFile(const std::string& path)
+{
+    std::string out;
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return out;
+    char buf[4096];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) out.append(buf, n);
+    std::fclose(f);
+    return out;
+}
+
+RunResult runBinary(const std::vector<std::string>& args,
+                    const std::map<std::string, std::string>& env,
+                    bool unsetDisplay, int timeoutMs)
+{
+    static int counter = 0;
+    const std::string outPath = std::string(WM2_TEST_WORKDIR) + "/errpath-" +
+                                std::to_string(::getpid()) + "-" +
+                                std::to_string(++counter) + ".out";
+
+    std::vector<std::string> argv{WM2_BINARY_PATH};
+    for (const auto& a : args) argv.push_back(a);
+
+    RunResult result;
+    const auto started = Clock::now();
+
+    pid_t pid = ::fork();
+    if (pid < 0) return result;
+    if (pid == 0) {
+        int fd = ::open(outPath.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0600);
+        if (fd >= 0) {
+            ::dup2(fd, STDOUT_FILENO);
+            ::dup2(fd, STDERR_FILENO);
+            if (fd > STDERR_FILENO) ::close(fd);
+        }
+        ::setsid();
+
+        // Sanitizer settings for a process that is SUPPOSED to exit early.
+        // detect_leaks is off on purpose: a fatal path exits without unwinding,
+        // so every live allocation is reported as a leak and the exit code
+        // becomes the leak sentinel instead of the code under test. Turning it
+        // off here removes noise from a path whose memory behaviour is not what
+        // these cases are about -- the [wm_stress] group below is where leaks
+        // are the assertion.
+        ::setenv("ASAN_OPTIONS", "detect_leaks=0:abort_on_error=0:handle_segv=1", 1);
+        ::setenv("UBSAN_OPTIONS", "print_stacktrace=1:halt_on_error=0", 1);
+
+        for (const auto& kv : env) ::setenv(kv.first.c_str(), kv.second.c_str(), 1);
+        if (unsetDisplay) ::unsetenv("DISPLAY");
+
+        std::vector<char*> cargv;
+        cargv.reserve(argv.size() + 1);
+        for (const auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
+        cargv.push_back(nullptr);
+        ::execv(cargv[0], cargv.data());
+        _exit(127);
+    }
+
+    ChildProcess child(pid);
+    const bool exited = child.waitForExit(timeoutMs);
+    result.elapsedMs = static_cast<long>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count());
+
+    if (!exited) {
+        result.timedOut = true;
+        child.shutdown();          // never leave a hung WM behind
+    } else {
+        result.exitedNormally = child.exitedNormally();
+        result.exitCode = child.exitCode();
+        result.signal = child.termSignal();
+    }
+
+    result.output = readWholeFile(outPath);
+    ::unlink(outPath.c_str());
+    return result;
+}
+
+bool contains(const std::string& haystack, const char* needle)
+{
+    return haystack.find(needle) != std::string::npos;
+}
+
+// No sanitizer finding hid inside a deliberately-fatal run. Not the point of
+// these cases, but a free assertion: the terminating paths run allocation and
+// X-connection code like any other, and a report there would otherwise be
+// swallowed by the very exit the case is asserting on.
+bool sanitizerClean(const std::string& output)
+{
+    return !contains(output, "AddressSanitizer") &&
+           !contains(output, "LeakSanitizer") &&
+           !contains(output, "runtime error:");
+}
+
+// ---------------------------------------------------------------------------
+// A display with NO window manager on it
+//
+// WmFixture always starts one, and it must: everything else in this file
+// asserts against a running WM. But the invalid-colour and unloadable-font
+// paths both terminate INSIDE initialiseScreen(), and the root-redirect claim
+// happens earlier in that same function -- so on a display that already has a
+// WM the second process dies of the redirect conflict first and never reaches
+// the path under test.
+//
+// Built from the same DisplayReservation and ChildProcess the fixture uses (they
+// are separate classes for exactly this kind of reuse) rather than by adding a
+// "no WM please" mode to shared infrastructure six other suites depend on.
+// ---------------------------------------------------------------------------
+
+class BareDisplay {
+public:
+    BareDisplay()
+    {
+        constexpr int kBase = 200;
+        constexpr int kMaxCandidates = 60;
+
+        for (int n = kBase; n < kBase + kMaxCandidates; ++n) {
+            if (!m_reservation.tryReserve(n)) continue;
+            m_display = m_reservation.displayString();
+            if (spawnXvfb() && waitForServer()) return;
+            m_xvfb.shutdown();
+            m_reservation.release();
+            m_display.clear();
+        }
+        throw std::runtime_error("BareDisplay: could not reserve a free X display");
+    }
+
+    BareDisplay(const BareDisplay&) = delete;
+    BareDisplay& operator=(const BareDisplay&) = delete;
+
+    ~BareDisplay()
+    {
+        m_keepAlive.reset();
+        m_xvfb.shutdown();
+        m_reservation.release();
+    }
+
+    const std::string& display() const { return m_display; }
+
+private:
+    bool spawnXvfb()
+    {
+        const std::string logPath = std::string(WM2_TEST_WORKDIR) + "/bare-xvfb" +
+                                    std::to_string(m_reservation.number()) + ".log";
+        pid_t pid = ::fork();
+        if (pid < 0) return false;
+        if (pid == 0) {
+            int fd = ::open(logPath.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0600);
+            if (fd >= 0) {
+                ::dup2(fd, STDOUT_FILENO);
+                ::dup2(fd, STDERR_FILENO);
+                if (fd > STDERR_FILENO) ::close(fd);
+            }
+            ::setsid();
+            ::execlp("Xvfb", "Xvfb", m_display.c_str(), "-screen", "0", "1024x768x24",
+                     "-ac", "+render", "-noreset", "-nolisten", "tcp",
+                     static_cast<char*>(nullptr));
+            _exit(127);
+        }
+        m_xvfb = ChildProcess(pid);
+        return true;
+    }
+
+    bool waitForServer()
+    {
+        const bool up = WmFixture::pollUntil([this] {
+            if (m_xvfb.tryReap()) return false;
+            m_keepAlive = x11::DisplayPtr(XOpenDisplay(m_display.c_str()));
+            return m_keepAlive != nullptr;
+        }, 10000);
+        return up && !m_xvfb.reaped();
+    }
+
+    DisplayReservation m_reservation;
+    std::string m_display;
+    ChildProcess m_xvfb;
+    x11::DisplayPtr m_keepAlive;
+};
+
+// A fontconfig configuration whose ONLY font directory is empty, so no font
+// pattern can resolve. Returns the path to hand the child as FONTCONFIG_FILE.
+//
+// Deliberately NOT described as a config setting: the binary has no
+// font-pattern setting of any kind, which is precisely why this path has to be
+// provoked through the environment.
+std::string makeEmptyFontConfig()
+{
+    static int counter = 0;
+    const std::string base = std::string(WM2_TEST_WORKDIR) + "/nofonts-" +
+                             std::to_string(::getpid()) + "-" +
+                             std::to_string(++counter);
+    ::mkdir(base.c_str(), 0700);
+    ::mkdir((base + "/fonts").c_str(), 0700);
+    ::mkdir((base + "/cache").c_str(), 0700);
+
+    const std::string path = base + "/fonts.conf";
+    std::ofstream out(path);
+    out << "<?xml version=\"1.0\"?>\n"
+        << "<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">\n"
+        << "<fontconfig>\n"
+        << "  <dir>" << base << "/fonts</dir>\n"
+        << "  <cachedir>" << base << "/cache</cachedir>\n"
+        << "</fontconfig>\n";
+    out.close();
+    return path;
+}
+
+// The four terminating conditions, named once so the deadline case below runs
+// exactly the same launches the individual cases do rather than an approximation
+// of them.
+constexpr int kFatalTimeoutMs = 20000;   // generous: a slow or loaded host
+constexpr int kFatalDeadlineMs = 6000;   // tight: what a healthy host really takes
+
 }  // namespace
 
 
@@ -1198,4 +1431,229 @@ TEST_CASE("A setting given on the command line overrides the same setting in the
     const int cliWins = verticalInset("frame-thickness = 3\n", {"--frame-thickness=20"});
     CHECK(cliWins == 20 + 1);
     CHECK(cliWins != fileOnly);
+}
+
+
+// ===========================================================================
+// [wm_errors] -- the terminating X11 error paths (coverage item 6)
+//                and the help flag
+// ===========================================================================
+
+TEST_CASE("With no display available the binary exits non-zero and names the display",
+          "[wm_errors]")
+{
+    const RunResult r = runBinary({}, {}, /*unsetDisplay=*/true, kFatalTimeoutMs);
+
+    INFO("output:\n" << r.output);
+    CHECK_FALSE(r.timedOut);
+    CHECK(r.exitedNormally);
+    CHECK(r.exitCode != 0);
+
+    // The message must name the DISPLAY as the problem. A bare non-zero exit
+    // would be satisfied by any of the other three conditions in this group, so
+    // the exit status alone does not identify the path that was taken.
+    CHECK(contains(r.output, "can't open display"));
+    CHECK(sanitizerClean(r.output));
+}
+
+TEST_CASE("An unparseable colour setting exits non-zero and names the offending setting",
+          "[wm_errors]")
+{
+    BareDisplay server;
+
+    // menu-borders is allocated in initialiseScreen() through
+    // WindowManager::allocateColour(), whose failure message carries the
+    // caller-supplied description -- so the stderr names WHICH colour setting
+    // was wrong rather than reporting a generic allocation failure. The tab and
+    // frame colours are allocated later, in the first Border, so a case using
+    // one of those would additionally need a client to exist.
+    const RunResult r = runBinary({"--menu-borders=definitely-not-a-colour"},
+                                  {{"DISPLAY", server.display()}},
+                                  false, kFatalTimeoutMs);
+
+    INFO("output:\n" << r.output);
+    CHECK_FALSE(r.timedOut);
+    CHECK(r.exitedNormally);
+    CHECK(r.exitCode != 0);
+    CHECK(contains(r.output, "menu border"));
+    CHECK(contains(r.output, "colour"));
+    CHECK(sanitizerClean(r.output));
+
+    // A valid colour on the same display and the same flag must NOT die, or the
+    // case above proves only that the binary dislikes being started at all.
+    const RunResult ok = runBinary({"--menu-borders=blue"},
+                                   {{"DISPLAY", server.display()}},
+                                   false, 4000);
+    INFO("control output:\n" << ok.output);
+    CHECK(ok.timedOut);          // it started successfully and had to be killed
+    CHECK_FALSE(contains(ok.output, "couldn't load"));
+}
+
+TEST_CASE("With no font available at all the binary exits non-zero and names the menu font",
+          "[wm_errors]")
+{
+    BareDisplay server;
+
+    const std::string fontConfig = makeEmptyFontConfig();
+    const RunResult r = runBinary({},
+                                  {{"DISPLAY", server.display()},
+                                   {"FONTCONFIG_FILE", fontConfig}},
+                                  false, kFatalTimeoutMs);
+
+    INFO("FONTCONFIG_FILE: " << fontConfig);
+    INFO("output:\n" << r.output);
+    CHECK_FALSE(r.timedOut);
+    CHECK(r.exitedNormally);
+    CHECK(r.exitCode != 0);
+
+    // The MENU font is the fatal one: initialiseScreen() tries the configured
+    // pattern, then a generic fallback, and calls fatal() when neither resolves.
+    //
+    // This subprocess starts NO CLIENT, so it never constructs a Border and
+    // never reaches the rotated-tab font ladder. It must not be read as evidence
+    // about that ladder; plan 08-06's RENDER-less group is what proves the tab
+    // font degrades without terminating, and the two claims are deliberately
+    // kept apart.
+    CHECK(contains(r.output, "menu font"));
+    CHECK(sanitizerClean(r.output));
+}
+
+TEST_CASE("A second window manager fails cleanly and leaves the incumbent working",
+          "[wm_errors]")
+{
+    WmFixture incumbent;
+    x11::DisplayPtr dp = incumbent.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const RunResult r = runBinary({}, {{"DISPLAY", incumbent.display()}},
+                                  false, kFatalTimeoutMs);
+
+    INFO("second WM output:\n" << r.output);
+    CHECK_FALSE(r.timedOut);
+    CHECK(r.exitedNormally);
+    CHECK(r.exitCode != 0);
+
+    // It must identify the CONFLICT, not report a generic protocol error and
+    // leave the user to work out that another window manager is the cause.
+    CHECK(contains(r.output, "another window manager"));
+    CHECK(sanitizerClean(r.output));
+
+    // And the incumbent must be untouched. A conflict that takes down the
+    // running session would be considerably worse than one that fails cleanly,
+    // and "still alive" is not the same claim as "still working" -- so this
+    // maps a fresh client and requires it to be framed and published.
+    REQUIRE(incumbent.wmAlive());
+
+    Window win = None;
+    Window frame = mapClientAndAwaitFrame(d, 240, 180, 260, 190, win, "survivor");
+    INFO("incumbent stderr:\n" << incumbent.wmStderr());
+    REQUIRE(frame != None);
+    CHECK(listed(d, win));
+}
+
+TEST_CASE("Every terminating path exits within a deadline rather than hanging",
+          "[wm_errors]")
+{
+    // A path that HANGS instead of exiting is a distinct and worse failure than
+    // one that exits with the wrong status -- the process sits there holding a
+    // display, and only a deadline tells the two apart. The four cases above use
+    // a generous timeout so a loaded host does not flake; this one re-runs the
+    // same launches against a tight deadline and reports what each measured.
+    BareDisplay server;
+    const std::string fontConfig = makeEmptyFontConfig();
+
+    struct Path { const char* name; RunResult result; };
+    std::vector<Path> paths;
+
+    paths.push_back({"no display",
+                     runBinary({}, {}, true, kFatalDeadlineMs)});
+
+    paths.push_back({"invalid colour",
+                     runBinary({"--menu-borders=definitely-not-a-colour"},
+                               {{"DISPLAY", server.display()}}, false, kFatalDeadlineMs)});
+
+    paths.push_back({"no font",
+                     runBinary({}, {{"DISPLAY", server.display()},
+                                    {"FONTCONFIG_FILE", fontConfig}},
+                               false, kFatalDeadlineMs)});
+
+    {
+        WmFixture incumbent;
+        paths.push_back({"root redirect conflict",
+                         runBinary({}, {{"DISPLAY", incumbent.display()}},
+                                   false, kFatalDeadlineMs)});
+    }
+
+    for (const Path& p : paths) {
+        INFO("path: " << p.name << " elapsed=" << p.result.elapsedMs << "ms"
+             << " exit=" << p.result.exitCode
+             << "\noutput:\n" << p.result.output);
+        CHECK_FALSE(p.result.timedOut);
+        CHECK(p.result.elapsedMs < kFatalDeadlineMs);
+        CHECK(p.result.exitCode != 0);
+    }
+}
+
+TEST_CASE("The help flag prints usage and exits successfully", "[wm_errors]")
+{
+    // Run with NO DISPLAY, which is the case that matters: help that needs an X
+    // server is help you cannot read when you are trying to work out why the
+    // window manager will not start.
+    const RunResult r = runBinary({"--help"}, {}, true, kFatalTimeoutMs);
+
+    INFO("output:\n" << r.output);
+    CHECK_FALSE(r.timedOut);
+    REQUIRE(r.exitedNormally);
+    CHECK(r.exitCode == 0);
+
+    // At least the string settings and BOTH halves of the boolean pairs. The
+    // usage text is generated from the same rows getopt_long() is driven by, so
+    // these are spot checks on a generated list rather than a second copy of it.
+    CHECK(contains(r.output, "--frame-thickness"));
+    CHECK(contains(r.output, "--new-window-command"));
+    CHECK(contains(r.output, "--tab-foreground"));
+    CHECK(contains(r.output, "--auto-raise"));
+    CHECK(contains(r.output, "--no-auto-raise"));
+    CHECK(contains(r.output, "--no-click-to-focus"));
+    CHECK(contains(r.output, "--no-focus-stealing-prevention"));
+    CHECK(contains(r.output, "--destroy-window-delay"));
+    CHECK(contains(r.output, "--exec-using-shell"));
+    CHECK(sanitizerClean(r.output));
+}
+
+TEST_CASE("An unrecognised flag exits non-zero and its advice names a flag that works",
+          "[wm_errors]")
+{
+    const RunResult bad = runBinary({"--nosuchflag"}, {}, true, kFatalTimeoutMs);
+
+    INFO("output:\n" << bad.output);
+    CHECK_FALSE(bad.timedOut);
+    REQUIRE(bad.exitedNormally);
+    CHECK(bad.exitCode != 0);
+    CHECK(contains(bad.output, "unrecognized option"));
+
+    // The advice line. Before this plan it pointed at a flag that was not in the
+    // option table, so following it produced the same error again -- the binary
+    // told the user to do something it then refused to do.
+    REQUIRE(contains(bad.output, "--help"));
+
+    // Follow the advice, from the text itself rather than from a literal this
+    // test happens to agree with. A future rewording that pointed somewhere else
+    // would take this assertion with it.
+    const std::string advice = bad.output.substr(bad.output.find("--help"));
+    std::string flag;
+    for (char ch : advice) {
+        if (ch == '\'' || ch == ' ' || ch == '\n') break;
+        flag.push_back(ch);
+    }
+    INFO("following the binary's own advice: " << flag);
+
+    const RunResult advised = runBinary({flag}, {}, true, kFatalTimeoutMs);
+    INFO("advised output:\n" << advised.output);
+    CHECK_FALSE(advised.timedOut);
+    REQUIRE(advised.exitedNormally);
+    CHECK(advised.exitCode == 0);
+    CHECK_FALSE(contains(advised.output, "unrecognized option"));
 }

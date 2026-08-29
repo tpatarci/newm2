@@ -439,76 +439,183 @@ Config Config::load(int argc, char** argv) {
 // Config::applyCliArgs - CLI argument parsing with getopt_long
 // =============================================================================
 
-static struct option longOptions[] = {
-    // String settings with required_argument
-    {"tab-foreground",        required_argument, nullptr, 0},
-    {"tab-background",        required_argument, nullptr, 0},
-    {"frame-background",      required_argument, nullptr, 0},
-    {"button-background",     required_argument, nullptr, 0},
-    {"borders",               required_argument, nullptr, 0},
-    {"menu-foreground",       required_argument, nullptr, 0},
-    {"menu-background",       required_argument, nullptr, 0},
-    {"menu-highlight",        required_argument, nullptr, 0},
-    {"menu-borders",          required_argument, nullptr, 0},
-    {"frame-thickness",       required_argument, nullptr, 0},
-    {"auto-raise-delay",      required_argument, nullptr, 0},
-    {"pointer-stopped-delay", required_argument, nullptr, 0},
-    {"destroy-window-delay",  required_argument, nullptr, 0},
-    {"new-window-command",    required_argument, nullptr, 0},
+// =============================================================================
+// The CLI surface, declared ONCE (plan 08-13)
+//
+// Every long option the binary accepts is one row of kOptionSpecs below, and
+// BOTH the getopt_long() array and the --help output are generated from those
+// same rows. Before this the table was hand-written and the usage text did not
+// exist at all: an unrecognised option produced a getopt error followed by
+// advice to try `--help`, and `--help` was not in the table, so following the
+// advice produced the same error again. A second hand-maintained list of option
+// names -- one for parsing, one for printing -- would drift back into that state
+// the first time a setting was added to only one of them.
+//
+// The --no-<name> negation of each boolean (D-03) is DERIVED here rather than
+// listed, for the same reason: the two spellings of one setting cannot fall out
+// of step if only one of them is ever written down.
+// =============================================================================
 
-    // Boolean flags: presence = enable (per D-03)
-    {"click-to-focus",        no_argument, nullptr, 0},
-    {"raise-on-focus",        no_argument, nullptr, 0},
-    {"auto-raise",            no_argument, nullptr, 0},
-    {"exec-using-shell",      no_argument, nullptr, 0},
-    {"focus-stealing-prevention", no_argument, nullptr, 0},
+enum class OptType { String, Integer, Boolean, Help };
 
-    // Boolean negations: --no-xxx = disable (per D-03)
-    {"no-click-to-focus",     no_argument, nullptr, 0},
-    {"no-raise-on-focus",     no_argument, nullptr, 0},
-    {"no-auto-raise",         no_argument, nullptr, 0},
-    {"no-exec-using-shell",   no_argument, nullptr, 0},
-    {"no-focus-stealing-prevention", no_argument, nullptr, 0},
-
-    {nullptr, 0, nullptr, 0}
+struct OptionSpec {
+    const char* name;
+    OptType type;
+    const char* summary;
 };
+
+static const OptionSpec kOptionSpecs[] = {
+    // String settings
+    {"tab-foreground",            OptType::String,  "colour of the tab label text"},
+    {"tab-background",            OptType::String,  "colour behind the tab label"},
+    {"frame-background",          OptType::String,  "colour of the window frame"},
+    {"button-background",         OptType::String,  "colour of the tab button"},
+    {"borders",                   OptType::String,  "colour of frame and tab borders"},
+    {"menu-foreground",           OptType::String,  "colour of root menu text"},
+    {"menu-background",           OptType::String,  "colour behind root menu text"},
+    {"menu-highlight",            OptType::String,  "colour of the selected menu row"},
+    {"menu-borders",              OptType::String,  "colour of the root menu border"},
+    {"new-window-command",        OptType::String,  "command the menu's New entry runs"},
+
+    // Integer settings
+    {"frame-thickness",           OptType::Integer, "frame width in pixels (1-50)"},
+    {"auto-raise-delay",          OptType::Integer, "milliseconds before auto-raise (1-60000)"},
+    {"pointer-stopped-delay",     OptType::Integer, "milliseconds of pointer stillness (1-60000)"},
+    {"destroy-window-delay",      OptType::Integer, "milliseconds a tab-button press must be held to delete (1-60000)"},
+
+    // Boolean settings. Each generates BOTH --name and --no-name.
+    {"click-to-focus",            OptType::Boolean, "click a window to focus it instead of following the pointer"},
+    {"raise-on-focus",            OptType::Boolean, "raise a window when it takes focus"},
+    {"auto-raise",                OptType::Boolean, "raise the window under a stopped pointer"},
+    {"exec-using-shell",          OptType::Boolean, "run new-window-command through /bin/sh (shell-evaluated)"},
+    {"focus-stealing-prevention", OptType::Boolean, "refuse focus to windows that map without user interaction"},
+
+    // Actions
+    {"help",                      OptType::Help,    "print this message and exit"},
+};
+
+// One getopt-visible flag: the spec it belongs to, whether it is that spec's
+// --no- negation, and the spelling getopt_long() should match.
+struct CliOption {
+    const OptionSpec* spec;
+    bool negated;
+    std::string flag;
+};
+
+static std::vector<CliOption> buildLongOptions() {
+    std::vector<CliOption> out;
+    for (const OptionSpec& spec : kOptionSpecs) {
+        out.push_back({&spec, false, spec.name});
+        if (spec.type == OptType::Boolean) {
+            out.push_back({&spec, true, std::string("no-") + spec.name});
+        }
+    }
+    return out;
+}
+
+static std::vector<struct option> toGetoptTable(const std::vector<CliOption>& longOptions) {
+    std::vector<struct option> table;
+    table.reserve(longOptions.size() + 1);
+    for (const CliOption& opt : longOptions) {
+        const bool takesValue = (opt.spec->type == OptType::String ||
+                                 opt.spec->type == OptType::Integer);
+        // The flag string is owned by `longOptions`, which outlives every use of
+        // this table in applyCliArgs().
+        table.push_back({opt.flag.c_str(),
+                         takesValue ? required_argument : no_argument,
+                         nullptr, 0});
+    }
+    table.push_back({nullptr, 0, nullptr, 0});
+    return table;
+}
+
+// Usage, generated from the very rows getopt_long() is driven by, so an option
+// the binary accepts cannot be missing here and an option printed here cannot
+// be unrecognised.
+static void printUsage(const char* argv0, const std::vector<CliOption>& longOptions) {
+    std::printf("Usage: %s [OPTION]...\n\n", argv0 ? argv0 : "wm2-born-again");
+    std::printf("A minimalist X11 window manager with sideways tabs.\n");
+    std::printf("Settings may also be given as key=value lines in\n");
+    std::printf("  $XDG_CONFIG_HOME/wm2-born-again/config\n");
+    std::printf("Command-line options take precedence over the config file.\n");
+
+    struct Group { const char* title; OptType type; };
+    static const Group groups[] = {
+        {"String settings (--name=VALUE)",  OptType::String},
+        {"Integer settings (--name=N)",     OptType::Integer},
+        {"Boolean settings (--name enables, --no-name disables)", OptType::Boolean},
+        {"Actions",                         OptType::Help},
+    };
+
+    for (const Group& group : groups) {
+        bool printedHeading = false;
+        for (const CliOption& opt : longOptions) {
+            if (opt.spec->type != group.type) continue;
+            if (opt.negated) continue;   // printed as part of its enable row
+
+            if (!printedHeading) {
+                std::printf("\n%s:\n", group.title);
+                printedHeading = true;
+            }
+
+            if (opt.spec->type == OptType::Boolean) {
+                std::printf("  --%-28s %s\n", opt.spec->name, opt.spec->summary);
+                const std::string negated = std::string("no-") + opt.spec->name;
+                std::printf("  --%-28s (disable the above)\n", negated.c_str());
+            } else {
+                std::printf("  --%-28s %s\n", opt.spec->name, opt.spec->summary);
+            }
+        }
+    }
+
+    std::printf("\nWindow rules and manual menu entries are config-file only;\n");
+    std::printf("they are repeated ordered key groups and do not map onto flags.\n");
+}
 
 void Config::applyCliArgs(int argc, char** argv) {
     optind = 1;  // Reset for re-parsing
 
+    const std::vector<CliOption> longOptions = buildLongOptions();
+    const std::vector<struct option> getoptTable = toGetoptTable(longOptions);
+
     while (true) {
         int optionIndex = 0;
-        int c = getopt_long(argc, argv, "", longOptions, &optionIndex);
+        int c = getopt_long(argc, argv, "", getoptTable.data(), &optionIndex);
 
         if (c == -1) break;  // No more options
 
         if (c == '?') {
-            // getopt_long already printed an error message
+            // getopt_long already printed an error message. The advice below
+            // now names a flag that actually exists -- see kOptionSpecs.
             std::fprintf(stderr, "Try '%s --help' for more information.\n", argv[0]);
             std::exit(2);
         }
 
         // c == 0: long option matched
-        const char* name = longOptions[optionIndex].name;
+        const CliOption& matched = longOptions[static_cast<size_t>(optionIndex)];
+        const char* name = matched.spec->name;
 
-        // Boolean enable (--click-to-focus)
-        if (std::strcmp(name, "click-to-focus") == 0)        clickToFocus = true;
-        else if (std::strcmp(name, "raise-on-focus") == 0)   raiseOnFocus = true;
-        else if (std::strcmp(name, "auto-raise") == 0)       autoRaise = true;
-        else if (std::strcmp(name, "exec-using-shell") == 0) execUsingShell = true;
-        else if (std::strcmp(name, "focus-stealing-prevention") == 0)
-            focusStealingPrevention = true;
+        if (matched.spec->type == OptType::Help) {
+            printUsage(argv[0], longOptions);
+            // Exits from inside Config::load(), which src/main.cpp calls before
+            // the app cache is touched and before WindowManager is constructed
+            // -- so --help works with no DISPLAY and no X server at all.
+            std::exit(0);
+        }
 
-        // Boolean disable (--no-click-to-focus)
-        else if (std::strcmp(name, "no-click-to-focus") == 0)   clickToFocus = false;
-        else if (std::strcmp(name, "no-raise-on-focus") == 0)   raiseOnFocus = false;
-        else if (std::strcmp(name, "no-auto-raise") == 0)       autoRaise = false;
-        else if (std::strcmp(name, "no-exec-using-shell") == 0) execUsingShell = false;
-        else if (std::strcmp(name, "no-focus-stealing-prevention") == 0)
-            focusStealingPrevention = false;
+        if (matched.spec->type == OptType::Boolean) {
+            const bool enable = !matched.negated;
+            if      (std::strcmp(name, "click-to-focus") == 0)   clickToFocus = enable;
+            else if (std::strcmp(name, "raise-on-focus") == 0)   raiseOnFocus = enable;
+            else if (std::strcmp(name, "auto-raise") == 0)       autoRaise = enable;
+            else if (std::strcmp(name, "exec-using-shell") == 0) execUsingShell = enable;
+            else if (std::strcmp(name, "focus-stealing-prevention") == 0)
+                focusStealingPrevention = enable;
+            continue;
+        }
 
         // String settings
-        else if (std::strcmp(name, "tab-foreground") == 0)      tabForeground = optarg;
+        if (std::strcmp(name, "tab-foreground") == 0)           tabForeground = optarg;
         else if (std::strcmp(name, "tab-background") == 0)      tabBackground = optarg;
         else if (std::strcmp(name, "frame-background") == 0)    frameBackground = optarg;
         else if (std::strcmp(name, "button-background") == 0)   buttonBackground = optarg;
