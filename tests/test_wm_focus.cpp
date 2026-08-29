@@ -39,6 +39,7 @@
 #include <X11/Xatom.h>
 
 #include <chrono>
+#include <cstring>
 #include <string>
 #include <thread>
 #include <vector>
@@ -482,6 +483,104 @@ Window mapClientWithUserTime(Display* d, int x, int y, int w, int h,
     XSync(d, False);
 
     return awaitFrameFor(d, win);
+}
+
+// ---------------------------------------------------------------------------
+// FOCUS-01 activation-message helpers (plan 08-08, Task 4)
+// ---------------------------------------------------------------------------
+
+// Send a real _NET_ACTIVE_WINDOW request the way a pager or an application does:
+// to the ROOT window, with the two substructure masks the EWMH requires, so it
+// arrives through the WM's SubstructureRedirect selection rather than being
+// delivered straight to the target.
+//
+// `format` is a parameter only so the malformed-message case can send a wrong
+// one; every legitimate caller passes 32.
+void sendActivation(Display* d, Window target, long source, Time stamp,
+                    int format = 32)
+{
+    static Atom a = None;
+    if (a == None) a = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+
+    XEvent ev;
+    std::memset(&ev, 0, sizeof(ev));
+    ev.xclient.type         = ClientMessage;
+    ev.xclient.window       = target;
+    ev.xclient.message_type = a;
+    ev.xclient.format       = format;
+    ev.xclient.data.l[0]    = source;                       // source indication
+    ev.xclient.data.l[1]    = static_cast<long>(stamp);     // timestamp
+    ev.xclient.data.l[2]    = 0;                            // requestor's active window
+
+    XSendEvent(d, DefaultRootWindow(d), False,
+               SubstructureNotifyMask | SubstructureRedirectMask, &ev);
+    XSync(d, False);
+}
+
+// The zero-initialized five-slot message a pre-EWMH client sends: source 0,
+// timestamp 0, no requestor. Spelled out separately from sendActivation()
+// because the point of the case using it is that EVERY field is zero, and
+// reaching that through a call with three explicit zero arguments reads as a
+// coincidence rather than as the intent.
+void sendLegacyActivation(Display* d, Window target)
+{
+    static Atom a = None;
+    if (a == None) a = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+
+    XEvent ev;
+    std::memset(&ev, 0, sizeof(ev));
+    ev.xclient.type         = ClientMessage;
+    ev.xclient.window       = target;
+    ev.xclient.message_type = a;
+    ev.xclient.format       = 32;
+    // data.l[0..4] all remain zero.
+
+    XSendEvent(d, DefaultRootWindow(d), False,
+               SubstructureNotifyMask | SubstructureRedirectMask, &ev);
+    XSync(d, False);
+}
+
+// The starting position every activation case needs: a managed target that is
+// mapped, framed, NOT focused and NOT flagged, with a different window holding
+// the focus so that "was not granted" is distinguishable from "nothing is
+// focused at all".
+//
+// Both windows are mapped with a fresh user-time so the map-time path grants
+// each in turn -- the target loses the focus to the incumbent simply by being
+// mapped first. Refusing the target at map time would work too, but would leave
+// it already carrying the demands-attention state that two of these cases exist
+// to observe the ARRIVAL of.
+struct ActivationScene {
+    Window target = None;
+    Window incumbent = None;
+    Time now = 0;          // the interaction clock, established by a real click
+    Time stale = 0;        // comfortably older than `now`
+};
+
+bool buildActivationScene(Display* d, XTestDriver& driver, ActivationScene& out)
+{
+    out.now = clickRootAndReadClock(d, driver);
+    out.stale = out.now / 2;
+    if (out.stale == 0) return false;
+
+    if (mapClientWithUserTime(d, 200, 160, 300, 220,
+                              { UserTime::Mode::OnToplevel, out.now }, out.target) == None) {
+        return false;
+    }
+    if (!WmFixture::pollUntil([&] { return pumpedActiveWindow(d) == out.target; }, 6000)) {
+        return false;
+    }
+
+    if (mapClientWithUserTime(d, 520, 380, 260, 200,
+                              { UserTime::Mode::OnToplevel, out.now }, out.incumbent) == None) {
+        return false;
+    }
+    if (!WmFixture::pollUntil([&] { return pumpedActiveWindow(d) == out.incumbent; }, 6000)) {
+        return false;
+    }
+
+    settleWm(d);
+    return !hasDemandsAttention(d, out.target);
 }
 
 } // namespace
@@ -1318,4 +1417,285 @@ TEST_CASE("Activating a refused window clears its demands-attention state", "[wm
 
     REQUIRE(fixture.wmAlive());
     REQUIRE(fixture.asanReports().empty());
+}
+
+// ===========================================================================
+// FOCUS-01 (plan 08-08, Task 4): _NET_ACTIVE_WINDOW arbitration
+//
+// The map-time half above is only half a mitigation. An application that wants
+// focus need not rely on being focused when its window appears -- it can simply
+// ask, by sending an activation request. Until this plan the WM granted every
+// such request unconditionally (Phase 6 D-10), which made the map-time
+// arbitration bypassable by any client that read the spec.
+//
+// The resolution recorded at this plan's checkpoint arbitrates by SOURCE
+// INDICATION, which is the discriminator the EWMH itself provides:
+//
+//   source 2 (pager)       -> granted unconditionally. Taskbars and window
+//                             switchers act on the user's direct behalf and
+//                             know more about the user's intent than the WM.
+//   source 1 (application) -> arbitrated against the message timestamp through
+//                             the SAME shared helper the map-time path uses.
+//   source 0 (no source)   -> granted. A legacy client sends none, and refusing
+//                             would break it -- D-19's reasoning, applied to the
+//                             second entry point.
+//
+// The ceiling is honesty: a client that lies about its source is granted. But
+// such a client could equally forge a fresh timestamp, so arbitrating all
+// sources would not raise the ceiling, and would break every pager.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Behaviour 15: a pager request is granted whatever its timestamp says
+// ---------------------------------------------------------------------------
+
+TEST_CASE("An activation request from a pager is granted despite a stale timestamp",
+          "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({}));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    ActivationScene scene;
+    REQUIRE(buildActivationScene(d.get(), driver, scene));
+
+    // Source 2 with a deliberately stale timestamp: if the WM arbitrated pager
+    // requests, this is the message it would refuse.
+    sendActivation(d.get(), scene.target, 2, scene.stale);
+
+    const bool granted = WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == scene.target;
+    }, 6000);
+    INFO("active: " << pumpedActiveWindow(d.get()) << "  target: " << scene.target);
+    CHECK(granted);
+    CHECK_FALSE(hasDemandsAttention(d.get(), scene.target));
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behaviour 16: an application request with a stale timestamp is refused
+//
+// This is the bypass being closed. Without it the map-time arbitration is
+// decorative: any application refused at map time could immediately ask for the
+// focus it was just denied and be handed it.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A stale application activation request is refused and demands attention",
+          "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({}));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    ActivationScene scene;
+    REQUIRE(buildActivationScene(d.get(), driver, scene));
+
+    sendActivation(d.get(), scene.target, 1, scene.stale);
+
+    settleWm(d.get());
+
+    INFO("stale stamp " << scene.stale << " vs interaction clock ~" << scene.now);
+    INFO("active: " << activeWindow(d.get()) << "  target: " << scene.target
+         << "  incumbent: " << scene.incumbent);
+    CHECK(activeWindow(d.get()) != scene.target);
+    CHECK(activeWindow(d.get()) == scene.incumbent);
+
+    // Refused, not dropped on the floor.
+    CHECK(hasDemandsAttention(d.get(), scene.target));
+    CHECK(hasUrgencyHint(d.get(), scene.target));
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behaviour 17: an application request with a fresh timestamp is granted
+//
+// The control for behaviour 16. Without it, a WM that had simply stopped
+// honouring application activation altogether would pass 16 -- and would break
+// every application that legitimately raises its own window on a user action.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A fresh application activation request is granted", "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({}));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    ActivationScene scene;
+    REQUIRE(buildActivationScene(d.get(), driver, scene));
+
+    // Taken from the server AFTER the interaction clock was last advanced, so it
+    // is newer than it by construction rather than by arithmetic.
+    const Time fresh = serverTime(d.get());
+    REQUIRE(fresh >= scene.now);
+
+    sendActivation(d.get(), scene.target, 1, fresh);
+
+    const bool granted = WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == scene.target;
+    }, 6000);
+    INFO("fresh stamp " << fresh << " vs interaction clock ~" << scene.now);
+    CHECK(granted);
+    CHECK_FALSE(hasDemandsAttention(d.get(), scene.target));
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behaviour 18: a request carrying no source indication is granted
+//
+// D-19's reasoning at the second entry point. The timestamp is stale, so the
+// only thing that can be granting this request is the source-0 rule.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("An activation request with no source indication is granted", "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({}));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    ActivationScene scene;
+    REQUIRE(buildActivationScene(d.get(), driver, scene));
+
+    sendActivation(d.get(), scene.target, 0, scene.stale);
+
+    const bool granted = WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == scene.target;
+    }, 6000);
+    INFO("active: " << pumpedActiveWindow(d.get()) << "  target: " << scene.target);
+    CHECK(granted);
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behaviour 19: the off switch restores unconditional granting
+//
+// Exactly the message behaviour 16 refuses, under --no-focus-stealing-prevention.
+// If this passes while 16 also passes, the switch controls the activation path
+// too rather than only the map-time one.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("With focus-stealing prevention off a stale activation request is granted",
+          "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({ "--no-focus-stealing-prevention" }));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    ActivationScene scene;
+    REQUIRE(buildActivationScene(d.get(), driver, scene));
+
+    sendActivation(d.get(), scene.target, 1, scene.stale);
+
+    const bool granted = WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == scene.target;
+    }, 6000);
+    INFO("active: " << pumpedActiveWindow(d.get()) << "  target: " << scene.target);
+    CHECK(granted);
+    CHECK_FALSE(hasDemandsAttention(d.get(), scene.target));
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behaviour 20: malformed requests neither crash the WM nor grant focus
+//
+// Four shapes, in one case because they share an expensive fixture and because
+// the final assertion -- that the WM is still alive and unpoisoned after all of
+// them -- is about the sequence rather than any one message.
+//
+// Note what is NOT tested here. XClientMessageEvent always carries five `long`
+// slots; there is no wire-level "field count", so a "too few fields" message
+// cannot be constructed and asserting on one would be theatre. The zero-filled
+// five-slot message below is the real legacy shape, and it is GRANTED, because
+// all-zero data means source 0 -- the case behaviour 18 covers deliberately.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Malformed activation requests are ignored without crashing the WM",
+          "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({}));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    ActivationScene scene;
+    REQUIRE(buildActivationScene(d.get(), driver, scene));
+
+    // --- 1. wrong format ----------------------------------------------------
+    // Format 8 means the five `long` slots are not there to be read. A WM that
+    // read data.l[0] anyway would be reading fields the sender never wrote.
+    sendActivation(d.get(), scene.target, 1, scene.now, 8);
+    settleWm(d.get());
+    INFO("after wrong format, active: " << activeWindow(d.get()));
+    CHECK(activeWindow(d.get()) == scene.incumbent);
+
+    // --- 2. unknown source indication ---------------------------------------
+    // The EWMH defines 0, 1 and 2. A WM that treated "not 1" as "trusted" would
+    // grant this, which is the failure mode a bare `source == 1` test invites.
+    sendActivation(d.get(), scene.target, 7, scene.now);
+    settleWm(d.get());
+    INFO("after unknown source, active: " << activeWindow(d.get()));
+    CHECK(activeWindow(d.get()) == scene.incumbent);
+
+    // --- 3. target that is not a managed window -----------------------------
+    // A real, live window the WM never managed: override-redirect and never
+    // mapped. Using a fabricated id would test the X error path instead.
+    XSetWindowAttributes attr;
+    attr.override_redirect = True;
+    Window unmanaged = XCreateWindow(d.get(), DefaultRootWindow(d.get()), -70, -70, 1, 1, 0,
+                                     CopyFromParent, InputOutput, CopyFromParent,
+                                     CWOverrideRedirect, &attr);
+    XSync(d.get(), False);
+
+    sendActivation(d.get(), unmanaged, 2, scene.now);
+    settleWm(d.get());
+    INFO("after unmanaged target, active: " << activeWindow(d.get()));
+    CHECK(activeWindow(d.get()) != unmanaged);
+    CHECK(activeWindow(d.get()) == scene.incumbent);
+
+    // --- 4. the zero-initialized legacy message -----------------------------
+    // Last, because unlike the three above this one is VALID and is granted.
+    sendLegacyActivation(d.get(), scene.target);
+
+    const bool granted = WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == scene.target;
+    }, 6000);
+    INFO("after legacy zero message, active: " << pumpedActiveWindow(d.get()));
+    CHECK(granted);
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+    XDestroyWindow(d.get(), unmanaged);
+    XSync(d.get(), False);
 }
