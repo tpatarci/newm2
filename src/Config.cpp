@@ -153,6 +153,7 @@ void Config::applyKeyValue(const std::string& key, const std::string& value) {
     if (key == "raise-on-focus")      { raiseOnFocus = parseBool(value); return; }
     if (key == "auto-raise")          { autoRaise = parseBool(value); return; }
     if (key == "exec-using-shell")    { execUsingShell = parseBool(value); return; }
+    if (key == "focus-stealing-prevention") { focusStealingPrevention = parseBool(value); return; }
 
     // Integer settings (with clamping and error handling)
     if (key == "auto-raise-delay" || key == "pointer-stopped-delay" ||
@@ -276,12 +277,14 @@ static struct option longOptions[] = {
     {"raise-on-focus",        no_argument, nullptr, 0},
     {"auto-raise",            no_argument, nullptr, 0},
     {"exec-using-shell",      no_argument, nullptr, 0},
+    {"focus-stealing-prevention", no_argument, nullptr, 0},
 
     // Boolean negations: --no-xxx = disable (per D-03)
     {"no-click-to-focus",     no_argument, nullptr, 0},
     {"no-raise-on-focus",     no_argument, nullptr, 0},
     {"no-auto-raise",         no_argument, nullptr, 0},
     {"no-exec-using-shell",   no_argument, nullptr, 0},
+    {"no-focus-stealing-prevention", no_argument, nullptr, 0},
 
     {nullptr, 0, nullptr, 0}
 };
@@ -309,12 +312,16 @@ void Config::applyCliArgs(int argc, char** argv) {
         else if (std::strcmp(name, "raise-on-focus") == 0)   raiseOnFocus = true;
         else if (std::strcmp(name, "auto-raise") == 0)       autoRaise = true;
         else if (std::strcmp(name, "exec-using-shell") == 0) execUsingShell = true;
+        else if (std::strcmp(name, "focus-stealing-prevention") == 0)
+            focusStealingPrevention = true;
 
         // Boolean disable (--no-click-to-focus)
         else if (std::strcmp(name, "no-click-to-focus") == 0)   clickToFocus = false;
         else if (std::strcmp(name, "no-raise-on-focus") == 0)   raiseOnFocus = false;
         else if (std::strcmp(name, "no-auto-raise") == 0)       autoRaise = false;
         else if (std::strcmp(name, "no-exec-using-shell") == 0) execUsingShell = false;
+        else if (std::strcmp(name, "no-focus-stealing-prevention") == 0)
+            focusStealingPrevention = false;
 
         // String settings
         else if (std::strcmp(name, "tab-foreground") == 0)      tabForeground = optarg;
