@@ -204,8 +204,24 @@ void Client::manage(bool mapped)
         m_border->map();
         setState(ClientState::Normal);
 
-        // Focus follows pointer -- don't auto-activate on manage
-        deactivate();
+        // FOCUS-01 (plan 08-08): the map-time arbitration.
+        //
+        // Deliberately NOT gated on the pointer-entry policy. Whether the user
+        // drives focus by clicking or by pointing is a question about how the
+        // user moves focus between windows that already exist; this is the
+        // separate question of whether a window that has just appeared may take
+        // the focus at all, and the answer is the same under either policy.
+        //
+        // Refusal means mapped in the background with a hint -- the window is
+        // still mapped, still framed, still fully managed. deactivate() here is
+        // exactly what every mapped window got before this plan, so the refusal
+        // path is the historical behaviour and only the grant path is new.
+        if (shouldFocusOnMap()) {
+            activate();
+        } else {
+            deactivate();
+            demandAttention();
+        }
     }
 
     if (activeClient() && !isActive()) {
@@ -222,6 +238,12 @@ void Client::activate()
     }
 
     if (!m_managed || isHidden() || isWithdrawn()) return;
+
+    // FOCUS-01: activation IS the attention the flagged window asked for, so
+    // this is the one correct place to clear the state. Placed above the
+    // already-active early return so re-activating a flagged window still
+    // clears it. A no-op when nothing was flagged.
+    clearAttentionState();
 
     if (isActive()) {
         decorate(true);
@@ -264,6 +286,136 @@ void Client::deactivate()
                 GrabModeAsync, GrabModeSync, None, None);
 
     decorate(false);
+}
+
+
+// FOCUS-01 (plan 08-08), threat T-8-PROP. A bounded, type-checked, always-freed
+// read of one 32-bit property value. Both properties the arbitration consults
+// are written by the client and are therefore untrusted input: a window may
+// carry a _NET_WM_USER_TIME of the wrong type, of the wrong format, of zero
+// length, or a _NET_WM_USER_TIME_WINDOW naming a window that does not exist.
+// Every one of those must read as "absent" rather than as a value.
+//
+// Deliberately not getProperty_aux(): that helper reports only an item count and
+// leaves the caller unable to distinguish a type mismatch from a real value, and
+// its free-on-zero contract is easy to get wrong at a new call site.
+static bool readWindowCardinal(Display *d, Window w, Atom prop, Atom type,
+                               unsigned long *out)
+{
+    Atom realType = None;
+    int format = 0;
+    unsigned long n = 0, extra = 0;
+    unsigned char *raw = nullptr;
+
+    // Length 1: we want a single value and will not read a second one, so there
+    // is no reason to let a client hand us a megabyte.
+    if (XGetWindowProperty(d, w, prop, 0L, 1L, false, type, &realType,
+                           &format, &n, &extra, &raw) != Success) {
+        return false;
+    }
+
+    bool ok = false;
+    if (raw && realType == type && format == 32 && n >= 1) {
+        *out = *reinterpret_cast<unsigned long*>(raw);
+        ok = true;
+    }
+    if (raw) XFree(raw);
+    return ok;
+}
+
+
+// FOCUS-01: the map-time half of the arbitration. See the header for why the
+// activation-message path in src/Events.cpp must reach the same verdict.
+bool Client::shouldFocusOnMap()
+{
+    if (!windowManager()->config().focusStealingPrevention) return true;
+
+    // Which window carries the timestamp? A client that updates its user-time
+    // frequently points at a proxy window it owns, so it can rewrite the value
+    // without generating PropertyNotify traffic on the toplevel. Reading only
+    // the toplevel would see "absent" for every such client and grant them all
+    // focus unconditionally -- a bypass, not a fallback.
+    Window timeWindow = m_window;
+    unsigned long proxy = 0;
+    if (readWindowCardinal(display(), m_window, Atoms::net_wmUserTimeWindow,
+                           XA_WINDOW, &proxy) && proxy != 0) {
+        timeWindow = static_cast<Window>(proxy);
+    }
+
+    unsigned long userTime = 0;
+    bool haveTime = false;
+
+    if (timeWindow != m_window) {
+        // The window id came from the client and may name nothing at all. The
+        // resulting BadWindow is expected here and is not a WM defect, so it is
+        // suppressed rather than logged.
+        ignoreBadWindowErrors = true;
+        haveTime = readWindowCardinal(display(), timeWindow, Atoms::net_wmUserTime,
+                                      XA_CARDINAL, &userTime);
+        ignoreBadWindowErrors = false;
+
+        // A proxy that named a window with no usable timestamp tells us nothing;
+        // fall through to the toplevel rather than treating the client's own
+        // misconfiguration as evidence against it.
+        if (!haveTime) {
+            haveTime = readWindowCardinal(display(), m_window, Atoms::net_wmUserTime,
+                                          XA_CARDINAL, &userTime);
+        }
+    } else {
+        haveTime = readWindowCardinal(display(), m_window, Atoms::net_wmUserTime,
+                                      XA_CARDINAL, &userTime);
+    }
+
+    // D-19: no timestamp at all is a legacy X client, not a thief. The WM has no
+    // evidence against it and must not invent any -- punishing every pre-EWMH
+    // application would make the desktop feel broken, which is a far more likely
+    // outcome than the focus theft the mitigation is aimed at.
+    if (!haveTime) return true;
+
+    // Zero is not "very old". The spec assigns it the explicit meaning of asking
+    // not to be focused on map, so it is honoured as a request rather than
+    // arbitrated as a stale timestamp that happens to compare small.
+    if (userTime == 0) return false;
+
+    return windowManager()->isUserTimeRecent(static_cast<Time>(userTime));
+}
+
+
+// FOCUS-01: the visible half of a refusal. Both signals are published together
+// because half the desktop reads only one of them: EWMH-aware pagers watch
+// _NET_WM_STATE, while everything descended from ICCCM watches the urgency hint.
+void Client::demandAttention()
+{
+    m_demandsAttention = true;
+    updateNetWmState();
+
+    XWMHints *hints = XGetWMHints(display(), m_window);
+    if (!hints) hints = XAllocWMHints();   // a client is allowed to set none
+    if (!hints) return;                    // allocation failed; the EWMH state stands
+
+    hints->flags |= XUrgencyHint;
+    XSetWMHints(display(), m_window, hints);
+    XFree(hints);
+}
+
+
+// FOCUS-01: the EWMH is explicit that the WM should unset the state once the
+// window has had the attention it asked for. A hint that never clears decays
+// into permanent decoration the user learns to ignore, at which point the
+// refusal is once again silent.
+void Client::clearAttentionState()
+{
+    if (!m_demandsAttention) return;
+
+    m_demandsAttention = false;
+    updateNetWmState();
+
+    XWMHints *hints = XGetWMHints(display(), m_window);
+    if (!hints) return;                    // nothing was set, nothing to clear
+
+    hints->flags &= ~XUrgencyHint;
+    XSetWMHints(display(), m_window, hints);
+    XFree(hints);
 }
 
 
@@ -381,6 +533,11 @@ void Client::updateNetWmState()
     if (m_isMaximizedVert) states.push_back(Atoms::net_wmStateMaximizedVert);
     if (m_isMaximizedHorz) states.push_back(Atoms::net_wmStateMaximizedHorz);
     if (isHidden()) states.push_back(Atoms::net_wmStateHidden);
+    // FOCUS-01 (plan 08-08). Published from here and nowhere else: this is the
+    // single writer of _NET_WM_STATE, and a second write site would silently
+    // drop whichever states the other site did not know about. Plan 08-10 adds
+    // skip-taskbar/skip-pager to this same list for the same reason.
+    if (m_demandsAttention) states.push_back(Atoms::net_wmStateDemandsAttention);
 
     if (states.empty()) {
         XChangeProperty(display(), m_window, Atoms::net_wmState,
@@ -407,6 +564,7 @@ void Client::applyWmState(int action, Atom prop1, Atom prop2)
     bool fullscreen = m_isFullscreen;
     bool maxVert = m_isMaximizedVert;
     bool maxHorz = m_isMaximizedHorz;
+    bool demands = m_demandsAttention;
 
     for (int i = 0; i < 2; ++i) {
         Atom prop = (i == 0) ? prop1 : prop2;
@@ -418,7 +576,19 @@ void Client::applyWmState(int action, Atom prop1, Atom prop2)
             maxVert = applyProp(maxVert);
         } else if (prop == Atoms::net_wmStateMaximizedHorz) {
             maxHorz = applyProp(maxHorz);
+        } else if (prop == Atoms::net_wmStateDemandsAttention) {
+            demands = applyProp(demands);
         }
+    }
+
+    // FOCUS-01: a pager that has shown the user the flagged window clears the
+    // state on the window's behalf, and an application may set it directly
+    // rather than being refused focus first. Routed through the same two
+    // methods the map-time path uses so the EWMH state and the ICCCM urgency
+    // hint can never disagree.
+    if (demands != m_demandsAttention) {
+        if (demands) demandAttention();
+        else         clearAttentionState();
     }
 
     // Apply fullscreen first (it strips border)

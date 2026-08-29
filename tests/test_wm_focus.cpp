@@ -492,6 +492,21 @@ Window mapClientWithUserTime(Display* d, int x, int y, int w, int h,
 // Both halves are in one case on purpose. The negative half alone would pass on
 // a WM that had simply stopped focusing anything at all; the positive half is
 // what proves the gate suppressed one focus route rather than every route.
+//
+// WHY THIS MAPS WITH AN EXPLICIT ZERO USER-TIME (changed by plan 08-08).
+//
+// This case needs a window that is not focused, so that it can then ask whether
+// pointer entry focuses it. Until 08-08 that came free: the WM focused nothing
+// at map time, so a plain XCreateSimpleWindow was unfocused by default. FOCUS-01
+// removed that default -- a window with no _NET_WM_USER_TIME is now granted
+// focus on map, deliberately (D-19, legacy clients), and the plain window this
+// case used to map is exactly such a client.
+//
+// So the precondition is now constructed rather than assumed, using the one
+// mechanism the spec provides for it: a user-time of exactly zero is the
+// client's explicit "do not focus me on map". Every assertion below is
+// unchanged and tests the same thing at the same strength; only the way the
+// unfocused starting state is reached has moved from implicit to explicit.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("With click-to-focus the pointer alone does not focus a window but a click does",
@@ -512,7 +527,8 @@ TEST_CASE("With click-to-focus the pointer alone does not focus a window but a c
     driver.moveTo(kParkX, kParkY);
 
     Window client = None;
-    Window frame = mapClientAndAwaitFrame(d.get(), 200, 160, 300, 220, client);
+    Window frame = mapClientWithUserTime(d.get(), 200, 160, 300, 220,
+                                         { UserTime::Mode::OnToplevel, 0 }, client);
     REQUIRE(client != None);
     REQUIRE(frame != None);
 
@@ -563,6 +579,14 @@ TEST_CASE("With click-to-focus the pointer alone does not focus a window but a c
 // The control for behaviour 1, and the shipped default. Auto-raise is on here
 // because with it off nothing consults the pointer at all -- which is behaviour
 // 3's subject, not this one's.
+//
+// Maps with an explicit zero user-time for the reason behaviour 1 documents at
+// length, and here the change is load-bearing rather than merely necessary: with
+// a plain window this case would now be VACUOUS. FOCUS-01 grants map-time focus
+// to a window that publishes no user-time, so the client would already be active
+// before the pointer ever moved, and the poll below would report success without
+// the pointer route having run at all. Constructing the unfocused precondition
+// is what keeps this case a test of pointer focus rather than of map focus.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("With click-to-focus off the pointer alone focuses a window", "[wm_focus]")
@@ -581,7 +605,8 @@ TEST_CASE("With click-to-focus off the pointer alone focuses a window", "[wm_foc
     driver.moveTo(kParkX, kParkY);
 
     Window client = None;
-    Window frame = mapClientAndAwaitFrame(d.get(), 200, 160, 300, 220, client);
+    Window frame = mapClientWithUserTime(d.get(), 200, 160, 300, 220,
+                                         { UserTime::Mode::OnToplevel, 0 }, client);
     REQUIRE(client != None);
     REQUIRE(frame != None);
 
@@ -1086,6 +1111,64 @@ TEST_CASE("A window mapped with a user-time of exactly zero is not focused", "[w
 
     CHECK(activeWindow(d.get()) != quiet);
     CHECK(activeWindow(d.get()) == incumbent);
+
+    REQUIRE(fixture.wmAlive());
+    REQUIRE(fixture.asanReports().empty());
+}
+
+// ---------------------------------------------------------------------------
+// Behaviour 11b: zero is honoured BEFORE the user has interacted at all
+//
+// Added after mutation testing showed behaviour 11 does not actually pin the
+// rule it is named for. Behaviour 11 advances the interaction clock with a real
+// button press first, so its zero timestamp is ALSO stale -- deleting the
+// explicit `userTime == 0` branch from the WM left behaviour 11 green, because
+// the ordinary staleness comparison refused the window anyway.
+//
+// The zero rule is load-bearing in exactly one window of time, which this case
+// occupies: before the first user interaction the clock is still the X
+// CurrentTime sentinel of 0, so a zero timestamp compares as NOT stale (delta
+// zero) and the ordinary comparison would GRANT it. Only the explicit branch
+// refuses it. Deleting that branch turns this case red.
+//
+// It also pins the planner's flagged assumption that the very first window
+// mapped before any user input is granted focus: the incumbent below is mapped
+// into a freshly started WM with no interaction whatsoever, and must be focused.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A user-time of zero is refused even before any user interaction",
+          "[wm_focus]")
+{
+    WmFixture fixture(focusFixture({}));
+
+    x11::DisplayPtr d = fixture.openDisplay();
+    REQUIRE(d != nullptr);
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    // NO clickRootAndReadClock() here -- that is the entire point. The WM's
+    // interaction clock is still CurrentTime.
+
+    // The flagged assumption, asserted rather than assumed: with no interaction
+    // yet recorded, a legacy client is still granted focus on map.
+    Window incumbent = None;
+    REQUIRE(mapClientWithUserTime(d.get(), 120, 120, 260, 200,
+                                  { UserTime::Mode::Absent, 0 }, incumbent) != None);
+    REQUIRE(WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d.get()) == incumbent;
+    }, 6000));
+
+    // And against that same untouched clock, an explicit zero is still refused.
+    Window quiet = None;
+    REQUIRE(mapClientWithUserTime(d.get(), 420, 300, 260, 200,
+                                  { UserTime::Mode::OnToplevel, 0 }, quiet) != None);
+
+    settleWm(d.get());
+
+    CHECK(activeWindow(d.get()) != quiet);
+    CHECK(activeWindow(d.get()) == incumbent);
+    CHECK(hasDemandsAttention(d.get(), quiet));
 
     REQUIRE(fixture.wmAlive());
     REQUIRE(fixture.asanReports().empty());

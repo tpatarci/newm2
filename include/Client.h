@@ -95,6 +95,23 @@ public:
     void applyWmState(int action, Atom prop1, Atom prop2);
     void updateNetWmState();
 
+    // FOCUS-01 (plan 08-08): the map-time half of focus-stealing prevention.
+    //
+    // shouldFocusOnMap() answers whether this newly mapped window may take the
+    // input focus, by comparing the timestamp the client published against the
+    // WM's last real user interaction. The activation-message path in
+    // src/Events.cpp arbitrates the same question through the same shared
+    // WindowManager::isUserTimeRecent() helper -- deliberately, because a
+    // mitigation implemented at only one of its two entry points is not a
+    // mitigation, it is a speed bump.
+    //
+    // demandAttention() is the visible half. A refused window is mapped and
+    // fully managed, just not focused, and it advertises that it wants the user
+    // via _NET_WM_STATE_DEMANDS_ATTENTION and the ICCCM urgency hint. Refusing
+    // silently would trade focus stealing for lost windows.
+    bool shouldFocusOnMap();
+    void demandAttention();
+
     // Client messages
     void sendMessage(Atom a, long data);
     void sendConfigureNotify();
@@ -155,6 +172,17 @@ private:
     int m_preFullscreenW{0}, m_preFullscreenH{0};
     int m_preMaximizedX{0}, m_preMaximizedY{0};
     int m_preMaximizedW{0}, m_preMaximizedH{0};
+
+    // FOCUS-01: set when this window was refused focus, cleared once it gets
+    // the attention it asked for. Published through updateNetWmState() and
+    // nowhere else -- plan 08-10 extends that same publisher with the
+    // skip-taskbar/skip-pager states and must preserve this one.
+    bool m_demandsAttention{false};
+
+    // Clears the attention state and the ICCCM urgency hint together. Private
+    // because the only correct trigger is activation: the EWMH says the WM
+    // should unset the state once the window has had the attention it wanted.
+    void clearAttentionState();
 
     std::string m_name;
     std::string m_iconName;
