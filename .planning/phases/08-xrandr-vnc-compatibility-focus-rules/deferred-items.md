@@ -122,6 +122,23 @@ suppression counts. Run the asan tree through the gate, not through bare ctest.
 
 **Disposition:** deferred to the test-infrastructure work (08-11 … 08-13).
 
+### STILL OPEN after 08-13, deliberately
+
+08-13 was the last plan scheduled to touch shared test infrastructure and did
+consider closing this. It did not, and the reason is a judgement rather than an
+oversight: the two available fixes are twelve `catch_discover_tests(...
+PROPERTIES ENVIRONMENT ...)` edits in `CMakeLists.txt`, or a
+`__lsan_default_suppressions()` translation unit that has to be linked into
+every test executable individually (the LSan runtime resolves that symbol in the
+MAIN binary, so one shared object library does not reach it). Both are broad
+edits to a shared build file for a condition no plan in this phase caused, and
+`scripts/gates/build-all.sh asan` -- the sanctioned way to run the asan tree --
+exports the suppressions itself and is green.
+
+**Recommended owner:** whoever next has an independent reason to restructure the
+test target declarations in `CMakeLists.txt`. Until then the rule stands: run
+the asan tree through the gate, not through bare `ctest`.
+
 ## 6. `WindowManager::circulate()` spins forever when no client is in Normal state — RESOLVED in 08-07 (`62e9c0d`)
 
 **Found during:** 08-04 Task 2, while building the geometry suite's clamp trigger.
@@ -653,5 +670,81 @@ process-level suites and this plan had no other reason to touch it.
 **Workaround meanwhile:** `rm -f build/*/wm-process-tests/asan-*` between
 mutation runs.
 
-**Disposition:** deferred to 08-13, which owns the remaining test-infrastructure
-work.
+**Disposition:** ~~deferred to 08-13, which owns the remaining test-infrastructure
+work.~~ **RESOLVED (08-13, `b76fd97`).**
+
+### RESOLVED (08-13)
+
+`WmFixture::removeReportsWithPrefix()` is called from `spawnWm()` before the WM
+child is launched, and `globAsanReports()` now delegates to the same static
+`globWithPrefix()` the cleanup uses -- a cleanup that globbed differently from
+the attribution would be a cleanup that does not clean.
+
+The helper is static and public rather than buried in `start()` for a testable
+reason: the fixture cannot be handed a chosen display number, but the helper can
+be handed a chosen prefix. `tests/test_wm_runtime.cpp` `[wm_harness]` covers
+three things, and the third is the one that matters:
+
+1. the attribution really is prefix-based, so the hazard is real rather than
+   asserted;
+2. the helper clears exactly its own prefix and leaves a neighbouring fixture's
+   reports alone -- a cleanup that wiped the directory would pass (1) and would
+   silently delete a concurrent worker's genuine finding;
+3. the **wiring**: a stale file is planted at a released display's prefix and a
+   fresh fixture is started onto that same display, which the reservation hands
+   back deterministically (it scans upward from a fixed base to the lowest FREE
+   display, and `scripts/gates/build-all.sh` runs ctest serially). Deleting the
+   call in `start()` reddens only this half -- mutation M8.
+
+## 15. `X_SetInputFocus ... BadMatch` under heavy window churn (PRE-EXISTING, irreducible)
+
+**Found during:** 08-13 Task 3, by the new 120-window `[wm_stress]` churn case
+and 08-11's protocol-error assertion.
+
+**Symptom:** a run that creates, maps, unmaps and destroys 120 windows produces
+a small number (measured: 2) of
+
+```
+wm2: X_SetInputFocus (0x...): BadMatch (invalid parameter attributes)
+```
+
+`BadMatch` from `XSetInputFocus` means the target window was not viewable when
+the request reached the server.
+
+**Cause: an irreducible race, not a missing guard.** `Client::activate()`
+already returns early unless the client is managed, not hidden and not
+withdrawn (`src/Client.cpp`), so the WM only ever focuses a window it believes
+is Normal. But its belief is only as fresh as the last event it has processed,
+and under churn a window is routinely destroyed between the decision and the
+request arriving. No query can close that window: a viewability check would move
+the race one round trip earlier and no further. The server discards the request
+and nothing downstream is affected.
+
+**Reachability changed in 08-13, the defect did not.** Before the
+`Client::unreparent()` queue-discard fix (`e931fd5`) the WM was throwing away
+queued events on every teardown, so far fewer focus transitions ran at all.
+
+**Disposition:** accepted rather than deferred. The `[wm_stress]` case BOUNDS it
+rather than excluding it -- at most ten occurrences across 120 windows -- so the
+race stays invisible while a count that scaled with the churn would fail the
+case. Every other protocol-error class still fails it outright.
+
+## 16. The tab-button hit area is subtracted from the frame shape on an inactive client (BY DESIGN, but surprising)
+
+**Found during:** 08-13 Task 1, writing the `destroy-window-delay` case.
+
+**Symptom:** a synthetic press aimed at the tab button of an INACTIVE client does
+not reach the button. It falls through to the root window and opens the root
+menu instead.
+
+**Cause:** `Border::setFrameVisibility(false, ...)` includes the button's square
+in the rectangle list it SUBTRACTS from the frame's bounding shape. The button
+window itself is still mapped and still has its geometry, so
+`XQueryTree` + `XGetGeometry` find it exactly where it should be -- nothing about
+the situation announces itself to a test.
+
+**Not a defect:** the wm2 design is that an inactive window shows only its tab,
+and the button belongs to the active decoration. Recorded because it cost time
+once and will again: any future case that drives the tab button must activate
+the client first (`tests/test_wm_runtime.cpp` does, and says why at the call
+site).

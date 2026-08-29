@@ -159,13 +159,21 @@ ldd build/release/wm2-born-again
 - [ ] Add tests for hidden-list transfers through `Client::hide()` and
       `Client::unhide()` (`src/Client.cpp:775`, `src/Client.cpp:793`), including
       `_NET_WM_STATE_HIDDEN` and `_NET_CLIENT_LIST` updates.
-- [ ] Add tests for actual config-to-runtime behavior:
+- [x] Add tests for actual config-to-runtime behavior:
       frame thickness, menu colors, tab colors, `destroy-window-delay`,
       `new-window-command`, `exec-using-shell`, and all focus policy flags.
-- [ ] Add tests for X11 error paths that run in a subprocess because
+      DONE (plan 08-13): `tests/test_wm_runtime.cpp` `[wm_config_runtime]`,
+      7 cases; the focus policy flags are covered by plan 08-07's
+      `tests/test_wm_focus.cpp`. Found a SHAPE ordering defect that left the
+      frame UNSHAPED at every frame thickness except the shipped default.
+- [x] Add tests for X11 error paths that run in a subprocess because
       `WindowManager::fatal()` exits (`src/Manager.cpp:230`):
       no `DISPLAY`, invalid colors, missing font, and another WM already owning
       `SubstructureRedirectMask`.
+      DONE (plan 08-13): `tests/test_wm_runtime.cpp` `[wm_errors]`, 7 cases,
+      each with a deadline so a path that hangs is distinguishable from one that
+      exits wrongly. The same plan added the `--help` flag, which did not exist
+      while the unrecognised-option message advised using it.
 - [ ] Add tests for no-Shape fallback, or refactor shape calls behind a wrapper
       that can be forced unavailable in tests.
 - [ ] Add tests for all `XSizeHints` resize constraints in
@@ -190,8 +198,17 @@ ldd build/release/wm2-born-again
       DONE (plan 08-12): `tests/test_wm_state.cpp` `[wm_props]`, 9 cases.
       Found a heap-buffer-overflow in the shared property reader and an
       invertible `_NET_WORKAREA`; both fixed.
-- [ ] Add repeated create/map/unmap/destroy stress tests under ASan for at least
+- [x] Add repeated create/map/unmap/destroy stress tests under ASan for at least
       100 windows.
+      DONE (plan 08-13): `tests/test_wm_runtime.cpp` `[wm_stress]`, 120 windows
+      in three batches with overlapping unmap/destroy subsets. Found that
+      `Client::unreparent()` discarded the WM's ENTIRE event queue on every
+      client teardown, and that `Client::getColormaps()` installed unchecked
+      (uninitialised) colormap XIDs; both fixed.
+
+**All thirteen missing-coverage items above are now automated** (D-09):
+items 1 and 3 in plan 08-01, item 7 in 08-03, items 2, 4, 8 and 9 in 08-11,
+items 10, 11 and 12 in 08-12, and items 5, 6 and 13 in 08-13.
 
 ## Runtime Smoke Checklist
 
@@ -288,7 +305,11 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
       negative dimensions (`src/Border.cpp:295`).
 - [ ] Tab, button, border, and menu colors apply from config and invalid colors
       fail with a clear message.
-- [ ] Frame thickness works at minimum, default, and maximum configured values.
+- [x] Frame thickness works at minimum, default, and maximum configured values.
+      DONE (plan 08-13): asserted absolutely (`yIndent() == FRAME_WIDTH + 1`) at
+      3, the shipped 7 and 20. This is where the SHAPE ordering defect surfaced:
+      every thickness outside a narrow band produced a `BadMatch` and an
+      unshaped frame.
 - [ ] Shaped frames render correctly when Shape is available.
 - [ ] Rectangular fallback renders and operates correctly when Shape is not
       available, without issuing Shape extension requests.
@@ -301,11 +322,18 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
 - [ ] No ASan/UBSan reports in full automated and runtime smoke tests.
 - [ ] No steady CPU spin while idle, while waiting for auto-raise timers, or while
       menus/grabs are active.
-- [ ] Repeated `spawn()` calls do not leave zombie processes
+- [x] Repeated `spawn()` calls do not leave zombie processes
       (`src/Manager.cpp:770`).
-- [ ] `exec-using-shell` is off by default and documented as shell-evaluated
+      DONE (plan 08-13): asserted at the end of the `[wm_stress]` churn case --
+      three menu `New` selections, then zero zombie children of the WM.
+- [x] `exec-using-shell` is off by default and documented as shell-evaluated
       behavior. Commands with arguments require shell mode or an intentionally
       implemented argv parser.
+      DONE (plan 08-13): `[wm_config_runtime]` runs one command containing both
+      an argument and a shell metacharacter through both settings, with a
+      filesystem witness proving nothing at all is evaluated by a shell when the
+      flag is off (threat T-8-SHELL). `--help` now documents the flag as
+      shell-evaluated.
 - [ ] Config files reject overlong lines and values as tested, and unknown keys
       warn without aborting.
 - [ ] Client-supplied properties cannot crash the WM by using wrong atom types,
