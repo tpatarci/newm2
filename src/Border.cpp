@@ -1091,11 +1091,13 @@ void Border::configure(int x, int y, int w, int h,
         resizeTab(h);
     }
 
-    wc.x = TAB_TOP_HEIGHT + 2;
+    wc.x = buttonDrawInset();
     wc.y = wc.x;
-    wc.width = wc.height = m_tabWidth - TAB_TOP_HEIGHT * 2 - 4;
+    wc.width = wc.height = buttonDrawSize();
     XConfigureWindow(display(), m_button, mask, &wc);
 }
+
+
 
 
 void Border::moveTo(int x, int y)
@@ -1236,6 +1238,17 @@ void Border::eventButton(XButtonEvent *e)
                 return;
             }
         }
+        // The frame owns a thin part of the button's target square too -- the
+        // notch's inner edge. Same routing as the tab branch below, so a miss
+        // that lands there presses the button instead of starting a drag.
+        if (e->type == ButtonPress &&
+            e->x >= 0 && e->x < buttonHitSize() &&
+            e->y >= 0 && e->y < buttonHitSize()) {
+            runButtonPress(e, e->x - buttonDrawInset(),
+                              e->y - buttonDrawInset());
+            return;
+        }
+
         m_client->moveOrResize(e);
         return;
 
@@ -1245,6 +1258,23 @@ void Border::eventButton(XButtonEvent *e)
             m_client->toggleMaximized();
             return;
         }
+
+        // A press in the tab's top square was aimed at the button. The tab and
+        // the button share an origin, so the tab's coordinates ARE the frame's
+        // here, and shifting by the inset puts them in the button's.
+        //
+        // Gated on isActive() for the same reason the frame branch above is:
+        // setFrameVisibility() subtracts the button's square from an inactive
+        // client's frame and unmaps the button, so there is no button to aim at,
+        // and a press here is a plain click on an unfocused window.
+        if (e->type == ButtonPress && m_client->isActive() &&
+            e->x >= 0 && e->x < buttonHitSize() &&
+            e->y >= 0 && e->y < buttonHitSize()) {
+            runButtonPress(e, e->x - buttonDrawInset(),
+                              e->y - buttonDrawInset());
+            return;
+        }
+
         m_client->move(e);
         return;
     }
@@ -1256,6 +1286,31 @@ void Border::eventButton(XButtonEvent *e)
 
     if (e->window != m_button || e->type == ButtonRelease) return;
 
+    runButtonPress(e, e->x, e->y);
+}
+
+
+// The button's target square is the tab's whole top square, while the square it
+// PAINTS stays the small one it has always been.
+//
+// It has to work this way round. The obvious approach -- grow the button window,
+// or give it a large input shape and a small bounding shape -- cannot work here,
+// and both were built and measured before this was written: the TAB is stacked
+// ABOVE the button and is shaped with a hole exactly the size of the painted
+// square, so every press outside that hole is delivered to the tab no matter how
+// large the button window is. Widening the hole instead would stop the tab
+// painting its struts there, which changes the frame's appearance.
+//
+// So the presses the tab already receives are interpreted here instead, and not
+// one window, shape or pixel moves.
+//
+// What this fixes, MEASURED with a hit probe on a 16px tab: the target was 8x8,
+// 64 square pixels, and a near-miss did not merely fail. Four pixels to any side
+// hit the tab and started a DRAG; one or two to the right or below fell through
+// the frame's shaped hole to the ROOT WINDOW and opened the menu. Both are worse
+// than nothing happening.
+void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
+{
     int menuGrabMask = ButtonPressMask | ButtonReleaseMask |
                        ButtonMotionMask | StructureNotifyMask;
     if (windowManager()->attemptGrab(m_button, None, menuGrabMask, e->time)
@@ -1268,12 +1323,21 @@ void Border::eventButton(XButtonEvent *e)
     bool done = false;
     struct timeval sleepval;
     unsigned long tdiff = 0L;
-    int x = e->x;
-    int y = e->y;
+    int x = startX;
+    int y = startY;
     int action = 1;
-    int buttonSize = m_tabWidth - TAB_TOP_HEIGHT * 2 - 4;
 
-    XFillRectangle(display(), m_button, m_drawGC.get(), 0, 0, buttonSize, buttonSize);
+    // Two spans, and they must not be conflated. drawSize is what gets painted,
+    // in button-window coordinates. The bounds below are the TARGET, expressed
+    // in the same button-window coordinates but covering the tab's whole top
+    // square -- which starts one inset ABOVE and LEFT of the button, hence the
+    // negative lower bound. They are what give the pointer room to wander during
+    // a press without silently cancelling the action.
+    const int drawSize = buttonDrawSize();
+    const int lo = -buttonDrawInset();
+    const int hi = buttonHitSize() - buttonDrawInset();
+
+    XFillRectangle(display(), m_button, m_drawGC.get(), 0, 0, drawSize, drawSize);
 
     while (!done) {
 
@@ -1320,7 +1384,7 @@ void Border::eventButton(XButtonEvent *e)
                     action = 0;
                 }
             }
-            if (x < 0 || y < 0 || x >= buttonSize || y >= buttonSize) {
+            if (x < lo || y < lo || x >= hi || y >= hi) {
                 action = 0;
             }
             windowManager()->releaseGrab(&event.xbutton);
@@ -1335,7 +1399,7 @@ void Border::eventButton(XButtonEvent *e)
             y = event.xmotion.y;
 
             if (action == 0 || action == 2) {
-                if (x < 0 || y < 0 || x >= buttonSize || y >= buttonSize) {
+                if (x < lo || y < lo || x >= hi || y >= hi) {
                     windowManager()->installCursor(WindowManager::RootCursor::Normal);
                     action = 0;
                 } else {

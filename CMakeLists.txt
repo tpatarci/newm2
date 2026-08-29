@@ -598,10 +598,14 @@ if(BUILD_TESTS)
         # Own display per fixture instance, so deliberately NO shared-display
         # binding and NO `FIXTURES_REQUIRED xvfb_display`.
         add_executable(test_wm_runtime tests/test_wm_runtime.cpp)
+        # XEXT is for reading back the button's BOUNDING shape: the button window
+        # is deliberately larger than the square it paints, so the painted size
+        # can only be asserted by asking the server for the shape.
         target_link_libraries(test_wm_runtime PRIVATE
             Catch2::Catch2WithMain
             PkgConfig::X11
             PkgConfig::XTST
+            PkgConfig::XEXT
         )
         target_include_directories(test_wm_runtime PRIVATE
             ${CMAKE_SOURCE_DIR}/include

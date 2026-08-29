@@ -57,6 +57,16 @@ public:
 
     bool coordsInHole(int x, int y);
 
+    // The button paints a small square but ANSWERS across the whole top square
+    // of the tab. The two sizes are deliberately different and must not be
+    // conflated: the painted one is the window's look, which is settled, and the
+    // hit one is how hard it is to aim at, which was 8x8 -- 64 square pixels,
+    // with every near-miss landing on the tab (starting a drag) or in the shaped
+    // hole (falling through to the root window). See Border::configure().
+    static int buttonDrawInset() { return TAB_TOP_HEIGHT + 2; }
+    static int buttonDrawSize()  { return m_tabWidth - TAB_TOP_HEIGHT * 2 - 4; }
+    static int buttonHitSize()   { return m_tabWidth; }
+
 private:
     void fatal(const char *m);
 
@@ -99,6 +109,12 @@ private:
     void shapeTab(int, int);
     void resizeTab(int);
     void shapeResize();
+
+    // The tab-button press loop. Takes the press position in BUTTON-window
+    // coordinates, because it is entered from two places: a press on the button
+    // itself, and a press on the tab that landed inside the button's target
+    // square but outside the small square the button paints.
+    void runButtonPress(XButtonEvent *e, int startX, int startY);
 
     // D-11: the one and only entry point through which this class is permitted
     // to issue a rectangle-combining request to the X Shape extension. Mirrors

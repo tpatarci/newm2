@@ -65,6 +65,7 @@
 #include "x11wrap.h"
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
+#include <X11/extensions/shape.h>
 #include <X11/Xutil.h>
 
 #include <sys/stat.h>
@@ -472,17 +473,24 @@ void parkPointer(Display* d)
 // lowers these windows as it decorates.
 Window findFrameChild(Display* d, Window frame, Window client, bool wantButton)
 {
+    // Separated by SIZE, not by origin. The button used to be identifiable by
+    // its (4,4) offset, but it now covers the whole top square of the tab and so
+    // shares the tab's (0,0) origin -- an origin test finds whichever of the two
+    // the server happens to list first. The button is the small square; the tab
+    // is the long strip running the width of the frame.
+    Window button = None, tab = None;
+
     for (Window child : childrenOf(d, frame)) {
         if (child == client) continue;
         Rect r;
         if (!localRect(d, child, r)) continue;
-        if (wantButton) {
-            if (r.x == 4 && r.y == 4 && r.w == r.h && r.w > 0) return child;
-        } else {
-            if (r.x == 0 && r.y == 0) return child;
-        }
+        if (r.w <= 0 || r.h <= 0) continue;
+
+        if (r.w == r.h && r.w <= 64) button = child;
+        else                         tab = child;
     }
-    return None;
+
+    return wantButton ? button : tab;
 }
 
 // ---------------------------------------------------------------------------
@@ -3287,4 +3295,155 @@ TEST_CASE("Moving from a submenu back to the outer menu re-highlights it and clo
     CHECK(backHighlighted);
     CHECK(submenuClosed);
     CHECK(fixture.wmAlive());
+}
+
+
+// ---------------------------------------------------------------------------
+// The close/hide button answers across the whole top square of the tab
+//
+// The button is the only pointer route to hiding or closing a window and it was
+// 8x8 -- 64 square pixels. MEASURED with a hit probe against the pre-fix binary,
+// on a 16px tab, every direction of near-miss did something ELSE:
+//
+//     4px to any side          -> the TAB, which starts a DRAG
+//     1-2px right or below     -> the frame's shaped hole, which falls THROUGH
+//                                 to the root window and opens the menu
+//
+// Missing a close button by two pixels and getting a dragged window or the root
+// menu is a worse outcome than missing it and getting nothing, which is what
+// made this worth widening rather than leaving to the user's aim.
+//
+// The fix widens only the INPUT region: the button window is grown to the tab's
+// top square while a bounding shape holds the PAINTED square at its old size and
+// place. This case therefore asserts both halves. The second is not decoration
+// -- without it "make the target easier to hit" silently becomes "make the
+// button bigger", which was explicitly not wanted.
+//
+// Driven by real presses rather than by XTranslateCoordinates, which models
+// neither input shapes nor setFrameVisibility()'s subtraction of the button
+// square from an INACTIVE client's frame. An earlier cut of this case used that
+// call and reported a hit region that no press agrees with.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("The window button answers across the whole tab-top square while "
+          "painting the same square as before", "[wm_button]")
+{
+    WmFixture fixture(cleanFixture());
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    XTestDriver driver(fixture.display());
+
+    // Presses the button of `client`'s frame at frame-relative (dx,dy), the way
+    // a user aiming at the button and missing by that much would.
+    auto pressAt = [&](Window frame, Window client, int dx, int dy) {
+        // The button square is SUBTRACTED from an inactive client's frame shape,
+        // so the window has to be active before a press can reach it at all.
+        const Rect c = rectOf(d, client);
+        driver.moveTo(c.x + c.w / 2, c.y + c.h / 2);
+        XSync(d, False);
+        REQUIRE(WmFixture::pollUntil([&] {
+            pumpWm(d);
+            return activeWindow(d) == client;
+        }, 8000));
+
+        const Rect f = rectOf(d, frame);
+        driver.moveTo(f.x + dx, f.y + dy);
+        XSync(d, False);
+        driver.press(Button1);
+        driver.release(Button1);
+        XSync(d, False);
+    };
+
+    auto hidesWhenPressedAt = [&](int dx, int dy) {
+        Window win = createClient(d, 200, 200, 300, 200, "buttonhit");
+        XMapWindow(d, win);
+        XSync(d, False);
+        Window frame = awaitFrameFor(d, win);
+        REQUIRE(frame != None);
+        settleWm(d);
+
+        pressAt(frame, win, dx, dy);
+
+        long state = -1;
+        const bool hidden = WmFixture::pollUntil([&] {
+            pumpWm(d);
+            return icccmState(d, win, state) && state == IconicState;
+        }, 4000);
+
+        XDestroyWindow(d, win);
+        XSync(d, False);
+        settleWm(d);
+        return hidden;
+    };
+
+    // The painted square is unchanged: the same 8x8 at the same inset. Read off
+    // the BOUNDING shape, because the window is deliberately larger than what it
+    // paints; an unshaped button reports its whole rectangle, so this reads
+    // correctly against either build.
+    {
+        Window win = createClient(d, 200, 200, 300, 200, "buttondraw");
+        XMapWindow(d, win);
+        XSync(d, False);
+        Window frame = awaitFrameFor(d, win);
+        REQUIRE(frame != None);
+        settleWm(d);
+
+        Window button = findFrameChild(d, frame, win, true);
+        REQUIRE(button != None);
+
+        int bx = 0, by = 0;
+        Window ignore = None;
+        XTranslateCoordinates(d, button, frame, 0, 0, &bx, &by, &ignore);
+
+        int count = 0, ordering = 0;
+        XRectangle* rects = XShapeGetRectangles(d, button, ShapeBounding,
+                                                &count, &ordering);
+        REQUIRE(rects != nullptr);
+        REQUIRE(count == 1);
+        const int drawnX = bx + rects[0].x;
+        const int drawnY = by + rects[0].y;
+        const int drawnW = rects[0].width;
+        const int drawnH = rects[0].height;
+        XFree(rects);
+
+        INFO("painted square at frame (" << drawnX << "," << drawnY << ") "
+             << drawnW << "x" << drawnH);
+        CHECK(drawnX == 4);
+        CHECK(drawnY == 4);
+        CHECK(drawnW == 8);
+        CHECK(drawnH == 8);
+
+        XDestroyWindow(d, win);
+        XSync(d, False);
+        settleWm(d);
+    }
+
+    // Control: the centre of the painted square has always worked. If this fails
+    // the case proves nothing about the corners below.
+    CHECK(hidesWhenPressedAt(6, 6));
+
+    // The near-misses. Every one of these used to hit the tab or fall through.
+    CHECK(hidesWhenPressedAt(1, 1));
+    CHECK(hidesWhenPressedAt(12, 12));
+    CHECK(hidesWhenPressedAt(15, 15));
+    // The residual, pinned deliberately rather than left unsaid: a 1px sliver
+    // down the notch's inner edge is not part of ANY window of this frame -- the
+    // frame's own bounding shape excludes it, so a press there reaches the root
+    // window. Nothing in the press handlers can claim it; only adding those
+    // pixels to the frame's shape could, and that would fill the visible gap the
+    // notch is made of. Left alone on purpose. If a later change closes the gap,
+    // this flips and should be updated, not deleted.
+    CHECK_FALSE(hidesWhenPressedAt(13, 13));
+
+    // ...and the widening stops at the tab's top square: below it the tab must
+    // still be draggable, or this would trade a fiddly button for a window that
+    // cannot be moved.
+    CHECK_FALSE(hidesWhenPressedAt(6, 30));
+
+    REQUIRE(fixture.wmAlive());
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
 }
