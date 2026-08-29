@@ -8,6 +8,16 @@ The bundle is a **snapshot tied to one commit**. Nothing re-validates it when
 later commits land and no automated check asserts it still matches the tree —
 refreshing it is a manual per-release action (planner assumption TEST-08).
 
+**One correction to that framing.** The `gates/` material is all from `c61cb4b`.
+The per-target capability transcripts are NOT: each was captured when its session
+was run and stamps its own commit and tree state in its header — `tigervnc/` at
+`dba2f30` and `xrdp/` at `26344b4`, both `tree-state: DIRTY`, and both predating
+four behaviour-changing commits. That has a visible consequence worth knowing
+before reading them: `tigervnc/root-properties.txt` shows `_NET_CLIENT_LIST`
+carrying the window manager's own menu and check windows, which was deferred
+item 7 and was fixed afterwards in `12f6de8`. The transcripts are honest about
+their own provenance; this note exists so the directory-level framing is too.
+
 ---
 
 ## READ THIS BEFORE ADDING ANYTHING TO THIS DIRECTORY
@@ -125,7 +135,7 @@ will otherwise file a phantom bug against window management.
 - **Per-item manual results.** Two manual passes were run by the operator
   (tpatarci, 2026-08-29 and 2026-08-30) and their findings are recorded in
   `08-14-SUMMARY.md`, but the second produced a general verdict rather than a
-  row-by-row result. The 13 unticked rows in the checklist are the consequence.
+  row-by-row result. The 14 unticked rows in the checklist are the consequence.
 - **Behaviour over measured latency.** Menus and move/resize were exercised over
   real XRDP and TigerVNC sessions — which is where three defects surfaced that no
   automated test had caught — but no latency was measured.

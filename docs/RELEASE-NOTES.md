@@ -151,18 +151,39 @@ rule does not end it.
 
 ### What you can match on
 
-`rule-match-class` (the `WM_CLASS` hint), `rule-match-name` (the window title),
-`rule-match-type` (an EWMH window type such as `dialog`, `dock`, `utility`,
-`splash`, `toolbar`, `notification`, `normal`), and `rule-match-mode` to control
-how the text matches.
+| Key | What it matches |
+|---|---|
+| `rule-match-class` | The `WM_CLASS` hint. The forgiving one: it is tested against **both** WM_CLASS fields, so "Firefox" works whether that is the instance name or the class name. |
+| `rule-match-name` | The `WM_CLASS` **instance name** only. |
+| `rule-match-type` | An EWMH window type. Exactly four are accepted: `normal`, `dock`, `dialog`, `notification`. |
+| `rule-match-mode` | How the text matches — exact or substring. |
 
-### The three actions that ship
+Criteria combine with AND: every one you set must match. A rule with no criteria
+at all matches **nothing**, so a typo that drops your only match line disables
+that rule rather than applying it to every window on the screen.
+
+**`rule-match-name` does not match the window title.** Despite the name it
+matches the WM_CLASS instance name, the same string `rule-match-class` tests.
+Matching on the title (`WM_NAME`) is **not implemented** — there is no way to
+write it today. This is tracked as an unmet requirement rather than described as
+working; if you need it, say so, because the ledger says it is missing and that
+is the honest position.
+
+**Only those four window types are accepted.** `utility`, `splash` and `toolbar`
+are *not*: the window manager collapses them into `normal` internally, so a rule
+naming one could never fire. Writing one produces a warning and leaves the
+criterion unset — and since a rule with no criteria matches nothing, a rule whose
+only line was `rule-match-type = utility` silently does nothing at all. Use
+`normal` for those windows.
+
+### The four actions that ship
 
 | Action | Effect |
 |---|---|
 | `rule-no-decorate` | The window is managed but gets no frame and no tab. |
 | `rule-position` | `x,y` — where the window is placed when it maps. |
 | `rule-size` | `WxH` — the size it is given when it maps. |
+| `rule-skip-taskbar` | `true`/`false` — sets `_NET_WM_STATE_SKIP_TASKBAR` so pagers and taskbars leave the window out. |
 
 **There is deliberately no "send to workspace" action.** This window manager is
 single-desktop by design, so there is no second workspace for a rule to send a
@@ -236,10 +257,34 @@ The stated target set for this project is TigerVNC, TightVNC, XRDP and X2Go.
 |---|---|
 | **Xvfb** (headless) | **Validated continuously.** The entire automated suite — hundreds of cases, including everything that drives the real compiled binary — runs on Xvfb on every build. |
 | **Xephyr** (nested) | **Validated.** Runtime smoke transcript captured in the release evidence bundle. |
-| **TigerVNC** | **Validation pending a real session.** Requires a running server and a human at a client; the transcript and interaction record land in the phase evidence bundle and this row is updated from them, not before. |
-| **XRDP** | **Validation pending a real session.** As above. |
-| **X2Go** | **Validation pending a real session.** As above. |
+| **TigerVNC** | **Validated.** Real session, human at the client. SHAPE, RANDR and RENDER all present; capability transcript, root properties and window tree committed under the phase evidence bundle. |
+| **XRDP** | **Validated.** As above, same extension result. |
+| **X2Go** | **Not tested. An accepted deviation with a recorded reason** — and a weaker one than TightVNC's. See below. |
 | **TightVNC** | **Not tested. Deliberately, with a recorded reason.** See below. |
+
+Two of the four stated targets are exercised. That is the honest count, and the
+project requirement covering "compatible with all four out of the box" is held
+**unmet** rather than ticked on the strength of the two that were done.
+
+### X2Go: an accepted deviation, and a weaker one than TightVNC's
+
+X2Go is **not** validated for this release. `x2goserver` was never installed on
+the validation host, so there is no session, no transcript and no interaction
+record.
+
+This should not be read as the same kind of gap as TightVNC below. TightVNC has
+a close relative under test — TigerVNC shares its `Xvnc` ancestry, so a TigerVNC
+result is genuine evidence about it. X2Go has no such proxy here. Its X server is
+`nxagent`, a different codebase from both `Xvnc` and XRDP's backends, with a
+compression proxy in front of it — precisely the layer most likely to differ on
+the things this release depends on: the Shape and RANDR extension surface, and
+the RENDER path the sideways tab font uses. **Nothing in the TigerVNC or XRDP
+results transfers to it.**
+
+What to expect meanwhile: X2Go is unexercised, not unsupported. If the sideways
+tab renders wrongly or frames come out unshaped under `nxagent`, that is a real
+bug worth reporting — and given the RENDER dependency it is the likeliest place
+for one to be hiding.
 
 ### TightVNC: an accepted deviation, not an omission
 

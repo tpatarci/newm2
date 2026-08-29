@@ -53,7 +53,7 @@
 - [x] **XDIS-02**: Graceful fallback when Xrandr unavailable (VNC)
 - [x] **XDIS-03**: Graceful fallback when Shape extension unavailable (rectangular frames)
 - [x] **XDIS-04**: Graceful fallback when XRender unavailable — the WM keeps running and keeps managing windows, with tab labels degraded or absent rather than the process exiting. Satisfied at the fontconfig-fallback level: the preferred family chain, a generic sans chain, an unrotated face, and finally no label, none of which may terminate the WM. (Amended in Phase 8, plan 08-06, D-14. The original wording promised a fallback to the X server's own bitmap fonts, which contradicts what is built: Phase 4 removed core X fonts and the bundled rotation library by decision, so reviving them here would undo that. Phase 8 also measured that libXft renders the rotated tab face through its core X11 glyph path when XRender is absent, so the sideways tab survives a RENDER-less server anyway.)
-- [ ] **XDIS-05**: Compatible with TigerVNC, TightVNC, XRDP, X2Go out of the box
+- [ ] **XDIS-05**: Compatible with TigerVNC, TightVNC, XRDP, X2Go out of the box. **UNMET: two of four targets exercised.** TigerVNC and XRDP are validated with committed transcripts (SHAPE, RANDR and RENDER present on both). TightVNC and X2Go are recorded as accepted deviations D-8-TIGHTVNC and D-8-X2GO with reason, owner and follow-up — but a recorded deviation satisfies the checklist row that asks for deviations, not a requirement whose subject is four targets. X2Go is the weaker of the two: `nxagent` shares no ancestry with either tested server.
 
 ### Configuration
 
@@ -82,7 +82,7 @@
 
 - [x] **FOCUS-01**: Focus stealing prevention using _NET_WM_USER_TIME timestamps
 - [x] **FOCUS-02**: Configurable focus policy (click-to-focus, focus-follows-pointer, auto-raise)
-- [ ] **RULES-01**: Window matching rules in config file (match by WM_CLASS, WM_NAME, window type)
+- [ ] **RULES-01**: Window matching rules in config file (match by WM_CLASS, WM_NAME, window type). **UNMET, and deliberately not amended.** WM_CLASS and window type are delivered; `WM_NAME` matching is not implemented — `RuleWindowFacts` carries no title field and `rule-match-name` matches the WM_CLASS *instance name*. Unlike XDIS-04 and RULES-02, this promise is NOT blocked by a prior architectural decision: `Client::m_name` already holds the title, the facts struct is plain data, and the matcher is mode-agnostic, so the honest resolution is to implement it rather than to reword the requirement. (Verified in Phase 8; `docs/RELEASE-NOTES.md` was describing this as working and was corrected in the same pass.) One design point to settle when it is implemented: rules fold once at manage time, so a title rule would match the map-time title.
 - [x] **RULES-02**: Per-rule actions: no-decorate, specific position/size, skip-taskbar. (Amended in Phase 8, plan 08-10, D-23. The original wording also named a fourth action, sending a window to a nominated workspace; that action is deliberately excluded because the WM is single-desktop by design — Phase 6 fixed `_NET_NUMBER_OF_DESKTOPS` at 1 and `_NET_CURRENT_DESKTOP` at 0 — so there is no second workspace for a rule to send a window to. Implementing it would require a desktop model this window manager does not have and does not intend to acquire, and promising it here would leave a requirement that can never be checked off.)
 
 ### Testing
@@ -94,7 +94,7 @@
 - [x] **TEST-05**: Process-level integration tests launch the compiled `wm2-born-again` binary under Xvfb/Xephyr, drive real X11 clients, and verify root/client ICCCM + EWMH properties after create, map, unmap, remap, hide/unhide, fullscreen, maximize, and destroy
 - [x] **TEST-06**: Release signoff requires Debug, Release, and ASan/UBSan builds plus full `ctest --output-on-failure`; sanitizer findings block completion
 - [x] **TEST-07**: Environment preflight verifies pkg-config dependencies (`x11`, `xext`, `xft`, `fontconfig`), X11 tools, Xvfb/Xephyr availability, and fontconfig fallback resolution before behavioral claims are accepted
-- [ ] **TEST-08**: Runtime smoke evidence is captured for nested/headless X11 and supported remote desktop targets, including `xprop -root`, `xwininfo -root -tree`, interaction checklist results, and accepted deviations
+- [ ] **TEST-08**: Runtime smoke evidence is captured for nested/headless X11 and supported remote desktop targets, including `xprop -root`, `xwininfo -root -tree`, interaction checklist results, and accepted deviations. **PARTIALLY MET.** Delivered by plan 08-14: the committed bundle has the nested/headless transcripts, `xprop -root` and `xwininfo -root -tree` for every exercised target, the build/test/sanitizer/static-analysis logs, screenshots, and both accepted deviations. Two named components are short: only 2 of 4 remote targets have transcripts (see XDIS-05), and the interaction-checklist *results* do not exist as per-item results — two manual passes were run and produced findings and a general verdict, not a filled-in table. Closing it is small: run the User Interaction Checklist once as a pass/fail table.
 
 ## v2 Requirements
 

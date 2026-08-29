@@ -116,6 +116,12 @@ fc-match "Noto Sans,DejaVu Sans,Sans:bold:size=12"
 
 - [ ] Ensure CI does not rely on live GitHub access for Catch2 unless that is an
       explicit policy. Current CMake uses `FetchContent` for Catch2.
+      **NOT RESOLVED, and deliberately left open rather than ticked.**
+      `CMakeLists.txt` still fetches Catch2 v3.14.0 from GitHub at configure time,
+      so a first configure needs network access. There is no CI here by project
+      policy — every gate runs locally — so this is a *developer-onboarding*
+      dependency, not a CI one, which is a smaller problem than the row assumes
+      but not the same as no problem. Remains open.
 - [x] Ensure fixed Xvfb display `:99` is free, or update the test harness to
       allocate a free display.
       DONE. The harness allocates its own display per fixture instance rather
@@ -431,9 +437,9 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
 - [ ] Root menu exit item appears only at the lower-right screen edge and exits.
       **NOT COVERED.** No automated case, and the operator's second pass gave a
       general verdict rather than a per-item result for this one. Remains open.
-- [x] Right-click root/window circulation works with zero clients, one client,
+- [ ] Right-click root/window circulation works with zero clients, one client,
       hidden clients, transient clients, and multiple normal clients.
-      PARTIAL → the zero-client case is automated
+      **PARTIAL —** the zero-client case is automated
       (`tests/test_wm_process.cpp` `[wm_circulate]`, which found and fixed a
       100%-CPU spin), and the multi-client case was exercised in the manual
       passes. The hidden-client and transient-client permutations have no

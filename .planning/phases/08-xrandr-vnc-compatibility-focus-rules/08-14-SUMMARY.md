@@ -1,6 +1,8 @@
 # 08-14 — Release evidence, resource budget, and the manual validation pass
 
-**Status:** complete, with four openly-reported gaps.
+**Status:** complete, with openly-reported gaps. Verified by `gsd-verifier`,
+which found four defects in the shipped release notes that this plan had missed;
+all four are fixed and described under "What verification caught" below.
 **Final commit for this plan:** `c61cb4b`. Gate snapshot taken there.
 
 This was the checkpoint plan: the one that stops being about code and starts
@@ -94,9 +96,14 @@ its own name.
 
 ## Checklist walk
 
-**90 of 103 boxes ticked, each with a citation.** The 13 that are not ticked are
+**89 of 103 boxes ticked, each with a citation.** The 14 that are not ticked are
 listed below rather than quietly ticked, and each carries its reason inline in
 the checklist itself.
+
+*(Corrected after verification: the first cut of this walk ticked the circulation
+row while its own annotation said PARTIAL, and the summary table then inherited
+that error and also omitted the Catch2 row. Both are fixed here. The
+inconsistency was found by the phase verifier, not by me.)*
 
 | Gap | Why it is open |
 |---|---|
@@ -110,6 +117,7 @@ the checklist itself.
 | `WM_COLORMAP_WINDOWS` install order | the property read is tested; the order is not |
 | `ignoreBadWindowErrors` scope | the flag's scope is not asserted |
 | Circulation with hidden/transient clients | zero-client and multi-client covered; those two permutations are not |
+| Catch2 fetched from GitHub at configure time | no CI here by policy, so it is a developer-onboarding dependency rather than a CI one — smaller than the row assumes, not absent |
 | X2Go / four-target verification | D-8-X2GO |
 | Behaviour over measured latency | exercised subjectively, never measured |
 | Per-item manual results | two passes run, but the second gave a general verdict |
@@ -168,3 +176,40 @@ than closed: the "malformed window dressing" (never reproduced; the leading
 hypothesis was ruled out by measurement, and the drag clamp may have removed only
 its precondition) and the sideways tab-label geometry nit (never pinned to
 specifics across two passes).
+
+## What verification caught
+
+The phase verifier read the code rather than these summaries and found four
+defects **in `docs/RELEASE-NOTES.md`** — the shipped, user-facing document. Two
+are the same failure class this phase spent fourteen plans removing from the
+code: a control that looks available and silently does nothing.
+
+1. **`rule-match-name` was documented as matching "the window title".** It
+   matches the WM_CLASS instance name. This is precisely the gap RULES-01 was
+   being held Pending for — so the false promise had been moved off the tracked
+   ledger and into users' hands, which is worse than leaving it on the ledger.
+   Now documented accurately, with title matching stated as not implemented.
+
+2. **`rule-match-type` advertised `utility`, `splash` and `toolbar`.**
+   `src/Config.cpp` deliberately rejects all three — its own comment says
+   accepting them "would hand the user a rule that silently never fires" — and a
+   rejected criterion leaves the rule with none, which `ruleMatches()` treats as
+   matching nothing. So following the documentation produced a rule that did
+   exactly nothing. Now only the four accepted types are listed, with the reason.
+
+3. **`rule-skip-taskbar` was entirely undocumented** while the notes claimed
+   "the three actions that ship". There are four. It is implemented
+   (`src/Config.cpp`, `src/Rules.cpp`) and named in RULES-02.
+
+4. **The remote-target table still read "validation pending"** for TigerVNC and
+   XRDP after both were validated, and carried D-8-TIGHTVNC without D-8-X2GO.
+
+It also found two accounting errors in my own checklist walk: the circulation row
+was ticked while its annotation said PARTIAL (every other PARTIAL is unticked),
+and the gap table inherited that error while omitting the Catch2 row. Corrected —
+the real figures are **89 ticked, 14 open**.
+
+The lesson is not subtle. This plan's whole subject was the gap between what a
+system claims and what it does, and the documentation describing it had drifted
+in exactly that way while the code underneath was being held to measurement. The
+verifier was right to read `src/` instead of `.md`.
