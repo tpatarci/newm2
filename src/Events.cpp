@@ -461,7 +461,31 @@ void WindowManager::eventClient(XClientMessageEvent *e)
 
     // EWMH: _NET_WM_STATE (Pitfall 3: honor add/remove/toggle semantics)
     if (e->message_type == Atoms::net_wmState) {
-        if (c && e->format == 32) {
+        // The !isWithdrawn() guard is the fix for a tampering defect found by
+        // the [wm_state] misaddressed-message case in plan 08-12 (threat
+        // T-8-MSG), and it restores the symmetry the other two branches of this
+        // function already had: WM_CHANGE_STATE checks isNormal(), the
+        // activation branch checks isNormal(), and this one checked nothing.
+        //
+        // windowToClient() is NOT the same question as "is this window
+        // managed". The WM builds a Client for every non-override-redirect
+        // top-level window when it appears, so between CreateNotify and the
+        // MapRequest every window on the display has one: Withdrawn, no frame
+        // mapped, manage() never run, absent from _NET_CLIENT_LIST. Applying a
+        // state change to one of those reached straight past all of that.
+        //
+        // MEASURED against the shipped binary before this line existed: one
+        // message any client can send to root moved and resized ANOTHER
+        // application's unmapped window from (10,10 50x50) to (0,0 1024x768)
+        // and published _NET_WM_STATE_FULLSCREEN on it. The client that owns
+        // the window has no say and no notification.
+        //
+        // Deliberately isWithdrawn() and not isNormal(): a hidden (Iconic)
+        // client is genuinely managed, and a pager unmaximizing an iconified
+        // window is legitimate. Withdrawn is the ICCCM's own word for "the
+        // window manager is not managing this window", which is exactly the
+        // set that must be refused.
+        if (c && !c->isWithdrawn() && e->format == 32) {
             int action = static_cast<int>(e->data.l[0]);  // 0=remove, 1=add, 2=toggle
             Atom prop1 = static_cast<Atom>(e->data.l[1]);
             Atom prop2 = static_cast<Atom>(e->data.l[2]);

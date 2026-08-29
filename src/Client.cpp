@@ -475,6 +475,36 @@ void Client::clearAttentionState()
 }
 
 
+// Deferred item 8, fixed in plan 08-12.
+//
+// XReparentWindow implicitly UNMAPS a mapped window before moving it, and
+// remaps it afterwards. The window manager therefore receives an UnmapNotify
+// for a reparent it performed itself -- and Client::eventUnmap() cannot tell
+// that from a client withdrawing its own window, so it took the withdraw path:
+// gravitate(true), reparent to root at the PRE-fullscreen coordinates, state
+// Withdrawn. The size half of setFullscreen() survived because only the
+// position was rewritten, which is why the defect read as "sized correctly but
+// in the wrong place" for four plans.
+//
+// Client::manage() already solves exactly this problem, with exactly this flag,
+// two lines before its own reparent (`if (mapped) m_reparenting = true;`). The
+// fullscreen path simply never adopted it.
+//
+// The map-state query is what makes the flag safe rather than merely effective.
+// A HIDDEN client has had m_window unmapped by Client::hide(), so its reparent
+// generates NO UnmapNotify -- and a flag set unconditionally would survive to
+// swallow the next REAL unmap, turning a withdraw into a silent leak of a
+// managed client. Set only when there is an unmap to account for.
+void Client::markReparenting()
+{
+    XWindowAttributes attr;
+    if (XGetWindowAttributes(display(), m_window, &attr) &&
+        attr.map_state != IsUnmapped) {
+        m_reparenting = true;
+    }
+}
+
+
 void Client::setFullscreen(bool fullscreen)
 {
     if (m_isFullscreen == fullscreen) return;
@@ -489,15 +519,21 @@ void Client::setFullscreen(bool fullscreen)
         m_isFullscreen = true;
 
         // Per D-05: strip border, cover full screen geometry INCLUDING dock areas
+        markReparenting();               // deferred item 8 -- see above
         m_border->stripForFullscreen();
         int sw = windowManager()->screenWidth();
         int sh = windowManager()->screenHeight();
         XMoveResizeWindow(display(), m_window, 0, 0, sw, sh);
         XRaiseWindow(display(), m_window);
+        m_x = 0;
+        m_y = 0;
+        m_w = sw;
+        m_h = sh;
     } else {
         m_isFullscreen = false;
 
         // Restore border and saved geometry
+        markReparenting();               // deferred item 8 -- see above
         m_border->restoreFromFullscreen(m_preFullscreenX, m_preFullscreenY,
                                          m_preFullscreenW, m_preFullscreenH);
         m_x = m_preFullscreenX;
@@ -1654,6 +1690,39 @@ void Client::eventConfigureRequest(XConfigureRequestEvent *e)
 
 void Client::eventUnmap(XUnmapEvent *e)
 {
+    // Only the CLIENT window's own unmap is a withdraw signal. This guard is
+    // the other half of the deferred item 8 fix (plan 08-12), and it is the
+    // half that was actually doing the damage.
+    //
+    // WindowManager::eventUnmap() resolves the event window through
+    // windowToClient(), whose fallback scan matches Client::hasWindow() -- and
+    // hasWindow() is true for the FRAME, the TAB, the BUTTON and the RESIZE
+    // handle as well as for m_window. So every one of the three XUnmapWindow
+    // calls inside Border::unmap() arrived here as though the application had
+    // unmapped its own window.
+    //
+    // TRACED on the real binary while entering fullscreen (the frame is
+    // stripped, which calls Border::unmap()'s components one by one):
+    //
+    //   eventUnmap win=<frame>  state=Normal reparenting=1  -> guard consumed
+    //   eventUnmap win=<tab>    state=Normal reparenting=0  -> withdraw()
+    //
+    // The tab's unmap is what withdrew the client. Everything item 8 recorded
+    // follows from that single line: gravitate(true) put the window back at its
+    // pre-fullscreen coordinates -- which is why it was "the right size in the
+    // wrong place" -- and setState(Withdrawn) took it out of management
+    // entirely, so nothing could ever un-fullscreen it again.
+    //
+    // hide() escaped only by timing: it calls Border::unmap() and then
+    // setState(Iconic) synchronously, so by the time those same three events
+    // are processed the switch below lands on the Iconic arm. That is luck, not
+    // design, and it is not luck any future caller of Border::unmap() inherits.
+    //
+    // The ICCCM withdraw signal a client sends by hand carries the client
+    // window in e->window (with e->event = root), so this guard does not
+    // interfere with it.
+    if (e->window != m_window) return;
+
     switch (m_state) {
     case ClientState::Iconic:
         if (e->send_event) {

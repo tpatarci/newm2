@@ -545,6 +545,21 @@ TEST_CASE("A state message adds and removes fullscreen", "[wm_state]")
     sendStateMessage(d, win, kStateAdd, fs, None);
     REQUIRE(awaitState(d, [&] { return hasState(d, win, kFullscreen); }));
 
+    // The client must still be MANAGED after entering fullscreen. Deferred
+    // item 8: the strip reparents the child to root, the server's implicit
+    // unmap came back as an UnmapNotify, and eventUnmap() took the withdraw
+    // path -- leaving the window fullscreen-sized, at its old position, and
+    // Withdrawn. A client that is no longer managed cannot be un-fullscreened
+    // by anyone, which is what makes this a precondition of the next line
+    // rather than a separate case.
+    settleWm(d);
+    long icccm = -1;
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO("states while fullscreen: " << describeStates(d, wmState(d, win)));
+    REQUIRE(icccmState(d, win, icccm));
+    CHECK(icccm == NormalState);
+    CHECK(listed(d, win));
+
     sendStateMessage(d, win, kStateRemove, fs, None);
     REQUIRE(awaitState(d, [&] { return !hasState(d, win, kFullscreen); }));
 

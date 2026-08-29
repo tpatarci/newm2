@@ -100,6 +100,12 @@ public:
     void applyWmState(int action, Atom prop1, Atom prop2);
     void updateNetWmState();
 
+    // Deferred item 8: arm the self-reparent guard before a reparent this
+    // window manager performs itself, so eventUnmap() does not mistake the
+    // server's implicit unmap for a client withdrawing its own window. Only
+    // arms when the window is actually mapped -- see the definition.
+    void markReparenting();
+
     // FOCUS-01 (plan 08-08): the map-time half of focus-stealing prevention.
     //
     // shouldFocusOnMap() answers whether this newly mapped window may take the
