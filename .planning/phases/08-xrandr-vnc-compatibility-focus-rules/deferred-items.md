@@ -523,3 +523,51 @@ themselves.
 together with items 9 and 10 — they are one defect wearing three hats. The
 likely fix is at the source (make the WM flush when it has issued requests and
 is about to block) rather than spreading `pumpWm()` to every suite.
+
+## 13. Destroying a client always logs one `X_UnmapWindow BadWindow` (PRE-EXISTING)
+
+**Found during:** 08-11 Task 1, by the new "no X protocol error" assertion in
+`tests/test_wm_lifecycle.cpp`. The WM's `errorHandler()` logs and returns 0, so
+an entire class of teardown defect is invisible to any assertion about windows
+and properties -- which is why that assertion exists at all, and why it found
+two things at once.
+
+**Symptom:** every destroy of a managed client produces exactly one
+
+```
+wm2: X_UnmapWindow (0x...): BadWindow (invalid Window parameter)
+```
+
+**Cause (confirmed by backtrace, with `XSynchronize` on and
+`backtrace_symbols_fd` in `errorHandler`):**
+
+```
+Client::deactivate()          src/Client.cpp:345
+  Client::decorate(bool)      src/Client.cpp:1206
+  Border::decorate(...)       src/Border.cpp:1117
+  Border::setFrameVisibility  src/Border.cpp:960   -> XUnmapWindow(m_resize)
+```
+
+`m_resize` is created as a child of `m_child` -- the **client** window --
+(`Border::configure`), so the server destroys it together with the client. The
+`UnmapNotify` that precedes the `DestroyNotify` sends the WM down
+`eventUnmap -> clearFocus -> deactivate -> decorate(false)`, which unmaps a
+resize handle the server has already reclaimed.
+
+**Why not fixed in 08-11:** the candidate fixes are all bigger than the symptom.
+Reparenting `m_resize` under `m_parent` instead of `m_child` changes the frame's
+structure (deviation Rule 4); widening `ignoreBadWindowErrors` to cover
+`eventUnmap` is exactly what the checklist's "scoped tightly around cleanup and
+does not mask unrelated protocol errors" line warns against. It is benign today:
+the error is logged, the WM continues, and nothing user-visible follows.
+
+**Consequence for tests:** `tests/test_wm_lifecycle.cpp` asserts on protocol
+errors *excluding BadWindow*, in every case rather than only the destroy cases --
+`WmFixture` destroys its own readiness probe during startup, so this error can
+surface in a case that destroys nothing of its own. Every other error class
+(`RenderBadPicture`, `BadValue`, `BadMatch`, `BadDrawable`, ...) still fails.
+That narrower assertion is what caught the `XftDraw` teardown defect fixed in
+this plan, so the exclusion costs one error code, not the assertion.
+
+**Disposition:** deferred. Natural owner is whoever next revisits frame
+construction in `src/Border.cpp`.
