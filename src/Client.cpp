@@ -601,21 +601,50 @@ void Client::setMaximized(bool vert, bool horz)
         int actualFormat;
         unsigned long nItems, bytesAfter;
         long *workarea = nullptr;
+        // T-8-PROP: the type, the format AND the item count are all checked
+        // before the cast. _NET_WORKAREA is written by this window manager, so
+        // the format check is defence in depth rather than a live hole -- but
+        // it is a direct XGetWindowProperty consumer that dereferences its
+        // result through a reinterpret_cast, and the plan's requirement is that
+        // every one of those validates, not just the ones fed by clients today.
         if (XGetWindowProperty(display(), root(), Atoms::net_workarea, 0, 4,
                 false, XA_CARDINAL, &actualType, &actualFormat,
                 &nItems, &bytesAfter,
-                reinterpret_cast<unsigned char**>(&workarea)) == Success && workarea && nItems >= 4) {
-            int wx = workarea[0], wy = workarea[1];
-            int ww = workarea[2], wh = workarea[3];
+                reinterpret_cast<unsigned char**>(&workarea)) == Success && workarea &&
+                actualType == XA_CARDINAL && actualFormat == 32 && nItems >= 4) {
+            int wx = static_cast<int>(workarea[0]), wy = static_cast<int>(workarea[1]);
+            int ww = static_cast<int>(workarea[2]), wh = static_cast<int>(workarea[3]);
             XFree(workarea);
+            workarea = nullptr;
+
+            // T-8-STRUT: _NET_WORKAREA is derived from client-supplied dock
+            // struts, so it is untrusted input by proxy even though this window
+            // manager is the one that publishes it. A dock claiming the whole
+            // screen produces an entirely legitimate, entirely useless
+            // workarea -- MEASURED as (1024,768 0x0) from one dock declaring
+            // 100000 on all four edges -- and maximizing into it put the window
+            // at (1024,768 27x10), which is to say off the bottom-right corner
+            // of the display, unreachable.
+            //
+            // Fall back to the screen when the workarea is not a usable
+            // rectangle inside it. Ignoring an impossible strut is a smaller
+            // wrong than honouring it: the user asked for a maximized window
+            // and must get one they can see. The condition is a range check
+            // rather than a size threshold, so it cannot be tuned into a policy
+            // about how much of the screen a panel may claim.
+            const int sw = windowManager()->screenWidth();
+            const int sh = windowManager()->screenHeight();
+            if (wx < 0 || wy < 0 || ww < 1 || wh < 1 ||
+                wx + ww > sw || wy + wh > sh) {
+                wx = 0; wy = 0; ww = sw; wh = sh;
+            }
 
             // Inset by the decoration so the FRAME lands on the workarea. The
-            // strictly-positive floor is not decoration: _NET_WORKAREA is
-            // derived from client-supplied dock struts, and a hostile or merely
-            // confused dock can drive it below the decoration's own size --
-            // at which point an unclamped subtraction reaches XConfigureWindow
-            // with a negative int in an unsigned width (threat T-8-STRUT, the
-            // same shape as the 64536-pixel window plan 08-11 fixed).
+            // strictly-positive floor below is the last line of the same
+            // defence: a workarea narrower than the decoration itself would
+            // otherwise reach XConfigureWindow with a negative int in an
+            // unsigned width -- the same arithmetic that bought a 64536-pixel
+            // window in plan 08-11.
             int maxX = wx + xi;
             int maxY = wy + yi;
             int maxW = ww - xi - 1;
@@ -785,19 +814,57 @@ void Client::sendConfigureNotify()
 }
 
 
-static int getProperty_aux(Display *d, Window w, Atom a, Atom type, long len,
-                           unsigned char **p)
+// T-8-PROP (plan 08-12): the shared property reader, and the only line of
+// defence its five callers have.
+//
+// Every value XGetWindowProperty returns here was written by a client, with an
+// attacker-chosen type, format, length and content. Two of those are checked
+// now that were not before, and the second one was a heap over-read:
+//
+//   TYPE. The request already names an expected type, so a mismatch returns
+//   zero items -- but only the returned type distinguishes "no such property"
+//   from "a property of the wrong type", and the callers want the same answer
+//   for both. Checked explicitly rather than inferred from the count.
+//
+//   FORMAT. This is the dangerous one. `format` is the SIZE OF AN ELEMENT in
+//   bits, and it is chosen entirely by the client -- XChangeProperty accepts
+//   type=ATOM with format=8 quite happily. `n` is then a count of BYTES, and
+//   every caller here casts the buffer to Atom*, long* or Window* and indexes
+//   it `n` times. A four-item, format-8 _NET_WM_WINDOW_TYPE is a five-byte
+//   allocation that getWindowType() read thirty-two bytes out of. One
+//   XChangeProperty call from any client on the display.
+//
+// The expected format is a parameter rather than a hardcoded 32 because
+// getProperty() reads 8-bit strings through this same helper, and hardcoding
+// would have forced the string path back out into an unchecked copy of its own.
+//
+// The buffer is freed on EVERY path that does not hand it to the caller --
+// success returns it, and rejection, empty and error all release it and null
+// the caller's pointer so a stale value cannot be dereferenced by a caller that
+// mishandles the return code.
+static int getProperty_aux(Display *d, Window w, Atom a, Atom type,
+                           int expectFormat, long len, unsigned char **p)
 {
-    Atom realType;
-    int format;
-    unsigned long n, extra;
-    int status;
+    Atom realType = None;
+    int format = 0;
+    unsigned long n = 0, extra = 0;
 
-    status = XGetWindowProperty(d, w, a, 0L, len, false, type, &realType,
-                                &format, &n, &extra, p);
+    *p = nullptr;
 
-    if (status != Success || *p == 0) return -1;
-    if (n == 0) XFree(*p);
+    if (XGetWindowProperty(d, w, a, 0L, len, false, type, &realType,
+                           &format, &n, &extra, p) != Success) {
+        // Xlib does not promise to write *p on failure.
+        *p = nullptr;
+        return -1;
+    }
+
+    if (*p == nullptr) return -1;
+
+    if (realType != type || format != expectFormat || n == 0) {
+        XFree(*p);
+        *p = nullptr;
+        return -1;
+    }
 
     return static_cast<int>(n);
 }
@@ -806,11 +873,22 @@ static int getProperty_aux(Display *d, Window w, Atom a, Atom type, long len,
 std::string Client::getProperty(Atom a)
 {
     unsigned char *p = nullptr;
-    if (getProperty_aux(display(), m_window, a, XA_STRING, 100L, &p) <= 0) {
-        return {};
-    }
-    std::string result(reinterpret_cast<char*>(p));
+    const int n = getProperty_aux(display(), m_window, a, XA_STRING, 8, 100L, &p);
+    if (n <= 0) return {};
+
+    // Bounded by the item count the SERVER reported, not by a terminator the
+    // client may not have written. Xlib does append a NUL of its own, so the
+    // old unbounded construction did not over-read -- but it read the whole
+    // buffer for a format the caller had not checked, and it is the shape that
+    // stops being safe the moment anything else is read through this path.
+    std::string result(reinterpret_cast<const char*>(p), static_cast<std::size_t>(n));
     XFree(p);
+
+    // A window label is the leading run. An embedded NUL is legal in a property
+    // and meaningless in a title, and keeping the tail would draw whatever the
+    // client hid behind it.
+    const std::size_t nul = result.find('\0');
+    if (nul != std::string::npos) result.resize(nul);
     return result;
 }
 
@@ -857,7 +935,7 @@ bool Client::getState(int *state)
     long *p = nullptr;
 
     if (getProperty_aux(display(), m_window, Atoms::wm_state, Atoms::wm_state,
-                        2L, reinterpret_cast<unsigned char**>(&p)) <= 0) {
+                        32, 2L, reinterpret_cast<unsigned char**>(&p)) <= 0) {
         return false;
     }
 
@@ -874,7 +952,7 @@ void Client::getProtocols()
 
     m_protocol = 0;
     if ((n = getProperty_aux(display(), m_window, Atoms::wm_protocols, XA_ATOM,
-                             20L, reinterpret_cast<unsigned char**>(&p))) <= 0) {
+                             32, 20L, reinterpret_cast<unsigned char**>(&p))) <= 0) {
         return;
     }
 
@@ -898,7 +976,7 @@ void Client::getWindowType()
     m_windowType = WindowType::Normal;  // default
 
     n = getProperty_aux(display(), m_window, Atoms::net_wmWindowType, XA_ATOM,
-                        1024L, reinterpret_cast<unsigned char**>(&data));
+                        32, 1024L, reinterpret_cast<unsigned char**>(&data));
     if (n <= 0) return;
 
     for (int i = 0; i < n; ++i) {
@@ -1075,7 +1153,7 @@ void Client::getColormaps()
     }
 
     int n = getProperty_aux(display(), m_window, Atoms::wm_colormaps, XA_WINDOW,
-                            100L, reinterpret_cast<unsigned char**>(&cw));
+                            32, 100L, reinterpret_cast<unsigned char**>(&cw));
 
     if (n <= 0) {
         m_colormapWindows.clear();

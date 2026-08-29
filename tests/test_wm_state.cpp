@@ -110,6 +110,7 @@ struct Rect {
     {
         return x == o.x && y == o.y && w == o.w && h == o.h;
     }
+    bool operator!=(const Rect& o) const { return !(*this == o); }
 };
 
 std::string describe(const Rect& r)
@@ -1435,4 +1436,725 @@ TEST_CASE("Maximizing straight after leaving fullscreen uses workarea geometry",
     REQUIRE(fixture.wmAlive());
     INFO("wm stderr:\n" << fixture.wmStderr());
     CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+}
+
+
+// ===========================================================================
+// [wm_props] -- malformed client properties (checklist coverage item 12)
+//
+// Every property below is written DIRECTLY with XChangeProperty from the test's
+// own connection, choosing the type, the format and the item count
+// deliberately. That is the entire point of the group, so nothing here goes
+// through a convenience helper (XSetWMName, XSetClassHint, XSetWMProtocols)
+// that would normalise exactly the fields under test.
+//
+// Threat T-8-PROP: a client-written property is untrusted input with
+// attacker-chosen type, format, length and content. The WM reaches into that
+// data with reinterpret_cast on several paths, and the ONLY thing standing
+// between a wrong `format` and a heap over-read is a check that the reader
+// performs before it dereferences.
+// ===========================================================================
+
+namespace {
+
+// Write a property with an exactly-specified type, format and item count.
+void writeProp(Display* d, Window w, const char* name, Atom type, int format,
+               const void* data, int nItems)
+{
+    XChangeProperty(d, w, XInternAtom(d, name, False), type, format,
+                    PropModeReplace,
+                    reinterpret_cast<const unsigned char*>(data), nItems);
+    XSync(d, False);
+}
+
+void writeAtomProp(Display* d, Window w, const char* name, Atom type, int format,
+                   const char* valueAtomName, int nItems = 1)
+{
+    Atom value = XInternAtom(d, valueAtomName, False);
+    writeProp(d, w, name, type, format, &value, nItems);
+}
+
+// A dock whose strut values are chosen by the caller, including values no
+// sane panel would ever declare. Everything else matches createDock().
+Window createDockWithStruts(Display* d, const long struts[12])
+{
+    Window root = DefaultRootWindow(d);
+    Window dock = XCreateSimpleWindow(d, root, 0, kScreenH - kDockHeight,
+                                      kScreenW, kDockHeight, 0,
+                                      BlackPixel(d, DefaultScreen(d)),
+                                      WhitePixel(d, DefaultScreen(d)));
+
+    Atom typeProp = XInternAtom(d, "_NET_WM_WINDOW_TYPE", False);
+    Atom dockType = XInternAtom(d, "_NET_WM_WINDOW_TYPE_DOCK", False);
+    XChangeProperty(d, dock, typeProp, XA_ATOM, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&dockType), 1);
+
+    Atom strutPartial = XInternAtom(d, "_NET_WM_STRUT_PARTIAL", False);
+    XChangeProperty(d, dock, strutPartial, XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<const unsigned char*>(struts), 12);
+
+    XMapWindow(d, dock);
+    XSync(d, False);
+    return dock;
+}
+
+// The invariant every strut case asserts, and the only one worth asserting:
+// the requirement is that the clamp HOLDS, not that it produces a particular
+// number. A specific expected value would encode this WM's clamping policy as
+// though it were a specification.
+void requireSaneWorkarea(Display* d)
+{
+    const Rect wa = workareaOf(d);
+    INFO("workarea: " << describe(wa));
+    CHECK(wa.w >= 0);
+    CHECK(wa.h >= 0);
+    CHECK(wa.x >= 0);
+    CHECK(wa.y >= 0);
+    CHECK(wa.w <= kScreenW);
+    CHECK(wa.h <= kScreenH);
+    CHECK(wa.x + wa.w <= kScreenW);
+    CHECK(wa.y + wa.h <= kScreenH);
+}
+
+// The WM is still doing its job: it frames a window mapped right now, within a
+// deadline. A hang is as much a failure as a crash, and only a deadline
+// distinguishes them.
+bool stillManaging(Display* d, int x = 700, int y = 60, int timeoutMs = 8000)
+{
+    Window probe = createClient(d, x, y, 120, 90);
+    XMapWindow(d, probe);
+    XSync(d, False);
+    const bool ok = awaitFrameFor(d, probe, timeoutMs) != None;
+    return ok;
+}
+
+}  // namespace
+
+
+TEST_CASE("A window-type property of the wrong atom type is ignored", "[wm_props]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    REQUIRE(awaitWorkarea(d, kScreenRect));
+
+    Window win = createClient(d, 150, 120, 300, 220);
+    REQUIRE(win != None);
+
+    // The DOCK atom, written under type CARDINAL instead of ATOM. The bytes are
+    // byte-for-byte what a real dock declaration looks like; only the declared
+    // type is wrong. A reader that passes AnyPropertyType, or that ignores the
+    // returned type, adopts it.
+    writeAtomProp(d, win, "_NET_WM_WINDOW_TYPE", XA_CARDINAL, 32,
+                  "_NET_WM_WINDOW_TYPE_DOCK");
+    // Same shape for a string-valued property: WM_NAME declared as ATOM.
+    Atom bogus = XInternAtom(d, "_WM2_NOT_A_NAME", False);
+    XChangeProperty(d, win, XA_WM_NAME, XA_ATOM, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&bogus), 1);
+    XSync(d, False);
+
+    XMapWindow(d, win);
+    XSync(d, False);
+
+    // Treated as a NORMAL window: framed, and its tab drawn. A dock is not
+    // framed, so the frame is the observable difference.
+    const Window frame = awaitFrameFor(d, win);
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(frame != None);
+    CHECK(parentOf(d, win) == frame);
+    CHECK(isMapped(d, frame));
+    CHECK(mappedChildren(d, frame).size() >= 2);   // tab and button
+
+    // And no strut was taken from it either.
+    settleWm(d);
+    CHECK(workareaOf(d) == kScreenRect);
+    requireSaneWorkarea(d);
+
+    REQUIRE(fixture.wmAlive());
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+    CHECK(fixture.asanReports().empty());
+}
+
+TEST_CASE("A property of the wrong FORMAT is rejected rather than misread",
+          "[wm_props]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window win = createClient(d, 150, 120, 300, 220);
+    REQUIRE(win != None);
+
+    // The declared TYPE matches what each reader asks for. Only the FORMAT is
+    // wrong -- and format is what determines the SIZE OF AN ELEMENT. At format
+    // 8 the server returns nItems BYTES in an nItems+1 byte buffer; a reader
+    // that takes nItems as a count of 32-bit values and casts the buffer to
+    // Atom*/long* reads four to eight times past the end of it.
+    //
+    // Every reader in the WM that dereferences property data through a
+    // reinterpret_cast is exercised here, because a fix applied to one branch
+    // would leave the shared helper -- and therefore all the others -- unsafe.
+    const unsigned char bytes[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+
+    writeProp(d, win, "_NET_WM_WINDOW_TYPE", XA_ATOM,   8,  bytes, 4);
+    writeProp(d, win, "WM_PROTOCOLS",        XA_ATOM,   8,  bytes, 4);
+    writeProp(d, win, "WM_COLORMAP_WINDOWS", XA_WINDOW, 8,  bytes, 4);
+    writeProp(d, win, "WM_STATE",            XInternAtom(d, "WM_STATE", False),
+                                                        8,  bytes, 4);
+    writeProp(d, win, "_NET_WM_USER_TIME",   XA_CARDINAL, 16, bytes, 4);
+
+    XMapWindow(d, win);
+    XSync(d, False);
+
+    const Window frame = awaitFrameFor(d, win);
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(frame != None);
+
+    // Not misread: a format-8 _NET_WM_WINDOW_TYPE must not be interpreted as
+    // some window type or other. The window is framed, which a dock would not
+    // be.
+    CHECK(parentOf(d, win) == frame);
+
+    // The same three properties rewritten at format 16 after the window is
+    // already managed, so the re-read path in eventProperty() gets its turn.
+    writeProp(d, win, "_NET_WM_WINDOW_TYPE", XA_ATOM,   16, bytes, 4);
+    writeProp(d, win, "WM_COLORMAP_WINDOWS", XA_WINDOW, 16, bytes, 4);
+    writeProp(d, win, "WM_PROTOCOLS",        XA_ATOM,   16, bytes, 4);
+    settleWm(d);
+
+    REQUIRE(fixture.wmAlive());
+    CHECK(stillManaging(d));
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+    CHECK(fixture.asanReports().empty());
+}
+
+TEST_CASE("An empty property array is handled as absent, not as a zero value",
+          "[wm_props]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window win = createClient(d, 150, 120, 300, 220);
+    REQUIRE(win != None);
+
+    // Zero items, correct type, correct format. XGetWindowProperty reports
+    // Success with a NON-NULL one-byte buffer for this, so `data != nullptr` is
+    // not a sufficient guard on its own -- an item count is.
+    writeProp(d, win, "_NET_WM_WINDOW_TYPE", XA_ATOM,   32, nullptr, 0);
+    writeProp(d, win, "WM_PROTOCOLS",        XA_ATOM,   32, nullptr, 0);
+    writeProp(d, win, "WM_COLORMAP_WINDOWS", XA_WINDOW, 32, nullptr, 0);
+    writeProp(d, win, "_NET_WM_USER_TIME",   XA_CARDINAL, 32, nullptr, 0);
+    writeProp(d, win, "WM_NAME",             XA_STRING, 8,  nullptr, 0);
+    writeProp(d, win, "WM_CLASS",            XA_STRING, 8,  nullptr, 0);
+
+    XMapWindow(d, win);
+    XSync(d, False);
+
+    const Window frame = awaitFrameFor(d, win);
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(frame != None);
+
+    // An empty window-type array means "no type declared", which is NORMAL --
+    // not "type atom 0", which would be a lookup against a garbage atom.
+    CHECK(parentOf(d, win) == frame);
+    CHECK(isMapped(d, frame));
+    CHECK(mappedChildren(d, frame).size() >= 2);
+
+    // An empty _NET_WM_USER_TIME is absent evidence, so FOCUS-01's map-time
+    // arbitration must not read a value out of it. Observable through the
+    // outcome the arbiter produces: the window is focused, as a client that
+    // declared no timestamp at all would be (D-19).
+    REQUIRE(WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return activeWindow(d) == win;
+    }, 8000));
+
+    REQUIRE(fixture.wmAlive());
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+    CHECK(fixture.asanReports().empty());
+}
+
+TEST_CASE("An oversized property array is read within a bound and does not hang",
+          "[wm_props]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window win = createClient(d, 150, 120, 300, 220);
+    REQUIRE(win != None);
+
+    // 200,000 atoms -- 1.6MB on the wire, and roughly 200x the WM's own
+    // request bound for this property. If the WM asked for the whole thing it
+    // would allocate at the client's discretion, which is the denial of service
+    // this bound exists to prevent (threat T-8-DOS).
+    constexpr int kHuge = 200000;
+    {
+        std::vector<Atom> many(kHuge, XInternAtom(d, "_NET_WM_WINDOW_TYPE_NORMAL", False));
+        writeProp(d, win, "_NET_WM_WINDOW_TYPE", XA_ATOM, 32, many.data(), kHuge);
+    }
+    {
+        std::vector<long> manyTimes(kHuge, 12345);
+        writeProp(d, win, "_NET_WM_USER_TIME", XA_CARDINAL, 32, manyTimes.data(), kHuge);
+    }
+    {
+        // A one-megabyte name with no NUL anywhere in it.
+        std::string huge(1024 * 1024, 'A');
+        writeProp(d, win, "WM_NAME",  XA_STRING, 8, huge.data(), static_cast<int>(huge.size()));
+        writeProp(d, win, "WM_CLASS", XA_STRING, 8, huge.data(), static_cast<int>(huge.size()));
+    }
+
+    XMapWindow(d, win);
+    XSync(d, False);
+
+    // The deadline is the assertion. A WM that read the whole array, or that
+    // looped over 200,000 items doing X round trips, would still be "alive"
+    // when this expires -- and that is precisely the failure being excluded.
+    const auto start = std::chrono::steady_clock::now();
+    const Window frame = awaitFrameFor(d, win, 15000);
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - start).count();
+    INFO("framing took " << elapsedMs << " ms");
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(frame != None);
+    CHECK(elapsedMs < 10000);
+
+    // Rewritten while managed, so the eventProperty() re-read path takes the
+    // same abuse.
+    {
+        std::vector<Atom> many(kHuge, XInternAtom(d, "_NET_WM_WINDOW_TYPE_DIALOG", False));
+        writeProp(d, win, "_NET_WM_WINDOW_TYPE", XA_ATOM, 32, many.data(), kHuge);
+    }
+    settleWm(d);
+
+    REQUIRE(fixture.wmAlive());
+    CHECK(stillManaging(d));
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+    CHECK(fixture.asanReports().empty());
+}
+
+TEST_CASE("Deleting a property after the window is managed is handled on the notification",
+          "[wm_props]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window win = createClient(d, 150, 120, 300, 220);
+    REQUIRE(win != None);
+
+    // Populate first. The interesting path is the re-read that runs against an
+    // ALREADY-POPULATED client, which is why these are deleted after the map
+    // rather than simply never set.
+    const char* name = "a real name";
+    writeProp(d, win, "WM_NAME", XA_STRING, 8, name, static_cast<int>(std::strlen(name)));
+    writeAtomProp(d, win, "_NET_WM_WINDOW_TYPE", XA_ATOM, 32,
+                  "_NET_WM_WINDOW_TYPE_NORMAL");
+    {
+        Window self = win;
+        writeProp(d, win, "WM_COLORMAP_WINDOWS", XA_WINDOW, 32, &self, 1);
+    }
+    {
+        Atom del = XInternAtom(d, "WM_DELETE_WINDOW", False);
+        writeProp(d, win, "WM_PROTOCOLS", XA_ATOM, 32, &del, 1);
+    }
+
+    XMapWindow(d, win);
+    XSync(d, False);
+    const Window frame = awaitFrameFor(d, win);
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    // Now delete every one of them. Each generates a PropertyNotify with
+    // state == PropertyDelete, and the WM re-reads on the notification.
+    XDeleteProperty(d, win, XA_WM_NAME);
+    XDeleteProperty(d, win, XA_WM_ICON_NAME);
+    XDeleteProperty(d, win, XInternAtom(d, "_NET_WM_WINDOW_TYPE", False));
+    XDeleteProperty(d, win, XInternAtom(d, "WM_COLORMAP_WINDOWS", False));
+    XDeleteProperty(d, win, XInternAtom(d, "WM_PROTOCOLS", False));
+    XDeleteProperty(d, win, XInternAtom(d, "_NET_WM_STATE", False));
+    XDeleteProperty(d, win, XA_WM_TRANSIENT_FOR);
+    XSync(d, False);
+    settleWm(d);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(fixture.wmAlive());
+    CHECK(occurrences(d, win) == 1);
+    CHECK(isMapped(d, frame));
+
+    // Still interactive afterwards: a state message on the same window is
+    // honoured, which requires the client record to be intact rather than
+    // merely un-crashed.
+    const Atom mv = XInternAtom(d, kMaxVert, False);
+    sendStateMessage(d, win, kStateAdd, mv, None);
+    CHECK(awaitState(d, [&] { return hasState(d, win, kMaxVert); }));
+
+    CHECK(stillManaging(d));
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+    CHECK(fixture.asanReports().empty());
+}
+
+TEST_CASE("A strut larger than the screen produces a clamped, valid workarea",
+          "[wm_props]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    REQUIRE(awaitWorkarea(d, kScreenRect));
+
+    // Every edge claimed several times over, so left+right and top+bottom each
+    // exceed the screen on their own. The clamp cannot be a per-edge minimum
+    // alone: min(left, screenW) == min(right, screenW) == screenW gives
+    // width = screenW - screenW - screenW, which is NEGATIVE.
+    const long struts[12] = {100000, 100000, 100000, 100000, 0, 0, 0, 0, 0, 0, 0, 0};
+    const Window dock = createDockWithStruts(d, struts);
+    REQUIRE(dock != None);
+
+    REQUIRE(WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return workareaOf(d) != kScreenRect;
+    }, 8000));
+    settleWm(d);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    requireSaneWorkarea(d);
+
+    // A maximize against that workarea must still produce a real window rather
+    // than a zero or negative dimension reaching XConfigureWindow.
+    Window win = None;
+    const Window frame = mapClientAndAwaitFrame(d, 150, 120, 300, 220, win);
+    REQUIRE(frame != None);
+    const Atom mv = XInternAtom(d, kMaxVert, False);
+    const Atom mh = XInternAtom(d, kMaxHorz, False);
+    sendStateMessage(d, win, kStateAdd, mv, mh);
+    REQUIRE(awaitState(d, [&] {
+        return hasState(d, win, kMaxVert) && hasState(d, win, kMaxHorz);
+    }));
+    settleWm(d);
+
+    const Rect f = rectOf(d, frame);
+    INFO("frame after maximize into a fully-strutted workarea: " << describe(f));
+    CHECK(f.w >= 1);
+    CHECK(f.h >= 1);
+    CHECK(f.w <= kScreenW);
+    CHECK(f.h <= kScreenH);
+
+    REQUIRE(fixture.wmAlive());
+    CHECK(stillManaging(d));
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+    CHECK(fixture.asanReports().empty());
+}
+
+TEST_CASE("Negative and out-of-range struts never invert or empty the workarea",
+          "[wm_props]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    REQUIRE(awaitWorkarea(d, kScreenRect));
+
+    // PHASE 1, one dock, ONE edge: the top-of-range CARDINAL.
+    //
+    // 0xffffff00 is an entirely ordinary 32-bit CARDINAL that any client may
+    // write, and it is the value most likely to come out of an arithmetic
+    // mistake in a panel. What it MUST NOT do is shrink the workarea to nothing
+    // or invert it.
+    //
+    // Recorded honestly, because it is easy to write a test here that appears
+    // to cover more than it does: Xlib SIGN-EXTENDS format-32 property data
+    // into `long` (_XRead32 reads through an INT32*), so this arrives in the WM
+    // as -256 rather than as 4294967040, and every strut value is therefore
+    // always representable in an int. That is why this asserts the invariant
+    // -- a valid, unshrunken rectangle -- rather than a specific clamped
+    // number: the narrowing conversion cannot be caught misbehaving from out
+    // here, and a case claiming to catch it would be a case that did not test
+    // its own name. See the plan summary's equivalent-mutant section.
+    {
+        const long wideLeft[12] = {0xffffff00L, 0, 0, 0,
+                                   0, 0, 0, 0, 0, 0, 0, 0};
+        const Window wide = createDockWithStruts(d, wideLeft);
+        REQUIRE(wide != None);
+        REQUIRE(WmFixture::pollUntil([&] {
+            pumpWm(d);
+            return listed(d, wide);
+        }, 8000));
+        settleWm(d);
+
+        INFO("workarea from a left strut of 0xffffff00: " << describe(workareaOf(d)));
+        requireSaneWorkarea(d);
+        CHECK(workareaOf(d).w > 0);      // not collapsed by a bit pattern
+        CHECK(workareaOf(d).h > 0);
+
+        XDestroyWindow(d, wide);
+        XSync(d, False);
+        REQUIRE(awaitWorkarea(d, kScreenRect));
+    }
+
+    // PHASE 1b: a dock whose strut property is itself malformed.
+    //
+    // Type CARDINAL, count 12, format EIGHT. The server allocates thirteen
+    // bytes; the strut reader casts the buffer to long* and indexes it four
+    // times, which is thirty-two. Same class as the wrong-format case above,
+    // reached through a completely different reader -- updateWorkarea() is a
+    // direct XGetWindowProperty consumer and does not go through the shared
+    // helper, so hardening the helper alone would leave this open.
+    {
+        Window root = DefaultRootWindow(d);
+        Window bad = XCreateSimpleWindow(d, root, 0, kScreenH - kDockHeight,
+                                         kScreenW, kDockHeight, 0,
+                                         BlackPixel(d, DefaultScreen(d)),
+                                         WhitePixel(d, DefaultScreen(d)));
+        Atom dockType = XInternAtom(d, "_NET_WM_WINDOW_TYPE_DOCK", False);
+        writeProp(d, bad, "_NET_WM_WINDOW_TYPE", XA_ATOM, 32, &dockType, 1);
+
+        const unsigned char bytes[12] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                                         0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+        writeProp(d, bad, "_NET_WM_STRUT_PARTIAL", XA_CARDINAL, 8, bytes, 12);
+        // And the simple form declared under the wrong TYPE, so the fallback
+        // branch gets its own malformed input rather than inheriting a clean
+        // one from the partial branch's rejection.
+        writeProp(d, bad, "_NET_WM_STRUT", XA_ATOM, 32, bytes, 4);
+
+        XMapWindow(d, bad);
+        XSync(d, False);
+        REQUIRE(WmFixture::pollUntil([&] {
+            pumpWm(d);
+            return listed(d, bad);
+        }, 8000));
+        settleWm(d);
+
+        INFO("workarea from a format-8 strut: " << describe(workareaOf(d)));
+        requireSaneWorkarea(d);
+        // Rejected outright rather than misread: a malformed strut declares
+        // nothing, so the workarea is untouched.
+        CHECK(workareaOf(d) == kScreenRect);
+        REQUIRE(fixture.wmAlive());
+        CHECK(fixture.asanReports().empty());
+
+        XDestroyWindow(d, bad);
+        XSync(d, False);
+        REQUIRE(awaitWorkarea(d, kScreenRect));
+    }
+
+    // PHASE 2: three docks, each declaring a different flavour of nonsense, all
+    // live at once so the maxima are taken across a mixture of them.
+    const long negatives[12] = {-500, -600, -700, -800, 0, 0, 0, 0, 0, 0, 0, 0};
+    const long truncating[12] = {0xffffff00L, 0xffffff00L,
+                                 0xffffff00L, 0xffffff00L,
+                                 0, 0, 0, 0, 0, 0, 0, 0};
+    const long mixed[12] = {-1, 0x7fffffffffffffffL, -2147483648L, 0x7fffffffL,
+                            0, 0, 0, 0, 0, 0, 0, 0};
+
+    const Window d1 = createDockWithStruts(d, negatives);
+    const Window d2 = createDockWithStruts(d, truncating);
+    const Window d3 = createDockWithStruts(d, mixed);
+    REQUIRE(d1 != None);
+    REQUIRE(d2 != None);
+    REQUIRE(d3 != None);
+
+    REQUIRE(WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return listed(d, d1) && listed(d, d2) && listed(d, d3);
+    }, 8000));
+    settleWm(d);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    requireSaneWorkarea(d);
+
+    // Now remove them one at a time. Each destroy recomputes the workarea, and
+    // every intermediate value has to be sane too -- not just the final one.
+    for (Window dock : {d1, d2, d3}) {
+        XDestroyWindow(d, dock);
+        XSync(d, False);
+        settleWm(d);
+        requireSaneWorkarea(d);
+    }
+
+    // With every dock gone the workarea is the whole screen again.
+    CHECK(awaitWorkarea(d, kScreenRect));
+
+    REQUIRE(fixture.wmAlive());
+    CHECK(stillManaging(d));
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+    CHECK(fixture.asanReports().empty());
+}
+
+TEST_CASE("A name containing invalid UTF-8 renders without crashing or corrupting",
+          "[wm_props]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window win = createClient(d, 150, 120, 300, 220);
+    REQUIRE(win != None);
+
+    // Lone continuation bytes, a truncated multi-byte sequence, an overlong
+    // encoding, a surrogate, and an embedded NUL -- the classes an Xft draw
+    // call is most likely to mishandle. The embedded NUL matters twice over:
+    // it is where a length-unaware copy would silently truncate, and where a
+    // length-aware one keeps going.
+    const char bad[] = {
+        'o', 'k', ' ',
+        static_cast<char>(0x80), static_cast<char>(0xbf),
+        static_cast<char>(0xe2), static_cast<char>(0x28),
+        static_cast<char>(0xc0), static_cast<char>(0xaf),
+        static_cast<char>(0xed), static_cast<char>(0xa0), static_cast<char>(0x80),
+        static_cast<char>(0xf4), static_cast<char>(0x90), static_cast<char>(0x80),
+        static_cast<char>(0x80),
+        '\0',
+        't', 'a', 'i', 'l',
+        static_cast<char>(0xff), static_cast<char>(0xfe)
+    };
+    writeProp(d, win, "WM_NAME", XA_STRING, 8, bad, static_cast<int>(sizeof(bad)));
+    writeProp(d, win, "WM_ICON_NAME", XA_STRING, 8, bad, static_cast<int>(sizeof(bad)));
+    writeProp(d, win, "WM_CLASS", XA_STRING, 8, bad, static_cast<int>(sizeof(bad)));
+
+    XMapWindow(d, win);
+    XSync(d, False);
+
+    const Window frame = awaitFrameFor(d, win);
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(frame != None);
+
+    // The tab exists and has a real size -- the label is drawn into it, so a
+    // failed text measurement would show up as a degenerate tab rather than as
+    // a crash.
+    const std::vector<Window> kids = mappedChildren(d, frame);
+    REQUIRE(kids.size() >= 2);
+    bool sawRealTab = false;
+    for (Window k : kids) {
+        const Rect r = rectOf(d, k);
+        if (r.w > 0 && r.h > 0) sawRealTab = true;
+    }
+    CHECK(sawRealTab);
+
+    // Rewritten while managed, so the rename/redraw path runs too, and a
+    // SECOND window is framed and drawn afterwards -- which is the "without
+    // corrupting subsequent drawing" half.
+    writeProp(d, win, "WM_NAME", XA_STRING, 8, bad, static_cast<int>(sizeof(bad)));
+    settleWm(d);
+
+    Window later = None;
+    const Window laterFrame = mapClientAndAwaitFrame(d, 600, 400, 200, 160, later);
+    REQUIRE(laterFrame != None);
+    CHECK(mappedChildren(d, laterFrame).size() >= 2);
+
+    REQUIRE(fixture.wmAlive());
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+    CHECK(fixture.asanReports().empty());
+}
+
+TEST_CASE("The whole malformed-property battery against one window leaves the WM consistent",
+          "[wm_props]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    // Individual malformed properties are often survivable while a SEQUENCE of
+    // them is not: a reader left a dangling pointer, or a partially-populated
+    // vector, that the next reader then walks. Nothing above runs two classes
+    // of abuse against the same client; this does.
+    Window win = createClient(d, 150, 120, 300, 220);
+    REQUIRE(win != None);
+
+    const unsigned char bytes[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    std::vector<Atom> many(50000, XInternAtom(d, "_NET_WM_WINDOW_TYPE_DOCK", False));
+    const std::string huge(512 * 1024, 'Z');
+    const char badUtf8[] = {static_cast<char>(0xff), static_cast<char>(0xfe),
+                            static_cast<char>(0xc0), '\0', 'x'};
+
+    auto abuse = [&](Window w) {
+        // wrong type
+        writeAtomProp(d, w, "_NET_WM_WINDOW_TYPE", XA_CARDINAL, 32,
+                      "_NET_WM_WINDOW_TYPE_DOCK");
+        // wrong format, both directions
+        writeProp(d, w, "_NET_WM_WINDOW_TYPE", XA_ATOM, 8, bytes, 4);
+        writeProp(d, w, "WM_PROTOCOLS", XA_ATOM, 16, bytes, 4);
+        writeProp(d, w, "WM_COLORMAP_WINDOWS", XA_WINDOW, 8, bytes, 4);
+        // empty
+        writeProp(d, w, "_NET_WM_WINDOW_TYPE", XA_ATOM, 32, nullptr, 0);
+        writeProp(d, w, "WM_NAME", XA_STRING, 8, nullptr, 0);
+        // oversized
+        writeProp(d, w, "_NET_WM_WINDOW_TYPE", XA_ATOM, 32, many.data(),
+                  static_cast<int>(many.size()));
+        writeProp(d, w, "WM_NAME", XA_STRING, 8, huge.data(),
+                  static_cast<int>(huge.size()));
+        // invalid UTF-8
+        writeProp(d, w, "WM_NAME", XA_STRING, 8, badUtf8,
+                  static_cast<int>(sizeof(badUtf8)));
+        writeProp(d, w, "WM_CLASS", XA_STRING, 8, badUtf8,
+                  static_cast<int>(sizeof(badUtf8)));
+        // deleted
+        XDeleteProperty(d, w, XInternAtom(d, "_NET_WM_WINDOW_TYPE", False));
+        XDeleteProperty(d, w, XInternAtom(d, "WM_COLORMAP_WINDOWS", False));
+        XDeleteProperty(d, w, XA_WM_NAME);
+        XSync(d, False);
+    };
+
+    abuse(win);                       // before the map: the manage()-time readers
+    XMapWindow(d, win);
+    XSync(d, False);
+    const Window frame = awaitFrameFor(d, win, 15000);
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(frame != None);
+
+    abuse(win);                       // after the map: the eventProperty() readers
+    settleWm(d);
+
+    // Absurd struts on top of all that, from the same window turned dock-ish.
+    const long struts[12] = {0x7fffffffffffffffL, 0xffffff00L, -1, 100000,
+                             0, 0, 0, 0, 0, 0, 0, 0};
+    const Window dock = createDockWithStruts(d, struts);
+    REQUIRE(dock != None);
+    REQUIRE(WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return listed(d, dock);
+    }, 8000));
+    settleWm(d);
+
+    // Alive, self-consistent, and still doing its job.
+    REQUIRE(fixture.wmAlive());
+    requireSaneWorkarea(d);
+    CHECK(occurrences(d, win) == 1);
+    CHECK(occurrences(d, dock) == 1);
+    CHECK(isMapped(d, frame));
+
+    // Root properties still readable and well-formed.
+    CHECK_FALSE(clientList(d).empty());
+    Rect wa;
+    CHECK(workarea(d, wa));
+
+    // And a brand new window is still framed correctly, with its decoration.
+    Window later = None;
+    const Window laterFrame = mapClientAndAwaitFrame(d, 600, 400, 200, 160, later);
+    REQUIRE(laterFrame != None);
+    CHECK(mappedChildren(d, laterFrame).size() >= 2);
+    CHECK(occurrences(d, later) == 1);
+
+    CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+    CHECK(fixture.asanReports().empty());
 }

@@ -907,6 +907,36 @@ void WindowManager::updateWorkarea()
     int screenH = screenHeight();
     int left = 0, right = 0, top = 0, bottom = 0;
 
+    if (screenW < 0) screenW = 0;
+    if (screenH < 0) screenH = 0;
+
+    // T-8-STRUT (plan 08-12): clamp in the WIDE type, before the narrowing
+    // conversion, not after it.
+    //
+    // Stated precisely, because the imprecise version of this claim is
+    // tempting and wrong: Xlib SIGN-EXTENDS format-32 property data into `long`
+    // (_XRead32 reads it through an INT32*), so every strut value that reaches
+    // this function is already representable in an int and `static_cast<int>`
+    // on it is exact TODAY. Measured, not assumed -- a dock declaring
+    // 0xffffff00 arrives here as -256, not as 4294967040.
+    //
+    // The clamp is kept anyway, and not as ceremony. It puts the [0, limit]
+    // invariant at the point where the untrusted value ENTERS the arithmetic,
+    // rather than leaving the code correct only for as long as that Xlib detail
+    // holds -- and it makes the two guards below (which are load-bearing)
+    // readable as one policy instead of three scattered conversions. A future
+    // reader adding a 64-bit property, or a wider strut source, inherits the
+    // invariant instead of having to rediscover it.
+    //
+    // Recorded in the plan summary as an equivalent mutant rather than covered
+    // by a contrived test: no observation from outside the WM can distinguish
+    // it, and a test claiming otherwise would not test its own name.
+    auto clampStrut = [](long value, int limit) -> int {
+        if (value <= 0) return 0;
+        if (value >= static_cast<long>(limit)) return limit;
+        return static_cast<int>(value);
+    };
+
     // Iterate all clients (both normal and hidden) for dock struts
     auto checkStruts = [&](const auto& clients) {
         for (const auto& client : clients) {
@@ -917,34 +947,37 @@ void WindowManager::updateWorkarea()
             unsigned long nItems, bytesAfter;
             unsigned char *data = nullptr;
 
-            // Try _NET_WM_STRUT_PARTIAL first (12 values)
-            bool found = false;
-            if (XGetWindowProperty(display(), client->window(),
-                    Atoms::net_wmStrutPartial, 0, 12, false, XA_CARDINAL,
-                    &actualType, &actualFormat, &nItems, &bytesAfter, &data) == Success
-                && data && nItems >= 4) {
-                long *struts = reinterpret_cast<long*>(data);
-                left   = std::max(left,   static_cast<int>(struts[0]));
-                right  = std::max(right,  static_cast<int>(struts[1]));
-                top    = std::max(top,    static_cast<int>(struts[2]));
-                bottom = std::max(bottom, static_cast<int>(struts[3]));
-                found = true;
-            }
-            if (data) { XFree(data); data = nullptr; }
-
-            // Fallback to _NET_WM_STRUT (4 values)
-            if (!found) {
-                if (XGetWindowProperty(display(), client->window(),
-                        Atoms::net_wmStrut, 0, 4, false, XA_CARDINAL,
-                        &actualType, &actualFormat, &nItems, &bytesAfter, &data) == Success
-                    && data && nItems >= 4) {
+            // T-8-PROP: the returned type, format and item count are all
+            // checked before the reinterpret_cast. A dock is a client, and a
+            // client may write _NET_WM_STRUT_PARTIAL with type CARDINAL and
+            // format 8 -- twelve BYTES, which the cast below would read as
+            // ninety-six.
+            auto accumulate = [&](Atom prop, long len) -> bool {
+                if (XGetWindowProperty(display(), client->window(), prop, 0, len,
+                        false, XA_CARDINAL, &actualType, &actualFormat,
+                        &nItems, &bytesAfter, &data) != Success) {
+                    data = nullptr;
+                    return false;
+                }
+                bool used = false;
+                if (data && actualType == XA_CARDINAL && actualFormat == 32 && nItems >= 4) {
                     long *struts = reinterpret_cast<long*>(data);
-                    left   = std::max(left,   static_cast<int>(struts[0]));
-                    right  = std::max(right,  static_cast<int>(struts[1]));
-                    top    = std::max(top,    static_cast<int>(struts[2]));
-                    bottom = std::max(bottom, static_cast<int>(struts[3]));
+                    left   = std::max(left,   clampStrut(struts[0], screenW));
+                    right  = std::max(right,  clampStrut(struts[1], screenW));
+                    top    = std::max(top,    clampStrut(struts[2], screenH));
+                    bottom = std::max(bottom, clampStrut(struts[3], screenH));
+                    used = true;
                 }
                 if (data) { XFree(data); data = nullptr; }
+                return used;
+            };
+
+            // _NET_WM_STRUT_PARTIAL (12 values) first, _NET_WM_STRUT (4) as the
+            // fallback -- and the fallback runs whenever the partial form was
+            // absent OR unusable, so a malformed partial strut does not shadow
+            // a well-formed simple one.
+            if (!accumulate(Atoms::net_wmStrutPartial, 12)) {
+                accumulate(Atoms::net_wmStrut, 4);
             }
         }
     };
@@ -952,11 +985,28 @@ void WindowManager::updateWorkarea()
     checkStruts(m_clients);
     checkStruts(m_hiddenClients);
 
-    // Clamp strut values to screen dimensions (security: prevent absurd values)
-    left   = std::min(left,   screenW);
-    right  = std::min(right,  screenW);
-    top    = std::min(top,    screenH);
-    bottom = std::min(bottom, screenH);
+    // Cap the COMBINED struts, not just each one individually.
+    //
+    // Clamping each edge to the screen dimension leaves left == right ==
+    // screenW perfectly reachable, and the published width is then
+    // screenW - left - right == -screenW. MEASURED on the shipped binary from a
+    // single dock declaring 100000 on all four edges:
+    //
+    //     _NET_WORKAREA = (1024, 768, -1024, -768)
+    //
+    // An inverted workarea is not a cosmetic wrong number. Client::setMaximized
+    // reads it and hands the result to XConfigureWindow, whose width and height
+    // parameters are UNSIGNED -- the same arithmetic that bought a 64536-pixel
+    // window in plan 08-11, reachable here by any client that can map a dock.
+    //
+    // Ordering matters: `right` is capped against what is LEFT after `left`, so
+    // the two can never together exceed the screen and the published width and
+    // height are non-negative by construction rather than by a trailing floor
+    // that would hide which edge was unreasonable.
+    if (left  > screenW)         left   = screenW;
+    if (right > screenW - left)  right  = screenW - left;
+    if (top    > screenH)        top    = screenH;
+    if (bottom > screenH - top)  bottom = screenH - top;
 
     long workarea[4] = {
         static_cast<long>(left),
