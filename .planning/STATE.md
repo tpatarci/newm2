@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 08
 current_phase_name: xrandr-vnc-compatibility-focus-rules
 status: executing
-stopped_at: Completed 08-12-PLAN.md
-last_updated: "2026-08-29T12:09:41.230Z"
+stopped_at: Completed 08-13-PLAN.md
+last_updated: "2026-08-29T13:58:55.694Z"
 last_activity: 2026-08-11
 last_activity_desc: gathered Phase 8 context across 8 gray areas (32 decisions captured)
-state_head: 7b6826fc8e9ba0c649d370521b2a25956a6c659d
+state_head: 0a356a788ce6f5e63d6b812beb5cf9c14a003536
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 36
-  completed_plans: 34
+  completed_plans: 35
 milestone_name: milestone
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 08 (xrandr-vnc-compatibility-focus-rules) — EXECUTING
-Plan: 13 of 14
+Plan: 14 of 14
 Status: Ready to execute
 Last activity: 2026-08-11 — Phase 08 execution started
 
@@ -90,6 +90,7 @@ Progress: [████████░░] 81% (7/9 phases complete)
 | Phase 08 P10 | 21min | 3 tasks | 6 files |
 | Phase 08 P11 | 75min | 3 tasks | 6 files |
 | Phase 08 P12 | 95min | 3 tasks | 9 files |
+| Phase 08 P13 | 200min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -167,6 +168,12 @@ Recent decisions affecting current work:
 - [Phase 08]: setMaximized falls back to the screen when the workarea is not a usable rectangle inside it -- a range check, deliberately not a size threshold, which would be a policy about how much screen a panel may claim
 - [Phase 08]: clampStrut recorded as an equivalent mutant: Xlib sign-extends format-32 property data into long, so the narrowing conversion is exact and no external observation can distinguish it
 - [Phase 08]: Memory-safety mutations must be run in the ASan tree -- two of fifteen are green in debug and kill the WM under the sanitizer
+- [Phase 08]: All thirteen of the checklist's missing-coverage items are now automated; 08-13 closed items 5, 6 and 13
+- [Phase 08]: A YXSorted SHAPE request is a promise the server validates: Border::combineShapeSorted() is now the only way to issue one, because every rectangle list depends on FRAME_WIDTH and the tab width
+- [Phase 08]: XSync(dpy, True) discards EVENTS, not errors: Client::unreparent() was throwing away the WM's whole queued backlog on every client teardown
+- [Phase 08]: Xlib out-parameters are not written on failure -- getColormaps() was installing uninitialised colormap XIDs
+- [Phase 08]: kOptionSpecs is the single declaration of the CLI surface: getopt_long()'s array and the --help usage text are both generated from it, and --no- negations are derived rather than listed
+- [Phase 08]: Deferred item 5 (LSan suppressions not wired into Catch2 binaries) is deliberately still open, with both candidate fixes costed and an owner recommended
 
 ### Pending Todos
 
@@ -197,6 +204,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-29T12:09:29.820Z
-Stopped at: Completed 08-12-PLAN.md
+Last session: 2026-08-29T13:58:45.643Z
+Stopped at: Completed 08-13-PLAN.md
 Resume file: None
