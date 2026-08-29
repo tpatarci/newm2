@@ -1,19 +1,20 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
 current_phase: 08
 current_phase_name: xrandr-vnc-compatibility-focus-rules
 status: executing
-stopped_at: Completed 08-07-PLAN.md
-last_updated: "2026-08-11T16:37:59.321Z"
+stopped_at: Completed 08-08-PLAN.md
+last_updated: "2026-08-29T08:59:28.173Z"
 last_activity: 2026-08-11
 last_activity_desc: gathered Phase 8 context across 8 gray areas (32 decisions captured)
+state_head: 642c4a3fa71d19faf3bacaf250eb48f21150ce42
 progress:
-  total_phases: 8
-  completed_phases: 7
+  total_phases: 9
+  completed_phases: 4
   total_plans: 36
-  completed_plans: 29
+  completed_plans: 30
+milestone_name: milestone
 ---
 
 # Project State
@@ -28,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 08 (xrandr-vnc-compatibility-focus-rules) — EXECUTING
-Plan: 8 of 14
+Plan: 9 of 14
 Status: Ready to execute
 Last activity: 2026-08-11 — Phase 08 execution started
 
@@ -84,6 +85,7 @@ Progress: [████████░░] 81% (7/9 phases complete)
 | Phase 08 P05 | 78min | 3 tasks | 7 files |
 | Phase 08 P06 | 71min | 3 tasks | 9 files |
 | Phase 08 P07 | 55min | 4 tasks | 11 files |
+| Phase 08 P08 | 115min | 4 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -141,6 +143,9 @@ Recent decisions affecting current work:
 - [Phase ?]: 08-07: deferred item 6 (circulate() 100%-CPU spin) fixed with a bounded scan; the regression test creates its own transient client so it cannot go vacuous when item 7 is fixed
 - [Phase ?]: 08-07: a settle before a non-event assertion must be REPEATED AND SPACED -- 15 pumps back to back left a deleted production gate green; the same 15 at 20ms intervals redden it
 - [Phase ?]: 08-07: gating auto-raise at the expiry site was implemented and measured -- it does NOT spin (0 CPU ticks), so the idle-CPU case is not evidence for the gate's placement
+- [Phase 08]: 08-08: _NET_ACTIVE_WINDOW arbitrated by EWMH source indication (pager granted, application arbitrated, legacy granted) — supersedes Phase 6 D-10, amended append-only in 06-CONTEXT.md
+- [Phase 08]: 08-08: map-time focus granting is NOT gated on the pointer-entry policy; the resulting conflict with 08-07 behaviours 1-2 was resolved by constructing their unfocused precondition with a zero _NET_WM_USER_TIME, leaving every assertion intact
+- [Phase 08]: 08-08: _NET_WM_USER_TIME of zero means do-not-focus-me at map time, but absent evidence (arbitrated as stale) on an activation request
 
 ### Pending Todos
 
@@ -170,6 +175,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-11T16:37:32.372Z
-Stopped at: Completed 08-07-PLAN.md
+Last session: 2026-08-29T08:59:20.348Z
+Stopped at: Completed 08-08-PLAN.md
 Resume file: None
