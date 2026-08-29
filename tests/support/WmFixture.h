@@ -381,6 +381,34 @@ public:
     std::vector<std::string> asanReports() const { return globAsanReports(); }
     const std::string& asanLogPrefix() const { return m_asanLogPrefix; }
 
+    // Deferred item 14 (recorded by 08-12, fixed here in 08-13).
+    //
+    // ASan writes its report to "<log_path>.<pid>", and globAsanReports() finds
+    // reports by globbing "<workdir>/asan<display>*". The display number is
+    // drawn from a small pool that is reused across runs, so a report written by
+    // an EARLIER run on :122 is attributed to the NEXT fixture handed :122 --
+    // which then fails at `CHECK(fixture.asanReports().empty())` with a clean WM
+    // and no fault of its own. Measured in 08-12: 9 of 9 cases red on a tree
+    // whose source was back at its correct state, green again the moment five
+    // files were deleted.
+    //
+    // A green tree never writes a report, so the files only accumulate when
+    // someone is deliberately breaking the WM -- which is exactly what mutation
+    // testing is, and mutation testing is how every defect in plans 08-11..13
+    // was confirmed. Left unfixed it makes a mutation run poison every later run
+    // of the same group with a failure that looks precisely like a regression in
+    // the code under test.
+    //
+    // Exposed as a static helper rather than buried in start() so it is directly
+    // testable: the fixture cannot be handed a chosen display number, but this
+    // can be handed a chosen prefix.
+    static void removeReportsWithPrefix(const std::string& prefix)
+    {
+        for (const auto& path : globWithPrefix(prefix)) {
+            ::unlink(path.c_str());
+        }
+    }
+
     // Poll until `pred()` is true or the deadline expires. The exit condition is
     // always a real observation.
     template <typename Pred>
@@ -483,6 +511,12 @@ private:
     {
         m_asanLogPrefix = workDir() + "/asan" + sanitizedDisplay();
         m_stderrPath    = workDir() + "/wm" + sanitizedDisplay() + ".stderr";
+
+        // Deferred item 14: clear reports left on THIS display prefix by an
+        // earlier run, before the child that would legitimately write one is
+        // launched. Without this a single mutation run makes every subsequent
+        // run of the same group red. See removeReportsWithPrefix() above.
+        removeReportsWithPrefix(m_asanLogPrefix);
 
         std::vector<std::string> argv{
             WM2_BINARY_PATH,
@@ -745,13 +779,24 @@ private:
     // ASan writes to "<log_path>.<pid>". Glob the directory for that prefix.
     std::vector<std::string> globAsanReports() const
     {
+        return globWithPrefix(m_asanLogPrefix);
+    }
+
+public:
+    // Every path in workDir() whose basename starts with `prefix`'s basename.
+    // Public and static only so removeReportsWithPrefix() above -- and the
+    // harness test that proves it -- can name the same glob the attribution
+    // uses; a cleanup that globbed differently from the detection would be a
+    // cleanup that does not clean.
+    static std::vector<std::string> globWithPrefix(const std::string& prefix)
+    {
         std::vector<std::string> found;
-        if (m_asanLogPrefix.empty()) return found;
+        if (prefix.empty()) return found;
 
         const std::string dir = workDir();
-        const size_t slash = m_asanLogPrefix.find_last_of('/');
+        const size_t slash = prefix.find_last_of('/');
         const std::string base = (slash == std::string::npos)
-            ? m_asanLogPrefix : m_asanLogPrefix.substr(slash + 1);
+            ? prefix : prefix.substr(slash + 1);
 
         DIR* dp = ::opendir(dir.c_str());
         if (!dp) return found;
@@ -766,6 +811,8 @@ private:
     }
 
     static std::string workDir() { return std::string(WM2_TEST_WORKDIR); }
+
+private:
 
     std::string sanitizedDisplay() const
     {
