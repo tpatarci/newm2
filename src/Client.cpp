@@ -1147,9 +1147,26 @@ void Client::getColormaps()
     Window *cw;
     XWindowAttributes attr;
 
+    // XGetWindowAttributes' return value is CHECKED here, and that is not
+    // defensive style -- it is a correctness requirement.
+    //
+    // On failure Xlib leaves `attr` exactly as it found it, so reading
+    // attr.colormap after a failed call yields whatever was on the stack (or,
+    // inside the loop below, the previous iteration's window). The call fails
+    // routinely: a client may destroy a window at any moment, and the WM is
+    // still working through queued events for it. MEASURED by the churn case in
+    // tests/test_wm_runtime.cpp -- the WM issued
+    //
+    //     X_InstallColormap (0x68413d80): BadColor
+    //
+    // with an XID belonging to no client on the display. A garbage XID that
+    // happened to name a colormap owned by ANOTHER application would not be
+    // rejected: it would be installed, changing the display's colours from a
+    // value the WM never computed. None is the correct fallback --
+    // WindowManager::installColormap(None) installs the default colormap.
     if (!m_managed) {
-        XGetWindowAttributes(display(), m_window, &attr);
-        m_colormap = attr.colormap;
+        m_colormap = XGetWindowAttributes(display(), m_window, &attr)
+            ? attr.colormap : None;
     }
 
     int n = getProperty_aux(display(), m_window, Atoms::wm_colormaps, XA_WINDOW,
@@ -1171,8 +1188,12 @@ void Client::getColormaps()
             m_windowColormaps[i] = m_colormap;
         } else {
             XSelectInput(display(), m_colormapWindows[i], ColormapChangeMask);
-            XGetWindowAttributes(display(), m_colormapWindows[i], &attr);
-            m_windowColormaps[i] = attr.colormap;
+            // Same check, and here `attr` is worse than stack garbage: it holds
+            // the PREVIOUS iteration's window, so an unchecked failure silently
+            // attributes one window's colormap to another.
+            m_windowColormaps[i] =
+                XGetWindowAttributes(display(), m_colormapWindows[i], &attr)
+                    ? attr.colormap : None;
         }
     }
 }
@@ -1249,7 +1270,21 @@ void Client::unreparent()
     wc.border_width = m_bw;
     XConfigureWindow(display(), m_window, CWBorderWidth, &wc);
 
-    XSync(display(), true);
+    // discard = FALSE. It used to be true, and XSync's second argument is
+    // "throw away EVERY event currently queued on this connection" -- not
+    // "throw away the errors from the two requests above", which is what it
+    // looks like and what it was presumably meant to do. Protocol errors are
+    // delivered to the error handler regardless of this flag, so the discard
+    // bought nothing at all and cost the entire queue.
+    //
+    // unreparent() runs from ~Client(), i.e. on every client teardown, so the
+    // queue it emptied routinely held events belonging to OTHER windows.
+    // MEASURED by the churn case below: closing one window silently swallowed
+    // the DestroyNotify of up to seventeen others, whose Client and Border
+    // objects then lived forever -- stale in _NET_CLIENT_LIST, holding their X
+    // resources, and never freed. MapRequests and ConfigureRequests sit in the
+    // same queue, so the same discard could leave an unrelated window unframed.
+    XSync(display(), false);
 }
 
 
