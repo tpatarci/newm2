@@ -540,6 +540,46 @@ if(BUILD_TESTS)
                 FIXTURES_REQUIRED preflight_ok
                 TIMEOUT 300
         )
+
+        # --- EWMH state, fullscreen/maximize and malformed-property tests
+        #     (TEST-05, plan 08-12) ---
+        #
+        # Cloned from test_wm_lifecycle above. XTEST is linked for the same
+        # reason it is there -- the fullscreen/maximize group needs the pointer
+        # parked and moved through real device events rather than warps that the
+        # WM's crossing handlers would treat differently -- and so that a later
+        # case in this file can reach for a real click without a build change.
+        #
+        # Own display per fixture instance, so deliberately NO shared-display
+        # binding and NO `FIXTURES_REQUIRED xvfb_display`.
+        add_executable(test_wm_state tests/test_wm_state.cpp)
+        target_link_libraries(test_wm_state PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+            PkgConfig::XTST
+        )
+        target_include_directories(test_wm_state PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/tests
+            ${XFT_INCLUDE_DIRS}
+        )
+
+        target_compile_definitions(test_wm_state PRIVATE
+            WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
+            WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
+            WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+        )
+
+        # The tests exec the binary, so it must exist before they run.
+        add_dependencies(test_wm_state wm2-born-again)
+
+        # ADD_TAGS_AS_LABELS is required by D-33, or the three tags this file
+        # carries are not selectable by the anchored label gates.
+        catch_discover_tests(test_wm_state ADD_TAGS_AS_LABELS
+            PROPERTIES
+                FIXTURES_REQUIRED preflight_ok
+                TIMEOUT 300
+        )
     endif()
 
     # Config parsing unit tests (pure data transformation, no X11 needed)
