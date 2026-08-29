@@ -383,37 +383,57 @@ TEST_CASE("A position rule that would strand a window offscreen is clamped", "[w
     // literally would put a window where the user cannot reach it -- and the
     // rule file is exactly the place a typo like this gets made once and then
     // persists across every session.
+    // Both geometry paths are pinned here, because there are two of them: the
+    // framed one clamps through ensureVisible(), the rule-undecorated one
+    // through its own unframed equivalent. Testing only the framed path would
+    // leave the no-decorate path free to strand a window with nothing to notice.
     WmFixture fx(rulesFixture(
         "rule-match-class=WmRulesClamp\n"
+        "rule-position=980,700\n"
+        "rule-match-class=WmRulesClampBare\n"
+        "rule-no-decorate=true\n"
         "rule-position=980,700\n"));
 
     auto conn = fx.openDisplay();
     REQUIRE(conn != nullptr);
     Display* d = conn.get();
+    const Window root = DefaultRootWindow(d);
 
-    Window win = createClient(d, 50, 50, 300, 220, "wmrulesclamp", "WmRulesClamp");
-    REQUIRE(mapAndAwait(d, win));
+    auto assertOnScreenAndUnshrunk = [&](Window w, const char* what) {
+        Rect r{};
+        REQUIRE(serverRect(d, w, r));
+        INFO(what << " client rect " << describe(r)
+                  << " on " << kScreenW << "x" << kScreenH);
+
+        // Fully on screen...
+        REQUIRE(r.x >= 0);
+        REQUIRE(r.y >= 0);
+        REQUIRE(r.x + r.w <= kScreenW);
+        REQUIRE(r.y + r.h <= kScreenH);
+
+        // ...and MOVED, not shrunk. Shrinking would also satisfy the four bounds
+        // above, which is why the size is asserted alongside them: a clamp that
+        // resizes silently rewrites what the application asked for.
+        REQUIRE(r.w == 300);
+        REQUIRE(r.h == 220);
+
+        // And it genuinely moved -- it is not still sitting at the rule's value.
+        REQUIRE(r.x < 980);
+    };
+
+    Window framed = createClient(d, 50, 50, 300, 220, "wmrulesclamp", "WmRulesClamp");
+    REQUIRE(mapAndAwait(d, framed));
+
+    Window bare = createClient(d, 50, 50, 300, 220, "wmrulesclampbare", "WmRulesClampBare");
+    REQUIRE(mapAndAwait(d, bare));
 
     INFO("wm stderr:\n" << fx.wmStderr());
 
-    Rect r{};
-    REQUIRE(serverRect(d, win, r));
-    INFO("client rect " << describe(r) << " on " << kScreenW << "x" << kScreenH);
+    REQUIRE(parentOf(d, framed) != root);
+    REQUIRE(parentOf(d, bare) == root);
 
-    // Fully on screen...
-    REQUIRE(r.x >= 0);
-    REQUIRE(r.y >= 0);
-    REQUIRE(r.x + r.w <= kScreenW);
-    REQUIRE(r.y + r.h <= kScreenH);
-
-    // ...and MOVED, not shrunk. Shrinking would also satisfy the four bounds
-    // above, which is why the size is asserted alongside them: a clamp that
-    // resizes silently rewrites what the application asked for.
-    REQUIRE(r.w == 300);
-    REQUIRE(r.h == 220);
-
-    // And it genuinely moved -- it is not still sitting at the rule's value.
-    REQUIRE(r.x < 980);
+    assertOnScreenAndUnshrunk(framed, "framed");
+    assertOnScreenAndUnshrunk(bare, "rule-undecorated");
 }
 
 
