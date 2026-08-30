@@ -295,7 +295,7 @@ Plans:
   6. Both Phase 8 deviations are retired on evidence or restated with a reason that is true — neither survives as written
   7. The four hard blockers are re-run at the final commit, not inherited from Phase 8's snapshot
 
-**Plans**: 5 plans (2 executed, 3 gap-closure)
+**Plans**: 2/5 plans executed (2 executed, 3 gap-closure)
 
 Plans:
 
@@ -358,5 +358,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 
 | 6. EWMH Compliance | 0/3 | Planned | - |
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
 | 8. Xrandr + VNC + Focus/Rules | 14/14 | Verified with gaps | 2026-08-30 |
-| 8.5 v1.0 Closeout *(INSERTED)* | 2/2 | Verified with gaps | 2026-08-30 |
+| 8.5 v1.0 Closeout *(INSERTED)* | 2/5 | In Progress|  |
 | 9. Config GUI + IPC | 0/3 | Not started | - |

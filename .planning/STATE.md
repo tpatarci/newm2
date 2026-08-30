@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 current_phase: 08.5
-current_phase_name: v1.0 Closeout
+current_phase_name: v1.0 Closeout *(INSERTED)*
 status: executing
-stopped_at: Phase 8.5 complete -- RULES-01, XDIS-05 and TEST-08 all met; ready for Phase 9
-last_updated: "2026-08-30T16:27:22.048Z"
+stopped_at: Completed 08.5-03-PLAN.md
+last_updated: "2026-08-30T16:41:21.724Z"
 last_activity: 2026-08-30
 last_activity_desc: Phase 08.5 execution started
-state_head: 5d2fb25feed48bfaac99753f2113c2d907a406d4
+state_head: 195ac511b8fc72cf80ede0c5eb22643406e784d5
 progress:
   total_phases: 10
   completed_phases: 4
@@ -28,8 +28,8 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 ## Current Position
 
-Phase: 08.5 (v1.0 Closeout) — READY TO EXECUTE
-Plan: 1 of 2
+Phase: 08.5 (v1.0 Closeout *(INSERTED)*) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
 Last activity: 2026-08-30 — Phase 08.5 execution started
 
@@ -94,6 +94,7 @@ Progress: [████████░░] 81% (7/9 phases complete)
 | Phase 08 P11 | 75min | 3 tasks | 6 files |
 | Phase 08 P12 | 95min | 3 tasks | 9 files |
 | Phase 08 P13 | 200min | 3 tasks | 9 files |
+| Phase 08.5 P03 | 5min | 4 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -181,6 +182,8 @@ Recent decisions affecting current work:
 - [Phase 08.5]: D-8.5-02 the WM reads only legacy WM_NAME and never `_NET_WM_NAME` for a client title (`Atoms::net_wmName` is used solely to name the WM's own check window). A title rule on that alone would be dead for modern clients, so the title read becomes EWMH-first with ICCCM fallback
 - [Phase 08.5]: D-8.5-01 `rule-match-name` renamed to `rule-match-instance` with NO deprecated alias -- free before v1.0, breaking after; the cost is one `unknown config key` warning for an existing local config
 - [Phase 08.5]: D-8.5-03 title rules fold once at map time and are deliberately NOT re-folded on title change -- re-applying geometry on rename would make windows jump when a document is renamed; re-fold goes to the v1.1 backlog
+- [Phase 08.5]: 08.5-03: the shipped release notes and the signoff checklist are worded differently on purpose -- COMPILED_CODE_BEHAVIOR_CHECKLIST.md keeps the retired D-8-TIGHTVNC rationale verbatim as a record, the user-facing notes name it only as a retired argument and state the general lesson instead
+- [Phase 08.5]: 08.5-03: the literals x2gostartagent and SCOPE.md were deliberately withheld from Task 2's table cells and introduced in Task 3, so Task 3's positive guards could still redden -- a guard pre-greened by an earlier task in the same plan measures nothing, which is the exact defect this plan closes
 
 ### Pending Todos
 
@@ -219,6 +222,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-29T13:58:45.643Z
-Stopped at: Completed 08-13-PLAN.md
+Last session: 2026-08-30T16:41:08.962Z
+Stopped at: Completed 08.5-03-PLAN.md
 Resume file: None
