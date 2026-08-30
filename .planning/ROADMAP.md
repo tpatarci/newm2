@@ -295,7 +295,7 @@ Plans:
   6. Both Phase 8 deviations are retired on evidence or restated with a reason that is true — neither survives as written
   7. The four hard blockers are re-run at the final commit, not inherited from Phase 8's snapshot
 
-**Plans**: 2 plans
+**Plans**: 5 plans (2 executed, 3 gap-closure)
 
 Plans:
 
@@ -306,6 +306,20 @@ Plans:
 **Wave 2** *(blocked on Wave 1)*
 
 - [x] 08.5-02-PLAN.md -- TightVNC and nxagent transcripts captured headlessly, interaction checklist as a table (blocking human checkpoint), deviations retired or restated, gates re-run (XDIS-05, TEST-08)
+
+**Gap closure** *(added after `08.5-VERIFICATION.md` scored the phase 5/7; run with `/gsd-execute-phase 08.5 --gaps-only`)*
+
+Gap-closure wave 1:
+
+- [ ] 08.5-03-PLAN.md -- Rewrite the shipped remote-desktop section of `docs/RELEASE-NOTES.md` to the four measured statuses, retiring the TightVNC rationale the phase's own transcript disproved and narrowing the X2Go deviation to the NX proxy; prove the rules-key record survived the edit (criterion 6; XDIS-05, RULES-01)
+
+Gap-closure wave 2 *(blocked on gap-closure wave 1)*:
+
+- [ ] 08.5-04-PLAN.md -- Capture all four hard blockers at the final commit into `08.5-v1.0-closeout/evidence/gates/`, with a `PROVENANCE.txt` that proves no source moved between the gate commit and HEAD (criterion 7, capture half; TEST-08)
+
+Gap-closure wave 3 *(blocked on gap-closure wave 2)*:
+
+- [ ] 08.5-05-PLAN.md -- Repoint every gate row in `COMPILED_CODE_BEHAVIOR_CHECKLIST.md` at this phase's bundle, recompute the test-surface row with its own commands, update the interaction rows from the filled table, and write `evidence/README.md` (criterion 7, record half; TEST-08)
 
 **Key finding that shaped this phase (2026-08-30):** the handoff's decided shape moved X2Go to a v1.1 requirement on the reasoning that validating it cost a human session. Measurement falsified that — `x2goserver`/`nxagent` were already installed (dpkg stamp 2026-08-29 17:43), nxagent runs headless nested on an Xvfb, and it advertises SHAPE, RANDR and RENDER. The WM was run against it successfully. So both remaining targets are validated rather than amended away, and XDIS-05 is expected to be met **as written**. See `08.5-CONTEXT.md`, "What changed since the handoff".
 
