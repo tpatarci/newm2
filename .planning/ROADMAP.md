@@ -21,7 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 6: EWMH Compliance** - All required EWMH atoms, single-desktop mode, panel/taskbar compatibility
 - [x] **Phase 7: Root Menu + Application Discovery** - XDG .desktop parsing, heuristic-based binary scan, cached results, category-organized root menu (completed 2026-07-08)
 - [~] **Phase 8: Xrandr + VNC Compatibility + Focus/Rules** - Display config, extension fallbacks, VNC compatibility, focus stealing prevention, window rules. **All 14 plans complete; 5 of 7 success criteria verified.** Two remain unmet and are declared, not stubbed: four-target remote-desktop coverage (2 of 4 exercised — XDIS-05) and WM_NAME matching (RULES-01). See VERIFICATION.md.
-- [ ] **Phase 8.5: v1.0 Closeout** *(INSERTED 2026-08-30)* - Finish the three requirements Phase 8 left Pending: title matching for window rules plus the config key rename (RULES-01), the two remaining remote-desktop targets (XDIS-05), and the interaction checklist as a per-item table (TEST-08). Inserted **before** Phase 9 because RULES-01 changes the config surface the GUI will expose.
+- [x] **Phase 8.5: v1.0 Closeout** *(INSERTED 2026-08-30)* - Finish the three requirements Phase 8 left Pending: title matching for window rules plus the config key rename (RULES-01), the two remaining remote-desktop targets (XDIS-05), and the interaction checklist as a per-item table (TEST-08). Inserted **before** Phase 9 because RULES-01 changes the config surface the GUI will expose.
 - [ ] **Phase 9: Config GUI + IPC** - GTK3 config tool, Unix domain socket IPC, live configuration changes, optional dependency
 
 ## Phase Details
@@ -305,7 +305,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 08.5-02-PLAN.md -- TightVNC and nxagent transcripts captured headlessly, interaction checklist as a table (blocking human checkpoint), deviations retired or restated, gates re-run (XDIS-05, TEST-08)
+- [x] 08.5-02-PLAN.md -- TightVNC and nxagent transcripts captured headlessly, interaction checklist as a table (blocking human checkpoint), deviations retired or restated, gates re-run (XDIS-05, TEST-08)
 
 **Key finding that shaped this phase (2026-08-30):** the handoff's decided shape moved X2Go to a v1.1 requirement on the reasoning that validating it cost a human session. Measurement falsified that — `x2goserver`/`nxagent` were already installed (dpkg stamp 2026-08-29 17:43), nxagent runs headless nested on an Xvfb, and it advertises SHAPE, RANDR and RENDER. The WM was run against it successfully. So both remaining targets are validated rather than amended away, and XDIS-05 is expected to be met **as written**. See `08.5-CONTEXT.md`, "What changed since the handoff".
 
@@ -344,5 +344,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 
 | 6. EWMH Compliance | 0/3 | Planned | - |
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
 | 8. Xrandr + VNC + Focus/Rules | 14/14 | Verified with gaps | 2026-08-30 |
-| 8.5 v1.0 Closeout *(INSERTED)* | 1/2 | In Progress | - |
+| 8.5 v1.0 Closeout *(INSERTED)* | 2/2 | Complete | 2026-08-30 |
 | 9. Config GUI + IPC | 0/3 | Not started | - |

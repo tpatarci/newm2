@@ -53,7 +53,7 @@
 - [x] **XDIS-02**: Graceful fallback when Xrandr unavailable (VNC)
 - [x] **XDIS-03**: Graceful fallback when Shape extension unavailable (rectangular frames)
 - [x] **XDIS-04**: Graceful fallback when XRender unavailable — the WM keeps running and keeps managing windows, with tab labels degraded or absent rather than the process exiting. Satisfied at the fontconfig-fallback level: the preferred family chain, a generic sans chain, an unrotated face, and finally no label, none of which may terminate the WM. (Amended in Phase 8, plan 08-06, D-14. The original wording promised a fallback to the X server's own bitmap fonts, which contradicts what is built: Phase 4 removed core X fonts and the bundled rotation library by decision, so reviving them here would undo that. Phase 8 also measured that libXft renders the rotated tab face through its core X11 glyph path when XRender is absent, so the sideways tab survives a RENDER-less server anyway.)
-- [ ] **XDIS-05**: Compatible with TigerVNC, TightVNC, XRDP, X2Go out of the box. **UNMET: two of four targets exercised.** TigerVNC and XRDP are validated with committed transcripts (SHAPE, RANDR and RENDER present on both). TightVNC and X2Go are recorded as accepted deviations D-8-TIGHTVNC and D-8-X2GO with reason, owner and follow-up — but a recorded deviation satisfies the checklist row that asks for deviations, not a requirement whose subject is four targets. X2Go is the weaker of the two: `nxagent` shares no ancestry with either tested server.
+- [x] **XDIS-05**: Compatible with TigerVNC, TightVNC, XRDP, X2Go out of the box. **MET, all four targets measured.** TigerVNC and XRDP were validated in Phase 8; plan 08.5-02 added the other two, both headlessly and both cheaply — TightVNC via `Xtightvnc` started directly, X2Go via `nxagent` nested on an Xvfb. Transcripts under `08.5-v1.0-closeout/evidence/{tightvnc,x2go-nxagent}/`, each with the WM's own startup banner agreeing with `xdpyinfo`. **The TightVNC result is the valuable one and it disproved its own deviation:** TightVNC 1.3.10 advertises 7 extensions — SHAPE but no RANDR and no RENDER — against TigerVNC's full set, so D-8-TIGHTVNC's "substantially overlapping extension set" rationale was wrong on exactly the two extensions it named. It reasoned from shared `Xvnc` ancestry to behaviour, and the behaviour disagreed. The WM ran there with both fallback ladders announcing themselves and no protocol errors — the first time the RENDER-less and RANDR-less paths have been exercised against a real server rather than the `WM2_FORCE_NO_*` levers. D-8-TIGHTVNC is retired; **D-8-X2GO is restated, not deleted**, because a nested nxagent settles the extension surface and says nothing about X2Go's NX compression proxy over a network link, which is what that deviation was actually about.
 
 ### Configuration
 
@@ -94,7 +94,7 @@
 - [x] **TEST-05**: Process-level integration tests launch the compiled `wm2-born-again` binary under Xvfb/Xephyr, drive real X11 clients, and verify root/client ICCCM + EWMH properties after create, map, unmap, remap, hide/unhide, fullscreen, maximize, and destroy
 - [x] **TEST-06**: Release signoff requires Debug, Release, and ASan/UBSan builds plus full `ctest --output-on-failure`; sanitizer findings block completion
 - [x] **TEST-07**: Environment preflight verifies pkg-config dependencies (`x11`, `xext`, `xft`, `fontconfig`), X11 tools, Xvfb/Xephyr availability, and fontconfig fallback resolution before behavioral claims are accepted
-- [ ] **TEST-08**: Runtime smoke evidence is captured for nested/headless X11 and supported remote desktop targets, including `xprop -root`, `xwininfo -root -tree`, interaction checklist results, and accepted deviations. **PARTIALLY MET.** Delivered by plan 08-14: the committed bundle has the nested/headless transcripts, `xprop -root` and `xwininfo -root -tree` for every exercised target, the build/test/sanitizer/static-analysis logs, screenshots, and both accepted deviations. Two named components are short: only 2 of 4 remote targets have transcripts (see XDIS-05), and the interaction-checklist *results* do not exist as per-item results — two manual passes were run and produced findings and a general verdict, not a filled-in table. Closing it is small: run the User Interaction Checklist once as a pass/fail table.
+- [x] **TEST-08**: Runtime smoke evidence is captured for nested/headless X11 and supported remote desktop targets, including `xprop -root`, `xwininfo -root -tree`, interaction checklist results, and accepted deviations. **MET, with a declared gap in the interaction table.** Both components Phase 8 left short are closed: four of four remote targets now have transcripts (XDIS-05), and the interaction checklist exists as a per-item table with tester name and date at `08.5-v1.0-closeout/evidence/INTERACTION-CHECKLIST.md`. It distinguishes three outcomes rather than collapsing them — 9 rows walked step by step, 7 covered by the operator's general verdict, 11 **deferred by explicit operator decision**, 4 n/a with reasons. The eleven deferred rows are the honest gap and they cluster: nine are gestures with no automated coverage either, which is the same blind spot that produced all three defects the Phase 8 manual pass found. Carried as the v1.1 backlog line "Gesture and input coverage", for which this table is the evidence. The bundle also gained `STRESS-RESULTS.md` (400 windows churned, RSS flat after warm-up, LSan clean) and per-target `SCOPE.md` files stating what each transcript does not establish.
 
 ## v2 Requirements
 
@@ -177,7 +177,7 @@
 | XDIS-02 | Phase 8 | Complete |
 | XDIS-03 | Phase 8 | Complete |
 | XDIS-04 | Phase 8 | Complete |
-| XDIS-05 | Phase 8 | Pending |
+| XDIS-05 | Phase 8.5 | Complete |
 | FOCUS-01 | Phase 8 | Complete |
 | FOCUS-02 | Phase 8 | Complete |
 | RULES-01 | Phase 8.5 | Complete |
@@ -194,7 +194,7 @@
 | TEST-05 | Phase 8 | Complete |
 | TEST-06 | Phase 8 | Complete |
 | TEST-07 | Phase 8 | Complete |
-| TEST-08 | Phase 8 | Pending |
+| TEST-08 | Phase 8.5 | Complete |
 
 **Coverage:**
 

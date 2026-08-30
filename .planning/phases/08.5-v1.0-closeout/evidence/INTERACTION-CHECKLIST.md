@@ -1,104 +1,121 @@
 # User Interaction Checklist — per-item results
 
-**Tester:** _(your name)_
-**Date:** _(YYYY-MM-DD)_
-**Target:** _(TigerVNC / XRDP / TightVNC / X2Go — whichever session you ran)_
-**Commit:** _(output of `git rev-parse --short HEAD`)_
-**Binary:** `build/release/wm2-born-again`
+**Tester:** tpatarci (operator)
+**Date:** 2026-08-30
+**Target:** TigerVNC `:11`, 1280x1024x24, loopback only
+**Commit:** `0244c06` · **Binary:** `build/release/wm2-born-again`
+**Session:** `scripts/start-validation-session.sh :11` — wm2 alone, no desktop
+environment, isolated `XDG_CONFIG_HOME`
 
-This closes the last open component of **TEST-08**. Phase 8 ran two manual
-passes; the second produced a general verdict ("all works like a charm"), which
-is not the same as a result for each row. This file is the per-item form.
+Closes the last open component of **TEST-08**. Phase 8 ran two manual passes and
+the second produced a general verdict; this is the per-item form.
 
-**How to fill it in:** put `PASS`, `FAIL` or `n/a` in the Result column, and use
-Notes for anything surprising. A row you did not get to is `n/a` with the reason
-— leaving it blank or guessing is worse than an honest gap, and the unticked
-rows in `COMPILED_CODE_BEHAVIOR_CHECKLIST.md` exist precisely because that
-discipline was kept last time.
+## How to read the Result column
 
-Launch the WM in the session with something you can open windows with:
+| Value | Means |
+|---|---|
+| **PASS** | Walked step by step with the operator in this session, one row at a time |
+| **PASS (verdict)** | Covered by the operator's own statement — *"all tested extensively. all good to go."* — but not walked as an individual row here |
+| **DEFERRED** | Explicitly declined by the operator: *"We are not running the seven. It is deferred."* |
+| **n/a** | Not applicable in this session, with the reason given |
 
-```
-DISPLAY=<your display> build/release/wm2-born-again --new-window-command=xclock
-```
-
-The root menu is **Button 1** (left). Button 3 (right) is circulate.
-
----
-
-## The rows
-
-| # | What to check | Result | Notes |
-|---|---|---|---|
-| 1 | Root left-click menu appears, fits at the screen edges, highlights the row under the pointer, and unmaps after a selection | | |
-| 2 | Root menu `New` launches the configured command (plain exec) | | |
-| 3 | Root menu `New` in shell mode — start with `--exec-using-shell --new-window-command="xmessage shell-ok"` | | |
-| 4 | Root menu hidden-client entries **restore** a hidden client (hide one with a tab-button click first) | | |
-| 5 | Root menu exit item appears only at the lower-right screen edge, and exits the WM | | |
-| 6 | Right-click circulation — zero clients | | |
-| 7 | Right-click circulation — one client | | |
-| 8 | Right-click circulation — several normal clients | | |
-| 9 | Right-click circulation — with a hidden client present | | |
-| 10 | Right-click circulation — with a transient/dialog present | | |
-| 11 | Clicking a tab or frame raises and focuses per the configured policy | | |
-| 12 | Dragging a tab moves the window, and the window keeps up with the pointer | | |
-| 13 | Dragging a window hard toward the top-left leaves its tab reachable (the `a5a105c` clamp) | | |
-| 14 | Dragging the resize handle resizes normally | | |
-| 15 | Constrained resize — horizontal-only and vertical-only paths | | |
-| 16 | Tab button **short** press hides the window | | |
-| 17 | Tab button **long** press (past `destroy-window-delay`) deletes it, and the cursor is restored | | |
-| 18 | The close button is comfortable to hit — the `43fb24b` widening (this is the one you reported) | | |
-| 19 | Middle-click on a tab toggles maximize | | |
-| 20 | Right-button circular gesture toggles fullscreen | | |
-| 21 | ...and a short or noisy gesture is ignored rather than firing | | |
-| 22 | Pointer grabs are released after every cancel path — press another button mid-drag, destroy a window mid-interaction | | |
-
-## Rendering and feel — by eye
-
-| # | What to check | Result | Notes |
-|---|---|---|---|
-| 23 | The sideways tab looks right — this is the non-negotiable visual identity | | |
-| 24 | The tab label tracks the window title and is legible | | |
-| 25 | A long title on a short window truncates without artifacts | | |
-| 26 | Configured colours apply (`--tab-background`, `--tab-foreground`) | | |
-| 27 | Frame thickness works at its minimum, default and maximum | | |
-| 28 | Latency is usable over this connection — menus, move, resize, long-press delete | | |
-
-## New in Phase 8.5 — window rules
-
-Write these to `~/.config/wm2-born-again/config` and restart the WM:
-
-```
-rule-match-title = clock
-rule-position    = 300,200
-```
-
-| # | What to check | Result | Notes |
-|---|---|---|---|
-| 29 | A window whose **title** matches opens at the rule's position | | |
-| 30 | Renaming that window afterwards does **not** move it (this is deliberate — D-8.5-03) | | |
-| 31 | `rule-match-instance = xclock` also works, and `rule-match-name` now warns as an unknown key | | |
+The three values are kept apart on purpose. Collapsing "walked" into "verdict"
+is exactly the blurring that left TEST-08 short after Phase 8, and the seven
+DEFERRED rows are the ones where **no automated test exists either** — so for
+those, nothing has ever exercised them but a human, and no human has.
 
 ---
 
-## Anything that failed
+## Interaction
 
-_(One line each: what you did, what happened, what you expected. A failure here
-is either fixed or recorded as an accepted deviation with an owner and a
-follow-up — the two requirement amendments in Phase 8 are the precedent for how
-to write one honestly.)_
+| # | Item | Result | Notes |
+|---|---|---|---|
+| 1 | Root menu appears, fits at screen edges, highlights correctly, unmaps after selection | **PASS** | Including the bottom-right edge case |
+| 2 | Root menu `New` launches the configured command (plain exec) | **PASS** | xclock appeared, framed |
+| 3 | Root menu `New` in shell mode | **n/a** | Needs a WM restart with `--exec-using-shell`; covered automatically by `[wm_config_runtime]`, which proves both settings with a filesystem witness |
+| 4 | Hidden-client entries restore through the **menu row** | **DEFERRED** | No automated coverage either |
+| 5 | Menu exit item at the lower-right edge, and exits | **DEFERRED** | No automated coverage either |
+| 6 | Circulation — zero clients | **DEFERRED** | Automated: `[wm_circulate]` covers zero-client |
+| 7 | Circulation — one client | **DEFERRED** | |
+| 8 | Circulation — several normal clients | **DEFERRED** | Exercised in the Phase 8 manual passes |
+| 9 | Circulation — with a hidden client | **DEFERRED** | No automated coverage either |
+| 10 | Circulation — with a transient/dialog | **DEFERRED** | No automated coverage either |
+| 11 | Tab/frame click raises and focuses per policy | **PASS (verdict)** | Automated: `[wm_focus]`, six cases |
+| 12 | Dragging a tab moves the window | **PASS** | Operator: *"name tab always remains available"* |
+| 13 | Dragged hard off the top-left, the tab stays reachable | **PASS** | The `a5a105c` clamp. Operator's own defect report from the Phase 8 pass — confirmed fixed |
+| 14 | Resize handle resizes normally | **PASS** | |
+| 15 | Constrained resize, horizontal-only and vertical-only | **PASS** | |
+| 16 | Tab button short press hides | **PASS** | |
+| 17 | Long press past `destroy-window-delay` deletes, cursor restored | **PASS** | **Produced a finding — see below** |
+| 18 | The close button is comfortable to hit | **PASS** | Operator: *"feel is just right"*. The `43fb24b` widening, 8×8 → the tab's whole top square. Operator's own defect report — confirmed fixed |
+| 19 | Middle-click a tab toggles maximize | **DEFERRED** | Gesture has no automated coverage; the *state* is covered by `[wm_fsmax]` |
+| 20 | Right-button circular gesture toggles fullscreen | **DEFERRED** | `detectFullscreenGesture()` has **zero** coverage of any kind |
+| 21 | ...and a short/noisy gesture is ignored | **DEFERRED** | As above |
+| 22 | Pointer grabs released after every cancel path | **DEFERRED** | No automated coverage as a property |
 
-## Anything that surprised you but was not a failure
+## Rendering and feel
 
-_(Worth capturing. The malformed-window-dressing report and the close-button
-complaint both started here, and one of them turned out to be a real defect that
-292 automated tests had missed.)_
+| # | Item | Result | Notes |
+|---|---|---|---|
+| 23 | The sideways tab looks right | **PASS** | Re-judged after the 08.5-02 restyle: *"It is OK. All works fine."* |
+| 24 | Tab label tracks the title and is legible | **PASS (verdict)** | Ubuntu Bold, rotated. Automated: `[wm_tablabel]` |
+| 25 | Long title on a short window truncates without artifacts | **PASS (verdict)** | Automated: `[wm_tablabel]` |
+| 26 | Configured colours apply | **PASS (verdict)** | Automated: `[wm_config_runtime]` |
+| 27 | Frame thickness at min, default, max | **PASS (verdict)** | Automated: `[wm_config_runtime]` |
+| 28 | Latency usable over this connection | **PASS (verdict)** | No number measured; subjective and unprompted |
+
+## Window rules (new in 08.5-01)
+
+| # | Item | Result | Notes |
+|---|---|---|---|
+| 29 | A title-matched window opens at the rule's position | **n/a** | Not walked with the operator. **Verified by the orchestrator** in a real TigerVNC session at `e390477`: `validation clock` framed at 300,200 (client at +324+208). Automated: `[wm_rules]` |
+| 30 | Renaming afterwards does **not** move it (D-8.5-03) | **n/a** | Automated: `[wm_rules]`, with a mutation that reddens if a re-fold is added |
+| 31 | `rule-match-instance` works; `rule-match-name` warns as unknown | **n/a** | Orchestrator-verified in session: `xeyes` mapped undecorated as a direct child of root. Automated: `[rules]` |
 
 ---
 
-**Note on `~/.xsession-errors`:** if a session misbehaves and you want help
-diagnosing it, paste the **window manager's own stderr**, not that file. It holds
-your environment in plaintext, including four live API keys you have decided not
-to rotate. That decision is recorded; the handling rule is what is left, and it
-is the reason this warning sits at the bottom of the file you will have open when
-something goes wrong.
+## Findings from this sitting
+
+**1. `destroy-window-delay` was far too long.** Operator: *"The close delay is way
+too long. It needs to be near the lowest (shortest) period applicable — this is
+software for adept people, not for novices."*
+
+It was **1500 ms**, upstream wm2's `CONFIG_DESTROY_WINDOW_DELAY` from 1997,
+carried over verbatim and never revisited. Now **400 ms** (`560f5b3`). Not the
+parser minimum of 1, because the failure is asymmetric: a false hide costs
+nothing, a false delete sends `WM_DELETE_WINDOW` and can lose work, and an
+ordinary click runs 50–150 ms.
+
+**2. The appearance was wrong for the operator.** Reported as disliking the
+colours and font, wanting a neutral Ubuntu face and a silver, lightly metallic
+look with black elements, plus discrete 3D on the borders and label area.
+Delivered in `0244c06`; re-judged **OK** in this session.
+
+**3. A correction to the record, unresolved.** On row 13 the operator noted that
+the orchestrator's account of the original off-screen-drag defect is *"somewhat
+inaccurate"*, while confirming the bug itself is gone. The specific inaccuracy
+was not identified, so **the code comment in `src/Client.cpp` and the
+`08-14-SUMMARY.md` narrative still carry the orchestrator's version.** Recorded
+here rather than quietly left, because a plausible-sounding but wrong story in a
+code comment is the kind of thing that outlives everyone who could correct it.
+
+## Coverage summary
+
+| | Count |
+|---|---|
+| Walked step by step (**PASS**) | 9 |
+| Operator verdict (**PASS (verdict)**) | 7 |
+| **DEFERRED** by operator decision | 11 |
+| **n/a** with reason | 4 |
+| **Total** | **31** |
+
+**The eleven deferred rows are the honest gap in this release**, and they are not
+randomly distributed: nine of them are *gestures* — circulation permutations,
+middle-click maximize, the circular fullscreen gesture, grab release — plus the
+menu's exit and hidden-client rows. That is the same blind spot that let all
+three of the Phase 8 manual pass's defects through: the suite asserts the
+**states** these controls produce and never the **reachability** of the controls
+themselves.
+
+The v1.1 backlog line "Gesture and input coverage" exists for exactly this, and
+this table is its evidence.

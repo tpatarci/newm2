@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.0
 current_phase: 08.5
 current_phase_name: v1.0-closeout
-status: executing
-stopped_at: 08.5-01 complete (RULES-01 met); ready to execute 08.5-02
+status: phase_complete
+stopped_at: Phase 8.5 complete -- RULES-01, XDIS-05 and TEST-08 all met; ready for Phase 9
 last_updated: "2026-08-30T05:20:00.000Z"
 last_activity: 2026-08-30
-last_activity_desc: 08.5-01 complete -- RULES-01 met as written; 312/312 in all three trees
+last_activity_desc: Phase 8.5 complete -- three requirements closed, four remote targets measured, appearance restyled
 state_head: 0a356a788ce6f5e63d6b812beb5cf9c14a003536
 progress:
   total_phases: 9
   completed_phases: 4
-  total_plans: 36
-  completed_plans: 36
+  total_plans: 38
+  completed_plans: 38
 milestone_name: milestone
 ---
 
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 ## Current Position
 
-Phase: 08.5 (v1.0-closeout, INSERTED) — EXECUTING
-Plan: 1 of 2
-Status: 08.5-01 complete; ready to execute 08.5-02
+Phase: 08.5 (v1.0-closeout, INSERTED) — COMPLETE
+Plan: 2 of 2
+Status: All three target requirements met. Next: Phase 9 (Config GUI + IPC)
 Last activity: 2026-08-30 — Phase 8.5 drafted
 
 Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).
