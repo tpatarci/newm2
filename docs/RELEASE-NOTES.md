@@ -127,13 +127,13 @@ frame". They live in the same `key = value` configuration file as everything els
 — there is no second file format and no numbered-key scheme to keep in step.
 
 ```
-rule-match-class = Firefox
-rule-match-name  = navigator
-rule-position    = 100,100
-rule-size        = 800x600
+rule-match-class    = Firefox
+rule-match-instance = navigator
+rule-position       = 100,100
+rule-size           = 800x600
 
-rule-match-type  = dialog
-rule-no-decorate = true
+rule-match-type     = dialog
+rule-no-decorate    = true
 ```
 
 ### Where a rule begins
@@ -154,7 +154,8 @@ rule does not end it.
 | Key | What it matches |
 |---|---|
 | `rule-match-class` | The `WM_CLASS` hint. The forgiving one: it is tested against **both** WM_CLASS fields, so "Firefox" works whether that is the instance name or the class name. |
-| `rule-match-name` | The `WM_CLASS` **instance name** only. |
+| `rule-match-instance` | The `WM_CLASS` **instance name** only. The precise one. |
+| `rule-match-title` | The window's **title** — the text the application puts in its own title bar, and the text this window manager paints down the sideways tab. |
 | `rule-match-type` | An EWMH window type. Exactly four are accepted: `normal`, `dock`, `dialog`, `notification`. |
 | `rule-match-mode` | How the text matches — exact or substring. |
 
@@ -162,12 +163,23 @@ Criteria combine with AND: every one you set must match. A rule with no criteria
 at all matches **nothing**, so a typo that drops your only match line disables
 that rule rather than applying it to every window on the screen.
 
-**`rule-match-name` does not match the window title.** Despite the name it
-matches the WM_CLASS instance name, the same string `rule-match-class` tests.
-Matching on the title (`WM_NAME`) is **not implemented** — there is no way to
-write it today. This is tracked as an unmet requirement rather than described as
-working; if you need it, say so, because the ledger says it is missing and that
-is the honest position.
+**A title rule looks at the title the window has when it opens.** Rules are
+applied once, at the moment a window appears, and are not re-checked afterwards.
+So a rule keyed on a title the application only sets later will not fire — and,
+just as deliberately, renaming a document will not make its window jump to the
+position some rule specifies. That second half is the reason for the first: a
+window that re-positioned itself every time its title changed would be unusable
+in a text editor or a browser. Most window managers resolve it the same way.
+
+If you want to catch an application whose title changes, match on its class
+instead — `rule-match-class` and `rule-match-instance` read the `WM_CLASS` hint,
+which applications set once and rarely change.
+
+> **If you used `rule-match-name` before v1.0**, rename it to
+> `rule-match-instance`. It compared the `WM_CLASS` instance name while its name
+> said `WM_NAME`, which was confusing enough to have put a wrong sentence in this
+> very document. The old spelling is gone rather than kept as an alias, so a
+> configuration still using it will warn about an unknown key on startup.
 
 **Only those four window types are accepted.** `utility`, `splash` and `toolbar`
 are *not*: the window manager collapses them into `normal` internally, so a rule

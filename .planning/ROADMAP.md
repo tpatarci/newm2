@@ -301,7 +301,7 @@ Plans:
 
 **Wave 1**
 
-- [ ] 08.5-01-PLAN.md -- Title matching: EWMH-first title read, `rule-match-title`, the `rule-match-instance` rename, process-level proof, release-notes and ledger correction (RULES-01)
+- [x] 08.5-01-PLAN.md -- Title matching: EWMH-first title read, `rule-match-title`, the `rule-match-instance` rename, process-level proof, release-notes and ledger correction (RULES-01)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -344,5 +344,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 
 | 6. EWMH Compliance | 0/3 | Planned | - |
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
 | 8. Xrandr + VNC + Focus/Rules | 14/14 | Verified with gaps | 2026-08-30 |
-| 8.5 v1.0 Closeout *(INSERTED)* | 0/2 | Planned | - |
+| 8.5 v1.0 Closeout *(INSERTED)* | 1/2 | In Progress | - |
 | 9. Config GUI + IPC | 0/3 | Not started | - |
