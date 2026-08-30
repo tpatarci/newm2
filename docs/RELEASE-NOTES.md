@@ -311,7 +311,7 @@ The stated target set for this project is TigerVNC, TightVNC, XRDP and X2Go.
 | **TigerVNC** | **Validated.** Real session, human at the client. SHAPE, RANDR and RENDER all present; capability transcript, root properties and window tree committed under the phase evidence bundle. |
 | **XRDP** | **Validated.** As above, same extension result. |
 | **X2Go** | **Not tested. An accepted deviation with a recorded reason** — and a weaker one than TightVNC's. See below. |
-| **TightVNC** | **Not tested. Deliberately, with a recorded reason.** See below. |
+| **TightVNC** | **Validated.** Headless capability capture against `TightVNC 1.3.10` (from `tightvncserver 1:1.3.10-5`), started directly, with no viewer attached and no network-exposing flag. It advertises seven extensions in total — SHAPE present, RANDR absent, RENDER absent — which makes it the only server in this project's evidence that genuinely lacks the extensions the fallbacks were built for. The window manager started on it, both fallback ladders announced themselves on stderr, a client was framed, and no X protocol error was logged. Transcript committed under `.planning/phases/08.5-v1.0-closeout/evidence/tightvnc/`, which records beside it what the capture does not settle. See below. |
 
 Two of the four stated targets are exercised. That is the honest count, and the
 project requirement covering "compatible with all four out of the box" is held
