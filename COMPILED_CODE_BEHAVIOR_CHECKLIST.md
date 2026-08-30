@@ -593,12 +593,20 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
       `evidence/gates/preflight-versions.log`.
 - [ ] Verify under Xvfb, Xephyr, one VNC server, and one XRDP session if those are
       supported deployment targets.
-      **PARTIAL — three of four, and X2Go is a named target that was NOT done.**
-      Xvfb (the whole automated suite), Xephyr (`evidence/local-xephyr/`),
-      TigerVNC and XRDP are all exercised with committed transcripts. X2Go has no
-      session and no transcript: `x2goserver` was never installed. The operator
-      declared the manual pass sufficient, which is a decision to stop, not
-      evidence that X2Go works. See D-8-X2GO below.
+      **PARTIAL, and the shortfall is narrower than it was.** Xvfb (the whole
+      automated suite), Xephyr (`evidence/local-xephyr/`), TigerVNC and XRDP are
+      exercised with committed transcripts from Phase 8. Plan 08.5-02 added a
+      headless `nxagent` capture — X2Go's own X server, run nested on an Xvfb:
+      `08.5-v1.0-closeout/evidence/x2go-nxagent/`. SHAPE, RANDR and RENDER are all
+      present and the WM frames clients on it.
+      **CORRECTION to what this row said through Phase 8:** it stated that
+      `x2goserver` "was never installed". That was false. `/var/log/dpkg.log`
+      stamps `x2goserver:amd64 4.1.0.3-5` at **2026-08-29 17:43**, during Phase
+      8's own manual-pass window. The package was present and the session was
+      simply not run — a different and less flattering fact than the one that was
+      written down.
+      What remains open is X2Go over a real connection, with its NX compression
+      proxy in the path. See `x2go-nxagent/SCOPE.md` and D-8-X2GO below.
 - [x] Verify a low-resource run: 512 MB RAM target, multiple simple windows,
       repeated open/close cycles, and idle CPU near zero.
       DONE (plan 08-14): `[wm_resource_budget]` enforces it rather than reporting
@@ -692,30 +700,46 @@ exercised.
 
 ### D-8-X2GO — X2Go is not validated for this release
 
-**What is not done.** `PROJECT.md` names X2Go as a remote-desktop target. It has
-**no session, no transcript and no interaction record**. `x2goserver` was never
-installed on the validation host. It is untested.
+**RESTATED 2026-08-30 by plan 08.5-02, on evidence, and narrowed.** The previous
+text is superseded rather than edited, because two of the things it said are
+false and the record of that is worth more than a clean paragraph.
 
-**Rationale.** This is a weaker position than D-8-TIGHTVNC, and it should not be
-read as the same kind of gap. TightVNC at least has a close relative under test:
-TigerVNC shares its `Xvnc` ancestry, so a TigerVNC transcript is genuine evidence
-about it. X2Go has no such proxy here. Its X server is `nxagent`, a different
-codebase from both `Xvnc` and `xrdp`'s backends, with its own compression proxy
-in front — the very layer most likely to differ on the things this phase cares
-about, namely the Shape and RANDR extension surface and the RENDER path the tab
-font depends on. Nothing in the TigerVNC or XRDP results transfers to it.
+**Two corrections to the Phase 8 text.** It said `x2goserver` "was never
+installed on the validation host": `/var/log/dpkg.log` stamps
+`x2goserver:amd64 4.1.0.3-5` at **2026-08-29 17:43**, during Phase 8's own
+manual-pass window. And it said "nothing in the TigerVNC or XRDP results
+transfers to it" on the grounds that `nxagent`'s extension surface was unknown.
+It is known now, and it is the same surface: SHAPE, RANDR and RENDER all present,
+23 extensions, measured. The deviation was written more pessimistically than the
+facts warranted, in a direction that made skipping the work look better justified
+than it was.
 
-The operator's decision was "I am happy with the testing as it is. I declare it
-sufficient for now." That is a decision to stop testing, which is theirs to make.
-It is not evidence that X2Go works, and it must never be recorded as one.
+**What is now done.** `08.5-v1.0-closeout/evidence/x2go-nxagent/` — a headless
+capture of `nxagent 3.5.99.26` running nested on an Xvfb, with the window manager
+framing a client on it. Extension matrix, root properties, window tree, and the
+WM's own startup banner agreeing with `xdpyinfo`. It cost about two minutes and
+no human, which is the other thing the Phase 8 reasoning got wrong: the cost of
+this was assumed, not measured.
+
+**What is still not done, and this is the real deviation.** X2Go does not merely
+run `nxagent`. It starts it through `x2gostartagent` with an **NX compression
+proxy** between agent and client over SSH — and that proxy is the layer most
+likely to differ on the things this project depends on. Untested: menus and
+drag-move under compression and latency, the long-press delete timing, resize on
+reconnect at a different geometry, and what the proxy forwards for SHAPE. Nothing
+here was judged by eye, either: no screenshot, no verdict on the sideways tab.
+
+See `x2go-nxagent/SCOPE.md`, which travels with the transcript for the same
+reason this paragraph exists — three green files in a directory named `x2go`
+read, at a glance, like "X2Go: tested".
 
 **Owner:** whoever next stands up a remote-desktop validation session — the same
 role that runs the User Interaction Checklist for a release.
 
-**Follow-up:** `apt install x2goserver`, then
-`scripts/capture-display-capabilities.sh <display> x2go` and the interaction
-checklist. Add the transcript to the evidence bundle at the next signoff and
-either delete this entry or restate it with a fresh reason.
+**Follow-up:** connect a real X2Go client to a session on this host, run the
+interaction checklist over it, and either delete this entry or restate it again.
+The install and the capability capture are already done, so what remains is one
+session with a person in it.
 
 **What a user should expect meanwhile:** X2Go is unexercised, not unsupported. If
 the sideways tab renders wrongly or the frame is unshaped under `nxagent`, that

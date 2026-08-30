@@ -1,0 +1,18 @@
+# wm2-born-again startup banner -- x2go-nxagent -- :92 -- 2026-08-30T07:47:41Z
+# commit f5bbea7
+# nxagent 3.5.99.26
+#
+# The WM's own view of the server it is running on. Compare against the
+# EXTENSION lines in capabilities.txt: the two are produced by different
+# code (the WM's capability probes vs. xdpyinfo) and must agree.
+
+
+wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+  Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+  Copying and redistribution encouraged.  No warranty.
+
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients only on menu.
+
+  Shape extension available.
+  Xrandr extension available.
+  XRender extension available.

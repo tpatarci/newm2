@@ -92,7 +92,7 @@ Each directory holds `capabilities.txt` (the extension matrix), plus
 | `tigervnc/` | **exercised.** SHAPE, RANDR, RENDER all present |
 | `local-xephyr/` | **exercised.** The nested-server runtime smoke transcript |
 | `x11vnc-xvfb/` | capability capture only, used to validate the capture script |
-| — | **X2Go: absent. Not a pass — see deviation D-8-X2GO.** `x2goserver` was never installed. Its `nxagent` server shares no ancestry with the two that were tested, so nothing here transfers to it. |
+| — | **X2Go: absent from THIS bundle.** Captured later, in `08.5-v1.0-closeout/evidence/x2go-nxagent/` (headless `nxagent`, SHAPE/RANDR/RENDER all present). **Correction:** this row previously said `x2goserver` "was never installed" — false; `/var/log/dpkg.log` stamps it at 2026-08-29 17:43, during this phase's own manual-pass window. It was installed and the session was not run. See D-8-X2GO as restated. |
 | — | **TightVNC: absent — see deviation D-8-TIGHTVNC.** TigerVNC is a genuine proxy for it; X2Go has no such proxy. |
 
 Both deviations are recorded in full, with reason, owner and follow-up, at the
