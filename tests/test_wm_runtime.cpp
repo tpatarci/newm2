@@ -1469,8 +1469,14 @@ TEST_CASE("exec-using-shell gates whether a command with arguments and "
     // The command carries BOTH an argument and a shell metacharacter, so the two
     // halves separate "arguments require shell mode" (functional) from "with
     // shell mode off nothing is evaluated by a shell" (threat T-8-SHELL).
+    //
+    // The window manager's stderr is written out through `stderrOut` rather
+    // than annotated inside the lambda: an INFO declared here dies at the
+    // `return` below, so the three positive-control assertions in the
+    // enclosing scope reported with no `with message:` block. Measured against
+    // a deliberate break in 08.5-06: absent before this hoist, present after.
     auto run = [](bool shellEnabled, const char* tag, bool& sentinelSeen,
-                  Window& spawnedOut) {
+                  Window& spawnedOut, std::string& stderrOut) {
         const std::string sentinel = sentinelPath(tag);
         ::unlink(sentinel.c_str());
 
@@ -1519,14 +1525,19 @@ TEST_CASE("exec-using-shell gates whether a command with arguments and "
         std::string instance;
         if (spawnedOut != None) instance = instanceOf(d, spawnedOut);
         ::unlink(sentinel.c_str());
+        stderrOut = fixture.wmStderr();
         return instance;
     };
 
     bool shellSentinel = false, plainSentinel = false;
     Window shellWindow = None, plainWindow = None;
+    std::string shellErrs, plainErrs;
 
-    const std::string shellInstance = run(true, "on", shellSentinel, shellWindow);
-    const std::string plainInstance = run(false, "off", plainSentinel, plainWindow);
+    const std::string shellInstance = run(true, "on", shellSentinel, shellWindow, shellErrs);
+    const std::string plainInstance = run(false, "off", plainSentinel, plainWindow, plainErrs);
+
+    INFO("wm stderr (shell mode on):\n" << shellErrs);
+    INFO("wm stderr (shell mode off):\n" << plainErrs);
 
     // Positive control: with shell mode ON the argument took effect (the window
     // carries the instance name the argument set) and the metacharacter really

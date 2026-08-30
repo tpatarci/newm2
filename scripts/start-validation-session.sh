@@ -117,6 +117,8 @@ manager's own stderr:
 
     cat ~/.vnc/\$(hostname)$DISPLAY_NUM.log
 
-NOT ~/.xsession-errors -- that file holds your environment in plaintext,
-including the four API keys you have chosen not to rotate.
+WARNING: do NOT paste ~/.xsession-errors. On many setups that file captures the
+session's whole environment in plaintext, so it can carry API keys, tokens and
+other credentials. Never paste it into an issue, a chat or a pull request, and
+never copy any part of it into this repository.
 EOF

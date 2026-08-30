@@ -93,9 +93,12 @@ Both case bodies are **untouched since Phase 8's gate commit `c61cb4b`**:
 `tests/test_wm_runtime.cpp` did change after `c61cb4b`, in `e5e5c11` (08.5-01
 title read) and `0244c06` (08.5-02 palette), but neither touched case 198.
 
-Both failing cases are the timing-sensitive interactive class `08.5-CONTEXT.md`
-already flags — a spawn-await deadline and an interactive drag. A defect in the
-exec path cannot express itself as a geometry drag failure, which is why the
+Both failing cases are the timing-sensitive class `08.5-CONTEXT.md` already
+flags — a spawn-await deadline and a frame-await deadline. Case #93 did **not**
+fail in its drag; it failed in `mapClientAndAwaitFrame()` before its first
+click, and the description of it as an interactive-drag failure is corrected in
+the appended section "Correction (2026-08-31, plan 08.5-06)" below. A defect in
+the exec path cannot express itself as a geometry failure, which is why the
 different-case-each-time pattern reads as a shared load-dependent timing
 substrate rather than as a defect in either case.
 
@@ -116,3 +119,66 @@ substrate rather than as a defect in either case.
 - These are ctest transcripts, not display transcripts: they contain no window
   tree, no window titles and no host name. The absolute repository path appears,
   as it does in the Phase 8 bundle's own committed logs.
+
+## Correction (2026-08-31, plan 08.5-06)
+
+This section corrects one interpretive description in the body above. **No
+measurement in this directory changes.** The per-run table, its column names,
+the rates, the isolation figures, the `[wm_menureopen]` finding and the
+T-8-SHELL finding all stand exactly as recorded, and no log file has been
+renamed, edited or removed.
+
+### What case #93 actually did
+
+Read from `build-all-debug-run2.log` — the committed log itself, not from any
+summary:
+
+- **Case:** `#93 — A window dragged off the top-left keeps its tab on screen`,
+  `tests/test_wm_geometry.cpp:1474`, tag `[wm_geometry]`.
+- **Failing line:** `tests/test_wm_geometry.cpp:1492`.
+- **Assertion:** `REQUIRE( frame != 0L )`, with expansion `0 != 0`.
+- **Assertion tally:** `test cases: 1 | 1 failed` / `assertions: 5 | 4 passed |
+  1 failed`.
+- **Elapsed:** `***Failed 8.35 sec`.
+
+`frame` is the return value of `mapClientAndAwaitFrame()`, called one line
+earlier at `tests/test_wm_geometry.cpp:1489`. That helper returns `None` on
+exactly one path: its reparent poll — `XQueryTree` until the client's parent is
+neither `None` nor the root — expiring on its **8000 ms** deadline at
+`tests/test_wm_geometry.cpp:195`. The 8.35 s elapsed time is that deadline plus
+fixture startup, which is what a `0 != 0` expansion at that line means.
+
+The case's `XTestDriver` is not even constructed until
+`tests/test_wm_geometry.cpp:1499`, seven lines *after* the assertion that
+failed. **No click, no press, no drag and no pointer motion had been issued when
+this failure occurred.** The window manager had simply not reparented a mapped
+client within eight seconds.
+
+### The two consequences
+
+1. **Both observed failures are the same shape.** Case #198 is "the window
+   manager did not spawn the program we asked for, within the deadline"; case
+   #93 is "the window manager did not frame the client we mapped, within the
+   deadline". Neither is an assertion about window-management *state* that came
+   out wrong. Both are the window manager failing to act on a request inside a
+   test-side deadline. That makes the two failures considerably more alike than
+   the halt record treated them — it read them as one spawn problem and one
+   input problem, and they are two instances of the same "did not act" shape.
+
+2. **`dragSettle()`'s 90 ms is not implicated in either failure.** Case #93
+   never reached a drag, so no inter-event spacing constant participated in it,
+   and case #198 spawns through the root menu and never calls `dragSettle()` at
+   all. A fix that widened drag spacing — or any other `constexpr int k*Ms` —
+   would therefore be chasing a symptom that was never present in either
+   observation. The substrate to look for is on the window-manager side of the
+   boundary, not in the harness's input timing.
+
+### On `08.5-04-SUMMARY.md`
+
+`08.5-04-SUMMARY.md` carries the same earlier "interactive drag" description.
+It is **deliberately left unmodified**, and `git diff --stat` over it is empty
+for plan 08.5-06. A summary is a historical record of what was believed at the
+moment it was written; rewriting it would destroy the record of the belief and
+leave no trace that the correction ever happened. The correction lives here,
+beside the evidence it was read from, and this section is where a later reader
+is pointed.
