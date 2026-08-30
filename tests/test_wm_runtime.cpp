@@ -2479,6 +2479,334 @@ TEST_CASE("A long title on a short window is shortened to fit its tab, still leg
 
 
 // ===========================================================================
+// [wm_tablabel] -- the title the WM reads is the one the client advertises
+//
+// Plan 08.5-01, D-8.5-02. Until that plan, Client::manage() read the window
+// title with getProperty(XA_WM_NAME) and NOTHING anywhere read _NET_WM_NAME for
+// a client: Atoms::net_wmName was interned and used solely to name the window
+// manager's own check window (src/Manager.cpp).
+//
+// That is not a cosmetic gap. _NET_WM_NAME is UTF-8 by specification and
+// WM_NAME has no reliable encoding, so the property the WM was ignoring is the
+// only one that can carry most of the world's window titles. And once RULES-01
+// matches on the title, reading the wrong property means a rule the user wrote
+// correctly silently never fires -- the exact failure class Phase 8 spent
+// fourteen plans removing from this codebase.
+//
+// The observable is the same one deferred item 11 established above: the
+// sideways tab's LENGTH tracks the title, and the label's ink is on the screen.
+// Nothing publishes a client's title back out of the WM, so the tab is the only
+// place its reading of the title becomes visible from outside the process.
+// ===========================================================================
+
+namespace {
+
+// Set _NET_WM_NAME as a real EWMH client would: UTF8_STRING, format 8.
+void setNetWmName(Display* d, Window win, const char* utf8)
+{
+    Atom netWmName = XInternAtom(d, "_NET_WM_NAME", False);
+    Atom utf8String = XInternAtom(d, "UTF8_STRING", False);
+    XChangeProperty(d, win, netWmName, utf8String, 8, PropModeReplace,
+                    reinterpret_cast<const unsigned char*>(utf8),
+                    static_cast<int>(std::strlen(utf8)));
+    XSync(d, False);
+}
+
+void clearNetWmName(Display* d, Window win)
+{
+    XDeleteProperty(d, win, XInternAtom(d, "_NET_WM_NAME", False));
+    XSync(d, False);
+}
+
+// The _NET_WM_NAME counterpart of observeTabFor(): retitle through the EWMH
+// property instead of WM_NAME, then read back the same two numbers.
+TabObservation observeTabForNetName(Display* d, Window frame, Window client,
+                                    unsigned long inkPixel, const char* title)
+{
+    TabObservation obs;
+
+    setNetWmName(d, client, title);
+    settleWm(d);
+
+    const Window tab = findFrameChild(d, frame, client, false);
+    if (tab == None) return obs;
+
+    Rect local;
+    if (!localRect(d, tab, local)) return obs;
+    obs.tabLength = local.h;
+
+    Rect abs;
+    if (!serverRect(d, tab, abs)) return obs;
+    obs.inkPixels = countOf(captureRoot(d, abs), inkPixel);
+    return obs;
+}
+
+// 35 Cyrillic characters -- the same character COUNT as kLongTitle, two bytes
+// each in UTF-8, so 70 bytes. That pair of numbers is what makes the case
+// discriminating: a reader that stops at the first byte with the high bit set
+// sizes the tab for zero characters, and one that treats the bytes as Latin-1
+// sizes it for seventy.
+//
+// CYRILLIC AND NOT CJK, DELIBERATELY, and the reason is worth recording because
+// the first draft of this case used CJK and failed for a reason that had nothing
+// to do with what it was testing. The WM resolves its tab font through
+// fontconfig to a single face -- DejaVu Sans on this host -- and Xft draws
+// NOTHING for a codepoint that face lacks. Noto's CJK fonts are installed here,
+// but wm2 does no per-glyph font fallback, so a CJK title measures correctly
+// (397 px, MEASURED) and renders zero pixels of label. That is a real gap in
+// VISL-03's promise and it is recorded as deferred item 18; it is not this
+// case's subject. DejaVu Sans covers Cyrillic, Greek and accented Latin, so
+// those exercise the multi-byte path against glyphs that exist.
+const char* const kLongUtf8Title =
+    "ЗаголовокОкнаПроверкаДлинныйТексток";
+
+}  // namespace
+
+TEST_CASE("A title advertised only through _NET_WM_NAME reaches the sideways tab",
+          "[wm_tablabel]")
+{
+    WmFixture fixture(cleanFixture({"--tab-background=blue",
+                                    "--tab-foreground=red"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const unsigned long ink = namedPixel(d, "red");
+    REQUIRE(ink != ~0UL);
+
+    // Mapped with NO title of any kind, so the WM falls back to its default
+    // label. This is also behaviour 5 of the plan's task list: no title, no
+    // icon name, no crash, a default label.
+    Window client = None;
+    const Window frame =
+        mapClientAndAwaitFrame(d, 40, 40, 240, kTallWindowH, client, nullptr);
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    const Window tab0 = findFrameChild(d, frame, client, false);
+    REQUIRE(tab0 != None);
+    Rect untitled;
+    REQUIRE(localRect(d, tab0, untitled));
+
+    // Now advertise a long title through the EWMH property ONLY. WM_NAME is
+    // never set on this window.
+    const TabObservation netObs =
+        observeTabForNetName(d, frame, client, ink, kLongTitle);
+
+    std::printf("[wm2 tablabel] untitled tab length %4d px\n"
+                "[wm2 tablabel] _NET_WM_NAME (%zu chars) tab length %4d px, ink %5ld px\n",
+                untitled.h, std::strlen(kLongTitle),
+                netObs.tabLength, netObs.inkPixels);
+    std::fflush(stdout);
+
+    REQUIRE(netObs.tabLength > 0);
+
+    // 1. THE TAB GREW. A WM that reads only WM_NAME sees no title at all here
+    //    and leaves the tab at its default-label length.
+    INFO("untitled " << untitled.h << " -> _NET_WM_NAME " << netObs.tabLength);
+    CHECK(netObs.tabLength > untitled.h * 2);
+
+    // 2. AND THE LABEL IS ON THE SCREEN. Growing the tab without drawing into
+    //    it would satisfy (1) and leave the user with a blank strip.
+    INFO("label ink " << netObs.inkPixels << " px");
+    CHECK(netObs.inkPixels > 0);
+
+    const std::string errs = fixture.wmStderr();
+    INFO("WM stderr:\n" << errs);
+    CHECK_FALSE(contains(errs, "BadMatch"));
+    CHECK_FALSE(contains(errs, "BadValue"));
+    CHECK_FALSE(contains(errs, "BadDrawable"));
+    CHECK_FALSE(contains(errs, "RenderBadPicture"));
+}
+
+TEST_CASE("_NET_WM_NAME wins over WM_NAME when a client sets both",
+          "[wm_tablabel]")
+{
+    // The precedence is EWMH-then-ICCCM, and it is not arbitrary: a client that
+    // sets both is almost always a toolkit publishing the real title in UTF-8
+    // and a lossy transliteration in the legacy property for the benefit of
+    // window managers from the 1990s. This one is from the 1990s and should
+    // still prefer the good one.
+    WmFixture fixture(cleanFixture({"--tab-background=blue",
+                                    "--tab-foreground=red"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const unsigned long ink = namedPixel(d, "red");
+    REQUIRE(ink != ~0UL);
+
+    // WM_NAME short, _NET_WM_NAME long. A WM reading the legacy property gets
+    // the short one and produces a stub tab.
+    Window client = None;
+    const Window frame =
+        mapClientAndAwaitFrame(d, 40, 40, 240, kTallWindowH, client, kShortTitle);
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    const TabObservation legacyOnly =
+        observeTabFor(d, frame, client, ink, kShortTitle);
+
+    const TabObservation bothSet =
+        observeTabForNetName(d, frame, client, ink, kLongTitle);
+
+    std::printf("[wm2 tablabel] WM_NAME=%s only          tab length %4d px\n"
+                "[wm2 tablabel] + _NET_WM_NAME long      tab length %4d px, ink %5ld px\n",
+                kShortTitle, legacyOnly.tabLength,
+                bothSet.tabLength, bothSet.inkPixels);
+    std::fflush(stdout);
+
+    REQUIRE(legacyOnly.tabLength > 0);
+    REQUIRE(bothSet.tabLength > 0);
+
+    INFO("WM_NAME-only " << legacyOnly.tabLength
+         << " -> both set " << bothSet.tabLength);
+    CHECK(bothSet.tabLength > legacyOnly.tabLength * 2);
+    CHECK(bothSet.inkPixels > legacyOnly.inkPixels);
+
+    // And the reverse direction, which is the half a naive "prefer the EWMH
+    // property" implementation gets wrong: DELETING _NET_WM_NAME must fall back
+    // to WM_NAME rather than leaving the stale EWMH title on the tab.
+    clearNetWmName(d, client);
+    settleWm(d);
+
+    const Window tab = findFrameChild(d, frame, client, false);
+    REQUIRE(tab != None);
+    Rect afterDelete;
+    REQUIRE(localRect(d, tab, afterDelete));
+
+    std::printf("[wm2 tablabel] _NET_WM_NAME deleted     tab length %4d px\n",
+                afterDelete.h);
+    std::fflush(stdout);
+
+    INFO("after deleting _NET_WM_NAME: " << afterDelete.h
+         << ", WM_NAME-only baseline was " << legacyOnly.tabLength);
+    CHECK(afterDelete.h < bothSet.tabLength);
+}
+
+TEST_CASE("A WM_NAME-only client is unaffected by the EWMH title read",
+          "[wm_tablabel]")
+{
+    // THE REGRESSION GUARD. This case passed before plan 08.5-01 and must pass
+    // after it: preferring _NET_WM_NAME must not disturb the large population of
+    // clients -- every plain Xlib program, every one of this suite's own test
+    // clients -- that set only the legacy property.
+    WmFixture fixture(cleanFixture({"--tab-background=blue",
+                                    "--tab-foreground=red"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const unsigned long ink = namedPixel(d, "red");
+    REQUIRE(ink != ~0UL);
+
+    Window client = None;
+    const Window frame =
+        mapClientAndAwaitFrame(d, 40, 40, 240, kTallWindowH, client, kShortTitle);
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    const TabObservation shortObs = observeTabFor(d, frame, client, ink, kShortTitle);
+    const TabObservation longObs  = observeTabFor(d, frame, client, ink, kLongTitle);
+
+    REQUIRE(shortObs.tabLength > 0);
+    REQUIRE(longObs.tabLength > 0);
+    REQUIRE(shortObs.inkPixels > 0);
+
+    INFO("WM_NAME tab length " << shortObs.tabLength << " -> " << longObs.tabLength);
+    CHECK(longObs.tabLength > shortObs.tabLength * 2);
+    CHECK(longObs.inkPixels > shortObs.inkPixels);
+}
+
+TEST_CASE("A UTF-8 title is not truncated at its first multi-byte character",
+          "[wm_tablabel]")
+{
+    // WHAT THIS PROVES AND WHAT IT DOES NOT. Nothing publishes a client's title
+    // back out of the window manager, so this cannot assert that the glyphs are
+    // the RIGHT glyphs -- mojibake and correct rendering both make ink. What it
+    // can prove, and what the failure mode actually looks like, is LENGTH: a
+    // reader that stops at the first byte with the high bit set produces a tab
+    // sized for zero characters, and one that treats UTF-8 as Latin-1 produces a
+    // tab sized for three times too many. Both are caught by bounding the result
+    // against the same character count in ASCII.
+    WmFixture fixture(cleanFixture({"--tab-background=blue",
+                                    "--tab-foreground=red"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const unsigned long ink = namedPixel(d, "red");
+    REQUIRE(ink != ~0UL);
+
+    Window client = None;
+    const Window frame =
+        mapClientAndAwaitFrame(d, 40, 40, 240, kTallWindowH, client, nullptr);
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    // THE UNTITLED BASELINE IS NOT OPTIONAL. Both observations below set only
+    // _NET_WM_NAME, so on a WM that ignores that property entirely they come
+    // back IDENTICAL -- and every relative assertion in this case then holds
+    // trivially on two default-label tabs. Measured: this case passed vacuously
+    // against the unfixed binary until this baseline was added.
+    const Window tab0 = findFrameChild(d, frame, client, false);
+    REQUIRE(tab0 != None);
+    Rect untitled;
+    REQUIRE(localRect(d, tab0, untitled));
+
+    const TabObservation asciiObs =
+        observeTabForNetName(d, frame, client, ink, kLongTitle);
+    const TabObservation utf8Obs =
+        observeTabForNetName(d, frame, client, ink, kLongUtf8Title);
+
+    // 0. VACUITY GUARD. Both titles must have actually reached the tab.
+    INFO("untitled baseline " << untitled.h
+         << ", ascii " << asciiObs.tabLength
+         << ", utf8 " << utf8Obs.tabLength);
+    REQUIRE(asciiObs.tabLength > untitled.h * 2);
+    REQUIRE(utf8Obs.tabLength > untitled.h * 2);
+
+    std::printf("[wm2 tablabel] ASCII    (%zu chars, %zu bytes) tab %4d px, ink %5ld px\n"
+                "[wm2 tablabel] Cyrillic (35 chars, %zu bytes) tab %4d px, ink %5ld px\n",
+                std::strlen(kLongTitle), std::strlen(kLongTitle),
+                asciiObs.tabLength, asciiObs.inkPixels,
+                std::strlen(kLongUtf8Title),
+                utf8Obs.tabLength, utf8Obs.inkPixels);
+    std::fflush(stdout);
+
+    REQUIRE(asciiObs.tabLength > 0);
+    REQUIRE(utf8Obs.tabLength > 0);
+
+    // 1. NOT TRUNCATED. A stub tab is what a byte-at-a-time reader that stops on
+    //    the first high byte produces.
+    INFO("utf8 tab " << utf8Obs.tabLength << " vs ascii tab " << asciiObs.tabLength);
+    CHECK(utf8Obs.tabLength > asciiObs.tabLength / 2);
+
+    // 2. AND ACTUALLY DRAWN. This is the assertion that caught the CJK
+    //    missing-glyph case: the tab was sized correctly and the label was
+    //    blank, which every length-based assertion happily accepted.
+    INFO("utf8 label ink " << utf8Obs.inkPixels << " px");
+    CHECK(utf8Obs.inkPixels > 0);
+
+    // 3. NOT DOUBLED. Treating each two-byte sequence as two Latin-1 characters
+    //    would size the tab for seventy characters rather than thirty-five.
+    INFO("utf8 tab " << utf8Obs.tabLength << " vs 1.5x ascii "
+         << (asciiObs.tabLength * 3 / 2));
+    CHECK(utf8Obs.tabLength < asciiObs.tabLength * 3 / 2);
+
+    const std::string errs = fixture.wmStderr();
+    INFO("WM stderr:\n" << errs);
+    CHECK_FALSE(contains(errs, "BadMatch"));
+    CHECK_FALSE(contains(errs, "BadValue"));
+    CHECK_FALSE(contains(errs, "RenderBadPicture"));
+}
+
+
+// ===========================================================================
 // [wm_menulabel] -- the root menu highlight must not erase the row's label
 //
 // Found by the operator's manual XRDP pass and reproduced on plain Xvfb, so it

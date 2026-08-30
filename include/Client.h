@@ -3,6 +3,7 @@
 #include "x11wrap.h"
 #include "Rules.h"
 #include <X11/Xutil.h>
+#include <X11/Xatom.h>
 #include <string>
 #include <memory>
 #include <vector>
@@ -222,8 +223,20 @@ private:
 
     WindowManager *const m_windowManager;
 
-    // Property access
-    std::string getProperty(Atom atom);
+    // Property access.
+    //
+    // The type argument defaults to XA_STRING, which is what every caller but
+    // one wants and what this function requested unconditionally before plan
+    // 08.5-01. It has to be a parameter because _NET_WM_NAME is UTF8_STRING:
+    // asking for it as XA_STRING does not fail loudly, it returns EMPTY through
+    // a silent type mismatch -- which is how a title rule keyed on it would have
+    // become a config key that never fires.
+    std::string getProperty(Atom atom, Atom type = XA_STRING);
+
+    // The window's title, EWMH first (D-8.5-02). See the definition for why the
+    // order is not negotiable.
+    std::string getWindowTitle();
+
     bool getState(int *state);
     void setState(ClientState state);
     void setState(int state);

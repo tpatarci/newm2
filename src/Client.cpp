@@ -106,7 +106,7 @@ void Client::manage(bool mapped)
                  PropertyChangeMask | FocusChangeMask);
 
     m_iconName = getProperty(XA_WM_ICON_NAME);
-    m_name = getProperty(XA_WM_NAME);
+    m_name = getWindowTitle();
     setLabel();
 
     getColormaps();
@@ -870,10 +870,10 @@ static int getProperty_aux(Display *d, Window w, Atom a, Atom type,
 }
 
 
-std::string Client::getProperty(Atom a)
+std::string Client::getProperty(Atom a, Atom type)
 {
     unsigned char *p = nullptr;
-    const int n = getProperty_aux(display(), m_window, a, XA_STRING, 8, 100L, &p);
+    const int n = getProperty_aux(display(), m_window, a, type, 8, 100L, &p);
     if (n <= 0) return {};
 
     // Bounded by the item count the SERVER reported, not by a terminator the
@@ -890,6 +890,34 @@ std::string Client::getProperty(Atom a)
     const std::size_t nul = result.find('\0');
     if (nul != std::string::npos) result.resize(nul);
     return result;
+}
+
+
+// The window's title (D-8.5-02, plan 08.5-01).
+//
+// EWMH FIRST, ICCCM SECOND, AND THE ORDER IS NOT ARBITRARY. _NET_WM_NAME is
+// UTF8_STRING by specification; WM_NAME is a Latin-1-or-COMPOUND_TEXT property
+// with no reliable encoding. Preferring the legacy one would mean preferring the
+// property that cannot represent most of the world's window titles -- and a
+// client that sets both is usually a toolkit publishing the real title in UTF-8
+// and a lossy transliteration in WM_NAME for window managers from the 1990s.
+// This one is from the 1990s and should still take the good one.
+//
+// Until this function existed, NOTHING in this window manager read _NET_WM_NAME
+// off a client. The atom was interned and used solely to name the WM's own check
+// window (src/Manager.cpp). That was survivable while the title only fed the tab
+// label; it stops being survivable the moment a config key matches on it, which
+// is what plan 08.5-01 adds. A rule keyed on a property the WM never reads is a
+// control that looks available and silently does nothing.
+//
+// The empty check, not a status check, is what selects the fallback: a client
+// may have the property present but empty, and an empty title is exactly as
+// useful as an absent one to everything downstream.
+std::string Client::getWindowTitle()
+{
+    std::string title = getProperty(Atoms::net_wmName, Atoms::utf8_string);
+    if (!title.empty()) return title;
+    return getProperty(XA_WM_NAME);
 }
 
 
@@ -2041,13 +2069,33 @@ void Client::eventProperty(XPropertyEvent *e)
         return;
 
     case XA_WM_NAME:
-        if (shouldDelete) m_name.clear();
-        else m_name = getProperty(a);
+        // Re-read through the full precedence rather than taking this event's
+        // own property. A client that publishes both and then touches the legacy
+        // one must not thereby replace the UTF-8 title it is still advertising,
+        // and a client that DELETES WM_NAME while keeping _NET_WM_NAME must not
+        // end up untitled -- both of which a naive `m_name = getProperty(a)`
+        // gets wrong in opposite directions. The delete case needs no special
+        // branch for the same reason: re-reading covers it.
+        m_name = getWindowTitle();
         if (setLabel()) rename();
         return;
 
     case XA_WM_TRANSIENT_FOR:
         getTransient();
+        return;
+    }
+
+    // EWMH: the modern title property. Interned, so it belongs with the
+    // if-branches rather than in the predefined-atom switch above.
+    //
+    // This RELABELS THE TAB AND NOTHING ELSE. It deliberately does not re-fold
+    // the window rules (D-8.5-03): re-applying a rule's position and size when a
+    // title changes would make a window jump every time a document is renamed or
+    // a browser tab is switched. Rules are a placement policy applied when a
+    // window appears, not a live binding.
+    if (a == Atoms::net_wmName) {
+        m_name = getWindowTitle();
+        if (setLabel()) rename();
         return;
     }
 

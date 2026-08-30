@@ -934,3 +934,58 @@ fixed at the source, most plausibly by giving the three WM-internal windows
 `override_redirect` at creation (which also closes item 7) rather than by
 hardening `menu()` against its own window having been destroyed. Natural owner is
 whoever takes item 7.
+
+## 18. A title in a script the tab font does not cover renders a correctly-sized, BLANK tab (PRE-EXISTING, visible)
+
+**Found:** plan 08.5-01, incidentally, while writing the UTF-8 case for the
+EWMH title read. Not caused by that plan — the behaviour predates it and is
+reachable through `WM_NAME` just as well as through `_NET_WM_NAME`.
+
+**What happens.** `Border` resolves its tab font through fontconfig to **one
+face** (`DejaVu Sans` on this host) and draws the whole label with it via
+`XftDrawStringUtf8`. Xft draws nothing at all for a codepoint that face lacks.
+So a window titled in a script outside the resolved face's coverage gets a tab
+that is sized correctly and painted empty.
+
+**Measured on this host (2026-08-30), 35-character titles, tall window:**
+
+| Title | Tab length | Label ink |
+|---|---|---|
+| ASCII | 325 px | 611 px |
+| Cyrillic (2-byte UTF-8) | ~325 px | > 0 |
+| CJK (3-byte UTF-8) | **397 px** | **0 px** |
+
+The CJK row is the finding: the string was measured, the tab grew to fit it, and
+not one pixel of label was drawn. `Noto Serif CJK` **is installed** on this host,
+so this is not missing fonts — it is missing *fallback*. `fc-list :charset=7a97`
+finds five families; `DejaVu Sans` is not among them, and the WM never asks.
+
+**Why it matters.** VISL-03 (Phase 4) promises "window titles containing
+non-ASCII characters display correctly in tab labels". That promise holds for
+anything the resolved face covers — accented Latin, Greek, Cyrillic — and fails
+silently outside it. The failure is the bad kind: no warning, no fallback glyph,
+no truncation, just a blank strip where the title should be. A CJK-locale user on
+a VPS would see every window tab empty and have nothing to go on.
+
+**Why it is deferred rather than fixed in 08.5-01.** That plan's subject is
+*which property the title is read from*; this is about *how the label is
+rendered*, which is Phase 4's territory and a different piece of machinery. Fixing
+it means per-run font selection — walking the string, asking fontconfig for a
+face per codepoint range via `FcFontSort`/`XftFontMatch`, and drawing each run
+with its own font — plus the same treatment for the menu, which has the identical
+single-face assumption in `src/Buttons.cpp`.
+
+**Cheaper partial option**, worth costing before the full fix: append a
+broad-coverage family to the tab-font pattern so fontconfig's own matching has
+somewhere to go. That does not give true per-glyph fallback, but it would turn
+"blank tab" into "correct tab" for the common single-script case, which is most
+of the real population.
+
+**Test coverage in place:** `[wm_tablabel]` "A UTF-8 title is not truncated at
+its first multi-byte character" pins the Cyrillic path with an explicit ink
+assertion, and its comment records why CJK was deliberately not used. The ink
+assertion is the one that caught this — every length-based assertion passed
+happily on a blank label.
+
+**Disposition:** deferred to the v1.1 backlog. Natural owner is whoever next
+touches Xft rendering in `src/Border.cpp` / `src/Buttons.cpp`.
