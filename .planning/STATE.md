@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 08.5
 current_phase_name: v1.0 Closeout *(INSERTED)*
 status: executing
-stopped_at: Completed 08.5-03-PLAN.md
-last_updated: "2026-08-30T16:41:21.724Z"
+stopped_at: HALTED at 08.5-04-PLAN.md Task 1 -- gate capture held (operator ruling B); no criterion-7 bundle produced
+last_updated: "2026-08-30T18:42:41.395Z"
 last_activity: 2026-08-30
 last_activity_desc: Phase 08.5 execution started
-state_head: 195ac511b8fc72cf80ede0c5eb22643406e784d5
+state_head: af30f47905ff24024f1856987c1d26568926ce8d
 progress:
   total_phases: 10
   completed_phases: 4
   total_plans: 41
-  completed_plans: 38
+  completed_plans: 39
 milestone_name: milestone
 ---
 
@@ -184,6 +184,7 @@ Recent decisions affecting current work:
 - [Phase 08.5]: D-8.5-03 title rules fold once at map time and are deliberately NOT re-folded on title change -- re-applying geometry on rename would make windows jump when a document is renamed; re-fold goes to the v1.1 backlog
 - [Phase 08.5]: 08.5-03: the shipped release notes and the signoff checklist are worded differently on purpose -- COMPILED_CODE_BEHAVIOR_CHECKLIST.md keeps the retired D-8-TIGHTVNC rationale verbatim as a record, the user-facing notes name it only as a retired argument and state the general lesson instead
 - [Phase 08.5]: 08.5-03: the literals x2gostartagent and SCOPE.md were deliberately withheld from Task 2's table cells and introduced in Task 3, so Task 3's positive guards could still redden -- a guard pre-greened by an earlier task in the same plan measures nothing, which is the exact defect this plan closes
+- [Phase 08.5]: 08.5-04: gate capture held rather than recorded on a suite that is not reliably green in one shot -- a release signoff whose gate needs retries is weaker evidence than no signoff, and the measurement (2/5 red, different case each time) is a rate rather than an attribution
 
 ### Pending Todos
 
@@ -203,6 +204,7 @@ Recent decisions affecting current work:
 - Deferred item 11: the sideways tab does not grow with the window title (axis-swapped rotated extents) -- measured in 08-06, out of scope there, recommended for 08-14
 - Deferred item 12: the full process-level suite flakes at ~1 test per run on both this tree and the pre-08-06 baseline -- build-all.sh is not reliably green in one shot
 - Deferred item 13 (08-11): every client destroy logs one X_UnmapWindow BadWindow because the resize handle is a child of the client window; blocks a strict no-protocol-errors assertion
+- 08.5-04 GATE CAPTURE HELD (operator ruling B, 2026-08-30): the full debug suite is red in 2 of 5 runs at 313 tests, a DIFFERENT single case each time -- #198 exec-using-shell spawn-await (1/5 loaded, 0/12 isolated) and #93 interactive drag (test_wm_geometry.cpp:1492). [wm_menureopen] fired 0/5, so the known-intermittent framing does not cover either. Sharpens deferred item 12 from ~1 test per run to a measured 40% red-run rate. Blocks the v1.0 success-criterion-7 gate capture until the flake substrate is diagnosed. Evidence: evidence/gates/flake-measurement/ (af30f47). T-8-SHELL security half failed 0/5.
 
 ## Deferred Items
 
@@ -222,6 +224,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-30T16:41:08.962Z
-Stopped at: Completed 08.5-03-PLAN.md
+Last session: 2026-08-30T18:42:41.077Z
+Stopped at: HALTED at 08.5-04-PLAN.md Task 1 -- gate capture held (operator ruling B); no criterion-7 bundle produced
 Resume file: None
