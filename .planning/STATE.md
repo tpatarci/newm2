@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 ## Current Position
 
-Phase: 08.5 (v1.0 Closeout *(INSERTED)*) — EXECUTING
-Plan: 2 of 5
-Status: Ready to execute
+Phase: 08.5 (v1.0 Closeout *(INSERTED)*) — HALTED
+Plan: 3 of 5 complete (08.5-01, 08.5-02, 08.5-03); 08.5-04 halted; 08.5-05 blocked on it
+Status: Stuck on a halt — phase NOT verified, NOT complete. Resolve the halt before re-running verification.
 Last activity: 2026-08-30 — Phase 08.5 execution started
 
 Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).

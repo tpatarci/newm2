@@ -295,7 +295,7 @@ Plans:
   6. Both Phase 8 deviations are retired on evidence or restated with a reason that is true — neither survives as written
   7. The four hard blockers are re-run at the final commit, not inherited from Phase 8's snapshot
 
-**Plans**: 2/5 plans executed (2 executed, 3 gap-closure)
+**Plans**: 3/5 plans executed (2 executed, 3 gap-closure) — 08.5-04 **halted**, 08.5-05 blocked on it
 
 Plans:
 
@@ -311,15 +311,15 @@ Plans:
 
 Gap-closure wave 1:
 
-- [ ] 08.5-03-PLAN.md -- Rewrite the shipped remote-desktop section of `docs/RELEASE-NOTES.md` to the four measured statuses, retiring the TightVNC rationale the phase's own transcript disproved and narrowing the X2Go deviation to the NX proxy; prove the rules-key record survived the edit (criterion 6; XDIS-05, RULES-01)
+- [x] 08.5-03-PLAN.md -- Rewrite the shipped remote-desktop section of `docs/RELEASE-NOTES.md` to the four measured statuses, retiring the TightVNC rationale the phase's own transcript disproved and narrowing the X2Go deviation to the NX proxy; prove the rules-key record survived the edit (criterion 6; XDIS-05, RULES-01)
 
 Gap-closure wave 2 *(blocked on gap-closure wave 1)*:
 
-- [ ] 08.5-04-PLAN.md -- Capture all four hard blockers at the final commit into `08.5-v1.0-closeout/evidence/gates/`, with a `PROVENANCE.txt` that proves no source moved between the gate commit and HEAD (criterion 7, capture half; TEST-08)
+- [ ] 08.5-04-PLAN.md -- **HALTED at Task 1 (operator ruling B, 2026-08-30)** — no criterion-7 bundle produced. The debug gate went red in 2 of 5 full-suite runs, a different case each time (#198 spawn-await, #93 interactive drag); `[wm_menureopen]` fired 0/5, so nothing is attributable to the known intermittent. Case 198 measured 1/5 loaded, 0/12 isolated; the T-8-SHELL security half failed 0/5. Evidence: `evidence/gates/flake-measurement/`. Original scope: capture all four hard blockers at the final commit into `08.5-v1.0-closeout/evidence/gates/`, with a `PROVENANCE.txt` that proves no source moved between the gate commit and HEAD (criterion 7, capture half; TEST-08)
 
 Gap-closure wave 3 *(blocked on gap-closure wave 2)*:
 
-- [ ] 08.5-05-PLAN.md -- Repoint every gate row in `COMPILED_CODE_BEHAVIOR_CHECKLIST.md` at this phase's bundle, recompute the test-surface row with its own commands, update the interaction rows from the filled table, and write `evidence/README.md` (criterion 7, record half; TEST-08)
+- [ ] 08.5-05-PLAN.md -- **BLOCKED by halted 08.5-04** (cannot cite a bundle that does not exist). Repoint every gate row in `COMPILED_CODE_BEHAVIOR_CHECKLIST.md` at this phase's bundle, recompute the test-surface row with its own commands, update the interaction rows from the filled table, and write `evidence/README.md` (criterion 7, record half; TEST-08)
 
 **Key finding that shaped this phase (2026-08-30):** the handoff's decided shape moved X2Go to a v1.1 requirement on the reasoning that validating it cost a human session. Measurement falsified that — `x2goserver`/`nxagent` were already installed (dpkg stamp 2026-08-29 17:43), nxagent runs headless nested on an Xvfb, and it advertises SHAPE, RANDR and RENDER. The WM was run against it successfully. So both remaining targets are validated rather than amended away, and XDIS-05 is expected to be met **as written**. See `08.5-CONTEXT.md`, "What changed since the handoff".
 
@@ -358,5 +358,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 
 | 6. EWMH Compliance | 0/3 | Planned | - |
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
 | 8. Xrandr + VNC + Focus/Rules | 14/14 | Verified with gaps | 2026-08-30 |
-| 8.5 v1.0 Closeout *(INSERTED)* | 2/5 | In Progress|  |
+| 8.5 v1.0 Closeout *(INSERTED)* | 3/5 | Halted (08.5-04) |  |
 | 9. Config GUI + IPC | 0/3 | Not started | - |
