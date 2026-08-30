@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 current_phase: 08.5
-current_phase_name: v1.0 Closeout *(INSERTED)*
+current_phase_name: v1.0 Closeout
 status: executing
 stopped_at: HALTED at 08.5-04-PLAN.md Task 1 -- gate capture held (operator ruling B); no criterion-7 bundle produced
-last_updated: "2026-08-30T18:42:41.395Z"
+last_updated: "2026-08-30T22:42:42.762Z"
 last_activity: 2026-08-30
 last_activity_desc: Phase 08.5 execution started
-state_head: af30f47905ff24024f1856987c1d26568926ce8d
+state_head: 3b93ca553d8db9601d3cbdb5982aebf721948628
 progress:
   total_phases: 10
   completed_phases: 4
-  total_plans: 41
+  total_plans: 44
   completed_plans: 39
 milestone_name: milestone
 ---
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 ## Current Position
 
-Phase: 08.5 (v1.0 Closeout *(INSERTED)*) — HALTED
+Phase: 08.5 (v1.0 Closeout) — READY TO EXECUTE
 Plan: 3 of 5 complete (08.5-01, 08.5-02, 08.5-03); 08.5-04 halted; 08.5-05 blocked on it
 Status: Stuck on a halt — phase NOT verified, NOT complete. Resolve the halt before re-running verification.
 Last activity: 2026-08-30 — Phase 08.5 execution started
