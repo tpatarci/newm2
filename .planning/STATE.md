@@ -1,13 +1,13 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-current_phase: 08
-current_phase_name: xrandr-vnc-compatibility-focus-rules
-status: phase_verified_with_gaps
-stopped_at: Phase 8 complete (all 14 plans); verified with 2 declared gaps
-last_updated: "2026-08-29T13:58:55.694Z"
-last_activity: 2026-08-11
-last_activity_desc: Phase 8 verified -- 5/7 success criteria met; XDIS-05 and RULES-01 unmet and declared
+current_phase: 08.5
+current_phase_name: v1.0-closeout
+status: planned
+stopped_at: Phase 8.5 drafted (2 plans); ready to execute 08.5-01
+last_updated: "2026-08-30T05:20:00.000Z"
+last_activity: 2026-08-30
+last_activity_desc: Phase 8.5 drafted -- closes RULES-01, XDIS-05, TEST-08; X2Go validated headlessly on nxagent rather than descoped
 state_head: 0a356a788ce6f5e63d6b812beb5cf9c14a003536
 progress:
   total_phases: 9
@@ -28,10 +28,13 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 ## Current Position
 
-Phase: 08 (xrandr-vnc-compatibility-focus-rules) — EXECUTING
-Plan: 14 of 14
-Status: Ready to execute
-Last activity: 2026-08-11 — Phase 08 execution started
+Phase: 08.5 (v1.0-closeout, INSERTED) — PLANNED
+Plan: 0 of 2
+Status: Ready to execute 08.5-01
+Last activity: 2026-08-30 — Phase 8.5 drafted
+
+Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).
+Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
 
 Progress: [████████░░] 81% (7/9 phases complete)
 
@@ -174,6 +177,10 @@ Recent decisions affecting current work:
 - [Phase 08]: Xlib out-parameters are not written on failure -- getColormaps() was installing uninitialised colormap XIDs
 - [Phase 08]: kOptionSpecs is the single declaration of the CLI surface: getopt_long()'s array and the --help usage text are both generated from it, and --no- negations are derived rather than listed
 - [Phase 08]: Deferred item 5 (LSan suppressions not wired into Catch2 binaries) is deliberately still open, with both candidate fixes costed and an owner recommended
+- [Phase 08.5]: D-8.5-04 reverses the handoff's X2Go descope on measurement -- `x2goserver`/`nxagent` were already installed (dpkg 2026-08-29 17:43), nxagent runs headless nested on an Xvfb advertising SHAPE/RANDR/RENDER, and the WM frames clients on it. Validation costs ~2 minutes, not a human session, so XDIS-05 is met as written rather than amended
+- [Phase 08.5]: D-8.5-02 the WM reads only legacy WM_NAME and never `_NET_WM_NAME` for a client title (`Atoms::net_wmName` is used solely to name the WM's own check window). A title rule on that alone would be dead for modern clients, so the title read becomes EWMH-first with ICCCM fallback
+- [Phase 08.5]: D-8.5-01 `rule-match-name` renamed to `rule-match-instance` with NO deprecated alias -- free before v1.0, breaking after; the cost is one `unknown config key` warning for an existing local config
+- [Phase 08.5]: D-8.5-03 title rules fold once at map time and are deliberately NOT re-folded on title change -- re-applying geometry on rename would make windows jump when a document is renamed; re-fold goes to the v1.1 backlog
 
 ### Pending Todos
 
@@ -201,6 +208,14 @@ Items acknowledged and carried forward from previous milestone close:
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
 | *(none)* | | | |
+
+## v1.1 backlog (created by Phase 8.5 drafting)
+
+| Item | Why it is a debt with a name |
+|------|------------------------------|
+| Gesture and input coverage | Every defect the manual passes found lived in a path the suite already exercised: the suite asserts the *states* controls produce and never the *reachability* of the controls that drive them. Middle-click maximize, the circular fullscreen gesture, the menu's exit and hidden-client rows, and grab-release across cancel paths all have state coverage and no gesture coverage. |
+| Rule re-fold on title change | D-8.5-03 declines it deliberately (a renamed document must not move its window). Revisit if users ask for it. |
+| X2Go over a real network link | Phase 8.5 measures nxagent nested and locally; the compression proxy under latency is a different question and may remain open after 08.5-02. |
 
 ## Session Continuity
 

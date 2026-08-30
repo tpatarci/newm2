@@ -21,6 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 6: EWMH Compliance** - All required EWMH atoms, single-desktop mode, panel/taskbar compatibility
 - [x] **Phase 7: Root Menu + Application Discovery** - XDG .desktop parsing, heuristic-based binary scan, cached results, category-organized root menu (completed 2026-07-08)
 - [~] **Phase 8: Xrandr + VNC Compatibility + Focus/Rules** - Display config, extension fallbacks, VNC compatibility, focus stealing prevention, window rules. **All 14 plans complete; 5 of 7 success criteria verified.** Two remain unmet and are declared, not stubbed: four-target remote-desktop coverage (2 of 4 exercised — XDIS-05) and WM_NAME matching (RULES-01). See VERIFICATION.md.
+- [ ] **Phase 8.5: v1.0 Closeout** *(INSERTED 2026-08-30)* - Finish the three requirements Phase 8 left Pending: title matching for window rules plus the config key rename (RULES-01), the two remaining remote-desktop targets (XDIS-05), and the interaction checklist as a per-item table (TEST-08). Inserted **before** Phase 9 because RULES-01 changes the config surface the GUI will expose.
 - [ ] **Phase 9: Config GUI + IPC** - GTK3 config tool, Unix domain socket IPC, live configuration changes, optional dependency
 
 ## Phase Details
@@ -277,6 +278,37 @@ Plans:
 
 - [ ] 08-14-PLAN.md -- Capability-capture script, enforced RSS/idle-CPU budget, real TigerVNC/XRDP/X2Go sessions (blocking human-verify checkpoint), release notes with the single-screen limitation, corrected checklist baseline, committed evidence bundle, final run of all four hard blockers (XDIS-05, TEST-06, TEST-08)
 
+### Phase 8.5: v1.0 Closeout *(INSERTED)*
+
+**Goal**: v1.0 ships with zero requirements silently unmet — window rules match by title under keys named for what they compare, all four remote-desktop targets have committed transcripts, and the interaction record is a per-item table rather than a verdict.
+**Depends on**: Phase 8
+**Requirements**: RULES-01, XDIS-05, TEST-08
+**Inserted because**: RULES-01 changes the config surface Phase 9's GTK tool will expose and edit. Landing it after the GUI is built means rework that buys nothing; landing it first lets Phase 9's record be about the GUI.
+
+**Success Criteria** (what must be TRUE):
+
+  1. A rule can match a window by its title, and the title matched is the one the window actually advertises — `_NET_WM_NAME` preferred, `WM_NAME` as fallback
+  2. The three match keys are named for what they compare: `rule-match-class`, `rule-match-instance`, `rule-match-title` — with `rule-match-name` gone, not aliased
+  3. The map-time fold semantic is stated in the requirement, the release notes and the code — a renamed document does not move its window, and that is a documented choice rather than a discovered surprise
+  4. All four remote-desktop targets named in PROJECT.md have a committed capability transcript captured at a known commit
+  5. The User Interaction Checklist exists as a per-item pass/fail table with a tester name and a date
+  6. Both Phase 8 deviations are retired on evidence or restated with a reason that is true — neither survives as written
+  7. The four hard blockers are re-run at the final commit, not inherited from Phase 8's snapshot
+
+**Plans**: 2 plans
+
+Plans:
+
+**Wave 1**
+
+- [ ] 08.5-01-PLAN.md -- Title matching: EWMH-first title read, `rule-match-title`, the `rule-match-instance` rename, process-level proof, release-notes and ledger correction (RULES-01)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 08.5-02-PLAN.md -- TightVNC and nxagent transcripts captured headlessly, interaction checklist as a table (blocking human checkpoint), deviations retired or restated, gates re-run (XDIS-05, TEST-08)
+
+**Key finding that shaped this phase (2026-08-30):** the handoff's decided shape moved X2Go to a v1.1 requirement on the reasoning that validating it cost a human session. Measurement falsified that — `x2goserver`/`nxagent` were already installed (dpkg stamp 2026-08-29 17:43), nxagent runs headless nested on an Xvfb, and it advertises SHAPE, RANDR and RENDER. The WM was run against it successfully. So both remaining targets are validated rather than amended away, and XDIS-05 is expected to be met **as written**. See `08.5-CONTEXT.md`, "What changed since the handoff".
+
 ### Phase 9: Config GUI + IPC
 
 **Goal**: Non-programmer users can configure the WM visually through a separate GTK3 application that communicates with the running WM via IPC.
@@ -300,7 +332,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 9
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -311,5 +343,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 5. Configuration System | 0/3 | Planned | - |
 | 6. EWMH Compliance | 0/3 | Planned | - |
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
-| 8. Xrandr + VNC + Focus/Rules | 13/14 | In Progress|  |
+| 8. Xrandr + VNC + Focus/Rules | 14/14 | Verified with gaps | 2026-08-30 |
+| 8.5 v1.0 Closeout *(INSERTED)* | 0/2 | Planned | - |
 | 9. Config GUI + IPC | 0/3 | Not started | - |
