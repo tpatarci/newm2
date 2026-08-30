@@ -1224,7 +1224,10 @@ TEST_CASE("Tab foreground and background colours reach the rendered tab",
     Histogram shipped, configured;
     unsigned long shippedFg = 0, shippedBg = 0, configuredFg = 0, configuredBg = 0;
 
-    capture({}, shipped, shippedFg, shippedBg, "black", "gray80");
+    // The shipped palette, silver since plan 08.5-02. Named as literal hex
+    // because that is what include/Config.h now carries; a colour NAME here
+    // would keep passing if the default drifted to a different silver.
+    capture({}, shipped, shippedFg, shippedBg, "#000000", "#C8CACC");
     capture({"--tab-background=#ff0000", "--tab-foreground=#0000ff"},
             configured, configuredFg, configuredBg, "#0000ff", "#ff0000");
 
@@ -1242,7 +1245,7 @@ TEST_CASE("Tab foreground and background colours reach the rendered tab",
 
     // The configured FOREGROUND reached the label. Xft antialiases, so the count
     // is small -- but the glyph cores are the exact colour, and the shipped run
-    // (black on gray80) contains none of it at all.
+    // (black on silver) contains none of it at all.
     CHECK(countOf(configured, configuredFg) > 0);
     CHECK(countOf(shipped, configuredFg) == 0);
 
@@ -1289,7 +1292,7 @@ TEST_CASE("Menu background colour reaches the menu opened by a real root click",
     Histogram shipped, configured;
     unsigned long shippedWanted = 0, configuredWanted = 0;
 
-    capture({}, shipped, shippedWanted, "gray80");
+    capture({}, shipped, shippedWanted, "#C8CACC");   // the shipped silver, 08.5-02
     capture({"--menu-background=#00cc00"}, configured, configuredWanted, "#00cc00");
 
     REQUIRE(configuredWanted != ~0UL);
@@ -3774,4 +3777,109 @@ TEST_CASE("The window button answers across the whole tab-top square while "
     REQUIRE(fixture.wmAlive());
     INFO("wm stderr:\n" << fixture.wmStderr());
     CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
+}
+
+
+// ===========================================================================
+// [wm_bevel] -- the 1 px raised bevel, and the claim that it is ACTIVE-ONLY
+//
+// Plan 08.5-02. The bevel is what carries "discrete, tasteful 3D" in the
+// operator's brief, and its design makes one specific behavioural claim that
+// no palette assertion can check: the active window LIFTS and inactive ones
+// stay flat. That is the WM's existing activity idiom (an inactive frame is
+// shape-subtracted away) extended to the tab, and it is worth pinning, because
+// a bevel drawn unconditionally would look perfectly fine in any screenshot of
+// a single window and would quietly destroy the focus cue on a busy desktop.
+//
+// The shades are DERIVED from the configured tab background rather than
+// hardcoded, so this file names the value the shipped default resolves to.
+// That couples the case to the shipped appearance on purpose: changing the
+// blend is a visual change and should have to be made deliberately.
+// ===========================================================================
+
+namespace {
+
+// The highlight shade WindowManager::allocateShadeOf() produces from the
+// shipped #C8CACC tab background at +0.76 toward white. MEASURED, not derived
+// here -- recomputing the blend in the test would let the same arithmetic error
+// pass on both sides.
+const char* const kBevelHighlight = "#F2F3F3";
+const char* const kBevelShadow    = "#898A8B";
+
+}  // namespace
+
+TEST_CASE("The active window's tab wears a bevel and an inactive one does not",
+          "[wm_bevel]")
+{
+    WmFixture fixture(cleanFixture({}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const unsigned long light  = namedPixel(d, kBevelHighlight);
+    const unsigned long shadow = namedPixel(d, kBevelShadow);
+    REQUIRE(light  != ~0UL);
+    REQUIRE(shadow != ~0UL);
+
+    Window first = None;
+    const Window firstFrame =
+        mapClientAndAwaitFrame(d, 60, 60, 240, kTallWindowH, first, "first");
+    REQUIRE(firstFrame != None);
+    settleWm(d);
+
+    auto tabHistogram = [&](Window frame, Window client) {
+        const Window tab = findFrameChild(d, frame, client, false);
+        REQUIRE(tab != None);
+        Rect abs{};
+        REQUIRE(serverRect(d, tab, abs));
+        return captureRoot(d, abs);
+    };
+
+    // --- active -------------------------------------------------------
+    const Histogram activeTab = tabHistogram(firstFrame, first);
+    const long activeLight  = countOf(activeTab, light);
+    const long activeShadow = countOf(activeTab, shadow);
+
+    std::printf("[wm2 bevel] ACTIVE   tab: highlight %4ld px, shadow %4ld px\n",
+                activeLight, activeShadow);
+    std::fflush(stdout);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    CHECK(activeLight  > 0);
+    CHECK(activeShadow > 0);
+
+    // --- now make it inactive by mapping a second client --------------
+    Window second = None;
+    const Window secondFrame =
+        mapClientAndAwaitFrame(d, 420, 60, 240, kTallWindowH, second, "second");
+    REQUIRE(secondFrame != None);
+    settleWm(d);
+    settleWm(d);
+
+    const Histogram inactiveTab = tabHistogram(firstFrame, first);
+    const long inactiveLight  = countOf(inactiveTab, light);
+    const long inactiveShadow = countOf(inactiveTab, shadow);
+
+    std::printf("[wm2 bevel] INACTIVE tab: highlight %4ld px, shadow %4ld px\n",
+                inactiveLight, inactiveShadow);
+    std::fflush(stdout);
+
+    // VACUITY GUARD. If the second window never took focus, the first is still
+    // active and the assertion below would be testing nothing. The second
+    // window's own tab must carry the bevel for this comparison to mean
+    // anything.
+    const Histogram secondTab = tabHistogram(secondFrame, second);
+    INFO("second window's own highlight: " << countOf(secondTab, light) << " px");
+    REQUIRE(countOf(secondTab, light) > 0);
+
+    INFO("active " << activeLight << " -> inactive " << inactiveLight);
+    CHECK(inactiveLight  == 0);
+    CHECK(inactiveShadow == 0);
+
+    const std::string errs = fixture.wmStderr();
+    INFO("WM stderr:\n" << errs);
+    CHECK_FALSE(contains(errs, "BadMatch"));
+    CHECK_FALSE(contains(errs, "BadValue"));
+    CHECK_FALSE(contains(errs, "BadDrawable"));
 }

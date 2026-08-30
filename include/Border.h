@@ -90,7 +90,7 @@ private:
 
     void loadTabFont();
     void fixTabHeight(int h);
-    void drawLabel();
+    void drawLabel(bool active);
     void drawLabelHorizontal();
 
     // Predicates over the rung, in the same shape as the capability predicates
@@ -166,6 +166,26 @@ private:
     // GC per frame. The guard is therefore explicit rather than inferred.
     static bool m_staticsInitialised;
     static x11::GCPtr m_drawGC;
+
+    // The 1 px raised bevel (plan 08.5-02), drawn on the ACTIVE window only.
+    //
+    // ONE PIXEL, NEVER TWO. At this window manager's scale -- a 7 px frame and
+    // a ~22 px tab -- a 2 px bevel is Windows 95. A single pixel inside the
+    // existing 1 px black outline puts four values across about four pixels:
+    // highlight, body, shadow, black. That is the machined-metal read, and it
+    // is the one NeXTSTEP used, which is where wm2's look comes from.
+    //
+    // Active-only is a deliberate extension of the WM's existing idiom rather
+    // than a new one: activity already means "the frame appears"
+    // (setFrameVisibility), so now the active window also LIFTS. It costs no
+    // config, no per-state colour, and no second tab background.
+    //
+    // Either GC may be null when the colormap is full. Both draw sites check;
+    // no bevel is the correct degradation, not a fatal error.
+    static x11::GCPtr m_bevelLightGC;
+    static x11::GCPtr m_bevelShadowGC;
+    void drawBevel(bool active);
+    void drawButtonBevel(bool active);
     static unsigned long m_frameBackgroundPixel;
     static unsigned long m_buttonBackgroundPixel;
     static unsigned long m_borderPixel;

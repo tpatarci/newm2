@@ -62,6 +62,45 @@ rectangle rather than stranded off the edge.
 
 ---
 
+## Appearance
+
+The silhouette is unchanged — the sideways tab down the left edge of every
+window, with the title running down it and a small button at its top. What
+changed in this release is the surface.
+
+**Ubuntu, in bold, for tab labels and menus.** The chain is
+`Ubuntu,Noto Sans,DejaVu Sans,Sans`, so a host without the Ubuntu family still
+resolves something sensible; nothing about the fallback ladder changed. Bold is
+deliberate rather than decorative: on a server without the RENDER extension —
+TightVNC, for one — Xft falls back to unantialiased rendering, and bold survives
+that where lighter weights go ragged.
+
+**A silver palette with black text.** The defaults are now a single cool-cast
+family, `#C8CACC` for the tab and menu, `#DCDEE0` for the frame, `#A8ACB0` for
+the menu highlight. Every silver is very slightly blue — two parts per channel —
+which is what makes it read as metal rather than as concrete. On a 16-bit remote
+session that cast quantises away and you get plain grey, which is simply the
+older look rather than a broken one.
+
+**A one-pixel bevel, on the focused window only.** The tab and its button carry a
+highlight along their top and left edges and a shadow along the bottom and right,
+so the focused window appears very slightly raised. Unfocused windows are flat.
+
+That last point is the useful part: it extends what this window manager already
+did — an unfocused window's frame is hidden, so activity was already something
+you could see — rather than adding a competing colour to keep track of. The
+diagonal at the tab's foot is deliberately left plain, because a bevel following
+a stair-stepped edge is a row of disconnected pixels rather than a highlight.
+
+The bevel shades are **derived from whichever tab background you configure**, not
+fixed. Set a dark palette and you get bevels that belong to it. There are no
+separate keys to set, and so no way to set them inconsistently.
+
+All nine colours remain configurable — `tab-background`, `frame-background`,
+`menu-highlight` and the rest — in the config file and on the command line.
+
+---
+
 ## Focus behaviour
 
 ### Focus-stealing prevention is on by default

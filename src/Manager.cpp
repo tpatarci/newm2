@@ -671,7 +671,7 @@ void WindowManager::initialiseScreen()
     // Load menu font via Xft with fontconfig fallback chain (D-02)
     // Font size 12 matches Lucida Bold 14pt visual footprint (D-03)
     x11::XftFontPtr menuFont = x11::make_xft_font_name(display(),
-        "Noto Sans,DejaVu Sans,Sans:size=12");
+        "Ubuntu,Noto Sans,DejaVu Sans,Sans:size=12");
     if (!menuFont) {
         menuFont = x11::make_xft_font_name(display(), "sans-serif:size=12");
     }
@@ -714,6 +714,53 @@ unsigned long WindowManager::allocateColour(const char *name, const char *desc)
     }
 
     return nearest.pixel;
+}
+
+
+unsigned long WindowManager::allocateShadeOf(const char *name, double fraction,
+                                             const char *desc)
+{
+    XColor nearest, ideal;
+
+    if (!XAllocNamedColor(display(), DefaultColormap(display(), m_screenNumber),
+                          name, &nearest, &ideal)) {
+        char error[100];
+        std::snprintf(error, sizeof error, "couldn't load %s colour", desc);
+        fatal(error);
+    }
+
+    // Blend from the IDEAL values, not the nearest ones. `nearest` is what the
+    // colormap could actually give us and may already have been rounded; on an
+    // 8-bit visual, deriving a shade from an already-rounded value compounds
+    // the error and can collapse the highlight into the body colour.
+    auto blend = [fraction](unsigned short c) -> unsigned short {
+        const double v = static_cast<double>(c);
+        const double out = (fraction >= 0.0)
+            ? v + (65535.0 - v) * fraction   // toward white
+            : v * (1.0 + fraction);          // toward black
+        if (out < 0.0) return 0;
+        if (out > 65535.0) return 65535;
+        return static_cast<unsigned short>(out);
+    };
+
+    XColor shade;
+    shade.red   = blend(ideal.red);
+    shade.green = blend(ideal.green);
+    shade.blue  = blend(ideal.blue);
+    shade.flags = DoRed | DoGreen | DoBlue;
+
+    // A failed allocation here is NOT fatal, unlike the named-colour path
+    // above. This is decoration: on a display whose colormap is full, the
+    // correct outcome is a frame without bevels, not a window manager that
+    // refuses to start. The caller treats 0 as "no bevel".
+    if (!XAllocColor(display(), DefaultColormap(display(), m_screenNumber),
+                     &shade)) {
+        std::fprintf(stderr, "wm2: warning: could not allocate the %s shade, "
+                             "frames will be drawn without bevels\n", desc);
+        return 0;
+    }
+
+    return shade.pixel;
 }
 
 

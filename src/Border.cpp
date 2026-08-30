@@ -15,6 +15,8 @@ XftFont *Border::m_tabFont = nullptr;
 Border::TabFontRung Border::m_tabFontRung = Border::TabFontRung::NoFont;
 bool Border::m_staticsInitialised = false;
 x11::GCPtr Border::m_drawGC;
+x11::GCPtr Border::m_bevelLightGC;
+x11::GCPtr Border::m_bevelShadowGC;
 unsigned long Border::m_frameBackgroundPixel = 0;
 unsigned long Border::m_buttonBackgroundPixel = 0;
 unsigned long Border::m_borderPixel = 0;
@@ -67,6 +69,39 @@ Border::Border(Client *client, Window child)
         if (!m_drawGC) {
             windowManager()->fatal("couldn't allocate border GC");
         }
+
+        // Bevel GCs (plan 08.5-02). The shades are DERIVED from the configured
+        // tab background, so a user who sets a dark palette gets bevels that
+        // belong to it rather than a fixed near-white line that would read as a
+        // rendering fault. The fractions reproduce the shipped silver's
+        // #F2F4F6 / #898C8F against a #C8CACC body.
+        const char *tabBg = windowManager()->config().tabBackground.c_str();
+        const unsigned long lightPixel =
+            windowManager()->allocateShadeOf(tabBg,  0.76, "bevel highlight");
+        const unsigned long shadowPixel =
+            windowManager()->allocateShadeOf(tabBg, -0.315, "bevel shadow");
+
+        // A zero pixel means the allocation failed and the GC stays null, which
+        // every draw site treats as "no bevel". Decoration must not be able to
+        // stop the window manager starting.
+        if (lightPixel != 0) {
+            XGCValues bv;
+            bv.foreground = lightPixel;
+            bv.line_width = 0;
+            bv.function = GXcopy;
+            bv.subwindow_mode = IncludeInferiors;
+            m_bevelLightGC = x11::make_gc(display(), root(),
+                GCForeground | GCLineWidth | GCFunction | GCSubwindowMode, &bv);
+        }
+        if (shadowPixel != 0) {
+            XGCValues bv;
+            bv.foreground = shadowPixel;
+            bv.line_width = 0;
+            bv.function = GXcopy;
+            bv.subwindow_mode = IncludeInferiors;
+            m_bevelShadowGC = x11::make_gc(display(), root(),
+                GCForeground | GCLineWidth | GCFunction | GCSubwindowMode, &bv);
+        }
     }
 
     ++m_borderCount;
@@ -99,6 +134,10 @@ Border::~Border()
 
     if (--m_borderCount == 0) {
         m_drawGC.reset();
+        // Released with the other statics rather than leaked for the process
+        // lifetime; either may already be null when the colormap was full.
+        m_bevelLightGC.reset();
+        m_bevelShadowGC.reset();
 
         // Null is a legitimate outcome of the ladder's last rung, so the
         // teardown asks rather than assumes.
@@ -181,7 +220,7 @@ void Border::loadTabFont()
     // on success: this is what every healthy display does.
     if (!skipRotatedRungs) {
         font = x11::make_xft_font_rotated(
-            display(), "Noto Sans,DejaVu Sans,Sans:bold:size=12");
+            display(), "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12");
         if (font) m_tabFontRung = TabFontRung::RotatedPreferred;
     }
 
@@ -200,7 +239,7 @@ void Border::loadTabFont()
     // present and readable.
     if (!font && !skipEveryRung) {
         font = x11::make_xft_font_name(
-            display(), "Noto Sans,DejaVu Sans,Sans:bold:size=12");
+            display(), "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12");
         if (font) {
             m_tabFontRung = TabFontRung::Unrotated;
             std::fprintf(stderr, "wm2: warning: no rotated tab font on this "
@@ -421,12 +460,97 @@ Window Border::root() const
 
 void Border::expose(XExposeEvent *e)
 {
+    if (e->window == m_button) {
+        drawButtonBevel(m_client->isActive());
+        return;
+    }
     if (e->window != m_tab) return;
-    drawLabel();
+    drawLabel(m_client->isActive());
 }
 
 
-void Border::drawLabel()
+// The 1 px raised bevel down the tab (plan 08.5-02). Active windows only.
+//
+// GEOMETRY. The tab window is L-shaped: a band across the top of the frame and
+// a column down its left side, joined at the corner, with a stair-stepped
+// diagonal closing the bottom (see shapeTab). Three lines describe it as a
+// raised surface:
+//
+//   - highlight along y=1, across the top band      (lit from above)
+//   - highlight down x=1, the column's left edge    (lit from the left)
+//   - shadow down the column's right inner edge     (the far side falls away)
+//
+// THE DIAGONAL IS DELIBERATELY LEFT PLAIN. It is drawn as a stack of one-pixel
+// rectangles, so a bevel following it would be a stair of isolated pixels --
+// jaggies, not a highlight. The black outline already defines that edge, and
+// leaving it alone is what keeps this "discrete" rather than busy.
+//
+// Cost is two XDrawSegments per redraw, which is nothing over VNC. Both GCs may
+// be null if the colormap was full; that is a frame without bevels, which is
+// exactly the old look and not an error.
+void Border::drawBevel(bool active)
+{
+    if (isTransient()) return;   // transients have no tab to bevel
+    if (!active) return;         // the active window is the one that lifts
+
+    const int bottom = m_tabHeight;     // where the diagonal begins
+    const int right  = m_tabWidth - 1;
+
+    if (m_bevelLightGC) {
+        XSegment light[2];
+        // Across the top band. Stops at the tab column's width rather than
+        // running the full band: past that point the band is one pixel below
+        // the frame's own top edge and a line there reads as a seam.
+        light[0].x1 = 1;  light[0].y1 = 1;
+        light[0].x2 = right; light[0].y2 = 1;
+        // Down the column's left edge, stopping short of the diagonal.
+        light[1].x1 = 1;  light[1].y1 = 1;
+        light[1].x2 = 1;  light[1].y2 = bottom;
+        XDrawSegments(display(), m_tab, m_bevelLightGC.get(), light, 2);
+    }
+
+    if (m_bevelShadowGC) {
+        XSegment shadow[1];
+        // The column's right inner edge, from below the button notch down to
+        // the diagonal. Starting at m_tabWidth rather than at the top avoids
+        // drawing across the notch the button sits in.
+        shadow[0].x1 = right; shadow[0].y1 = m_tabWidth;
+        shadow[0].x2 = right; shadow[0].y2 = bottom;
+        XDrawSegments(display(), m_tab, m_bevelShadowGC.get(), shadow, 1);
+    }
+}
+
+
+// The same treatment for the small square button at the tab's top, so it reads
+// as a raised key rather than a painted patch. Same active-only rule: on an
+// inactive client the button is not even mapped.
+void Border::drawButtonBevel(bool active)
+{
+    if (isTransient()) return;
+    if (!active) return;
+
+    const int size = buttonDrawSize();
+    if (size <= 2) return;   // too small to bevel legibly; leave it flat
+
+    if (m_bevelLightGC) {
+        XSegment light[2];
+        light[0].x1 = 0; light[0].y1 = 0; light[0].x2 = size - 1; light[0].y2 = 0;
+        light[1].x1 = 0; light[1].y1 = 0; light[1].x2 = 0;        light[1].y2 = size - 1;
+        XDrawSegments(display(), m_button, m_bevelLightGC.get(), light, 2);
+    }
+
+    if (m_bevelShadowGC) {
+        XSegment shadow[2];
+        shadow[0].x1 = 0;        shadow[0].y1 = size - 1;
+        shadow[0].x2 = size - 1; shadow[0].y2 = size - 1;
+        shadow[1].x1 = size - 1; shadow[1].y1 = 0;
+        shadow[1].x2 = size - 1; shadow[1].y2 = size - 1;
+        XDrawSegments(display(), m_button, m_bevelShadowGC.get(), shadow, 2);
+    }
+}
+
+
+void Border::drawLabel(bool active)
 {
     // Rung 4: there is nothing to draw the label WITH. Return before anything
     // touches the font, leaving the tab itself drawn but blank -- the tab
@@ -449,6 +573,10 @@ void Border::drawLabel()
     // Clear tab background using XftDrawRect (replaces XClearWindow)
     XftDrawRect(m_tabDraw.get(), &m_xftBackground, 0, 0,
                 m_tabWidth, m_tabHeight + m_tabWidth);
+
+    // The bevel goes on after the background fill and BEFORE the label, so text
+    // is never drawn under a line. Active windows only.
+    drawBevel(active);
 
     // Rung 3: an unrotated face cannot be drawn down the tab, so it is drawn
     // across it instead. Split out rather than branched inline so the rotated
@@ -1039,8 +1167,14 @@ void Border::configure(int x, int y, int w, int h,
                          EnterWindowMask);
         }
 
+        // ExposureMask added in plan 08.5-02. The button was previously drawn
+        // entirely by the server from its background pixel, so it never needed
+        // to hear about exposure. Now it carries a bevel this code draws, and
+        // anything the server repaints from the background -- an unobscure, a
+        // resize, a VNC client reconnecting -- would wipe that bevel with no
+        // event to put it back.
         XSelectInput(display(), m_button,
-                     ButtonPressMask | ButtonReleaseMask);
+                     ExposureMask | ButtonPressMask | ButtonReleaseMask);
         XSelectInput(display(), m_resize, ButtonPressMask | ButtonReleaseMask);
         mask |= CWX | CWY | CWWidth | CWHeight | CWBorderWidth;
     }
@@ -1165,6 +1299,16 @@ void Border::unmap()
 void Border::decorate(bool active, int w, int h)
 {
     setFrameVisibility(active, w, h);
+
+    // Activity is what decides whether this window wears bevels at all, and
+    // this is the one place that learns activity changed -- so both surfaces
+    // are repainted here. drawLabel() redraws the tab background before the
+    // bevel, so a window losing focus loses its highlight rather than keeping a
+    // stale one.
+    if (!isTransient()) {
+        drawLabel(active);
+        drawButtonBevel(active);
+    }
 }
 
 
@@ -1411,7 +1555,13 @@ void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
         }
     }
 
+    // The clear wipes the press feedback AND the bevel with it, so the bevel is
+    // put back. Without this the button silently goes flat after its first
+    // press and stays flat for the window's whole life -- a decoration bug that
+    // only appears after an interaction, which is the kind nobody notices in a
+    // screenshot.
     XClearWindow(display(), m_button);
+    drawButtonBevel(m_client->isActive());
     windowManager()->installCursor(WindowManager::RootCursor::Normal);
 
     if (tdiff > 5000L) return;  // dithered too long

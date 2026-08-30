@@ -72,6 +72,19 @@ public:
     void installColormap(Colormap cmap);
     unsigned long allocateColour(const char *name, const char *fallback);
 
+    // A shade of `name`: blended `fraction` of the way toward white when
+    // positive, toward black when negative. Used for the 1 px bevel highlight
+    // and shadow (plan 08.5-02).
+    //
+    // DERIVED RATHER THAN CONFIGURED, and that is the point. Hardcoded bevel
+    // colours would be correct for exactly one palette -- set a dark tab
+    // background and a fixed near-white highlight stops reading as a highlight
+    // and starts reading as a defect. Deriving them means every palette the
+    // user can configure gets bevels that belong to it, with no extra keys to
+    // set and no way to set them inconsistently.
+    unsigned long allocateShadeOf(const char *name, double fraction,
+                                  const char *desc);
+
     // Focus
     void clearFocus();
     void considerFocusChange(Client *c, Window w, Time timestamp);

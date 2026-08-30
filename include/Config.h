@@ -18,18 +18,40 @@ struct RuleParseState {
 };
 
 struct Config {
+    // ------------------------------------------------------------------
+    // Palette (plan 08.5-02)
+    //
+    // One silver family, cool-cast, with black ink. Replaces the neutral
+    // gray80/gray95 defaults the project carried from upstream.
+    //
+    // THE COOL CAST IS THE WHOLE TRICK, and it is deliberate: every silver
+    // below has R < G < B by 2 per channel. That reads as aluminium rather
+    // than concrete, costs exactly nothing to draw, and degrades gracefully --
+    // a 16-bit VNC session (RGB565) quantises the cast away and leaves plain
+    // neutral gray, which is merely the old look rather than a broken one.
+    //
+    // The frame is LIGHTER than the tab on purpose. That value order is what
+    // says "lit from above", and together with the 1 px bevel highlight in
+    // Border::drawBevel() it is where the metallic impression comes from. A
+    // banded gradient was considered and rejected: across a ~21 px tab, two or
+    // three bands are ~7 px each, which reads as stripes rather than sheen and
+    // either collapses or visibly bands once VNC quantises it.
+    //
+    // Every value keeps black text above 8.8:1 contrast.
+    // ------------------------------------------------------------------
+
     // Colors (tab)
-    std::string tabForeground   = "black";
-    std::string tabBackground   = "gray80";
+    std::string tabForeground   = "#000000";
+    std::string tabBackground   = "#C8CACC";
     // Colors (frame)
-    std::string frameBackground = "gray95";
-    std::string buttonBackground = "gray95";
-    std::string borders         = "black";
+    std::string frameBackground = "#DCDEE0";
+    std::string buttonBackground = "#DCDEE0";
+    std::string borders         = "#000000";
     // Colors (menu)
-    std::string menuForeground  = "black";
-    std::string menuBackground  = "gray80";
-    std::string menuHighlight   = "gray60";
-    std::string menuBorders     = "black";
+    std::string menuForeground  = "#000000";
+    std::string menuBackground  = "#C8CACC";
+    std::string menuHighlight   = "#A8ACB0";
+    std::string menuBorders     = "#000000";
     // Focus policy
     //
     // D-17: these three values were CORRECTED to describe what the binary

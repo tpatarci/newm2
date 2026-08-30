@@ -33,19 +33,19 @@ TEST_CASE("Config defaults match upstream Config.h", "[config]") {
     Config cfg;
 
     // Colors (tab) - 2 settings
-    REQUIRE(cfg.tabForeground == "black");
-    REQUIRE(cfg.tabBackground == "gray80");
+    REQUIRE(cfg.tabForeground == "#000000");
+    REQUIRE(cfg.tabBackground == "#C8CACC");
 
     // Colors (frame) - 3 settings
-    REQUIRE(cfg.frameBackground == "gray95");
-    REQUIRE(cfg.buttonBackground == "gray95");
-    REQUIRE(cfg.borders == "black");
+    REQUIRE(cfg.frameBackground == "#DCDEE0");
+    REQUIRE(cfg.buttonBackground == "#DCDEE0");
+    REQUIRE(cfg.borders == "#000000");
 
     // Colors (menu) - 4 settings
-    REQUIRE(cfg.menuForeground == "black");
-    REQUIRE(cfg.menuBackground == "gray80");
-    REQUIRE(cfg.menuHighlight == "gray60");
-    REQUIRE(cfg.menuBorders == "black");
+    REQUIRE(cfg.menuForeground == "#000000");
+    REQUIRE(cfg.menuBackground == "#C8CACC");
+    REQUIRE(cfg.menuHighlight == "#A8ACB0");
+    REQUIRE(cfg.menuBorders == "#000000");
 
     // Focus policy - 3 settings.
     //
@@ -103,7 +103,7 @@ TEST_CASE("applyFile parses key=value and overrides defaults", "[config]") {
     REQUIRE(cfg.newWindowCommand == "alacritty");
 
     // Unset keys retain defaults (D-17: auto-raise defaults to true)
-    REQUIRE(cfg.tabBackground == "gray80");
+    REQUIRE(cfg.tabBackground == "#C8CACC");
     REQUIRE(cfg.autoRaise == true);
 
     removeTempFile(path);
@@ -163,7 +163,7 @@ TEST_CASE("applyFile silently skips non-existent files", "[config]") {
     cfg.applyFile("/tmp/wm2-nonexistent-config-file-xyz123.cfg");
 
     // All defaults should remain
-    REQUIRE(cfg.tabForeground == "black");
+    REQUIRE(cfg.tabForeground == "#000000");
     REQUIRE(cfg.frameThickness == 7);
     REQUIRE(cfg.newWindowCommand == "xterm");
 }
@@ -319,7 +319,7 @@ TEST_CASE("Config load precedence: user config overrides system config", "[confi
     // User config adds new setting, overriding the built-in default
     REQUIRE(cfg.autoRaise == false);
     // Defaults preserved where neither config sets
-    REQUIRE(cfg.tabBackground == "gray80");
+    REQUIRE(cfg.tabBackground == "#C8CACC");
 
     // Clean up
     std::system(("rm -rf " + sysDir).c_str());
@@ -352,7 +352,7 @@ TEST_CASE("Config load with no config files returns pure defaults", "[config]") 
     Config cfg = Config::load(1, argv);
 
     // All defaults
-    REQUIRE(cfg.tabForeground == "black");
+    REQUIRE(cfg.tabForeground == "#000000");
     REQUIRE(cfg.frameThickness == 7);
     REQUIRE(cfg.autoRaiseDelay == 400);
     REQUIRE(cfg.newWindowCommand == "xterm");
@@ -532,7 +532,7 @@ TEST_CASE("Values exceeding 256 chars are rejected", "[config]") {
     cfg.applyFile(path);
 
     // Long value should be rejected (default kept)
-    REQUIRE(cfg.tabForeground == "black");
+    REQUIRE(cfg.tabForeground == "#000000");
     // Normal value should parse
     REQUIRE(cfg.tabBackground == "blue");
 
@@ -922,7 +922,7 @@ TEST_CASE("CLI -- terminates option parsing", "[config][cli]") {
 
     REQUIRE(cfg.frameThickness == 5);
     // --tab-foreground=blue should NOT be parsed (after --)
-    REQUIRE(cfg.tabForeground == "black");  // default remains
+    REQUIRE(cfg.tabForeground == "#000000");  // default remains
 }
 
 // Test 30: CLI --new-window-command="alacritty" sets newWindowCommand
@@ -991,7 +991,7 @@ TEST_CASE("CLI no args leaves config unchanged", "[config][cli]") {
     char* argv[] = { const_cast<char*>("wm2"), nullptr };
     cfg.applyCliArgs(1, argv);
 
-    REQUIRE(cfg.tabForeground == "black");
+    REQUIRE(cfg.tabForeground == "#000000");
     REQUIRE(cfg.frameThickness == 7);
     REQUIRE(cfg.autoRaise == true);          // D-17: unchanged means the default
     REQUIRE(cfg.newWindowCommand == "xterm");
