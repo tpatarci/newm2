@@ -77,6 +77,10 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     , m_lastKnownScreenW(0)
     , m_lastKnownScreenH(0)
     , m_currentTime(-1)
+    , m_timestampColdEntries(0)
+    , m_timestampBlockedWaits(0)
+    , m_timestampForeignMatches(0)
+    , m_timestampLongestWaitMs(0)
     , m_looping(false)
     , m_returnCode(0)
     , m_menuWindow(None)
@@ -919,7 +923,74 @@ Time WindowManager::timestamp(bool reset)
         XChangeProperty(display(), m_root, Atoms::wm2_running,
                         Atoms::wm2_running, 8, PropModeAppend,
                         reinterpret_cast<unsigned char*>(const_cast<char*>("")), 0);
-        XMaskEvent(display(), PropertyChangeMask, &event);
+
+        // 08.5-06 attribution instrumentation. BEHAVIOUR-PRESERVING, and
+        // deliberately so: no deadline, no predicate narrowing, no fallback.
+        // Those are the fix (08.5-07); installing any of them here would make
+        // the measurement this instrumentation exists to take unattributable.
+        //
+        // The check form is taken first only to make two cases separable. It
+        // removes a matching event that is already queued and returns without
+        // blocking when there is none -- semantically identical to what the
+        // blocking call below would have done with an already-queued event.
+        // The same idiom is already used at src/Events.cpp:539.
+        //
+        // SECURITY (threat T-8-TRACE-01): every line printed below is a fixed
+        // ASCII state word plus an integer. No window id, atom name, window
+        // title, host name or environment value. These transcripts are
+        // committed to a public repository.
+        ++m_timestampColdEntries;
+
+        if (XCheckMaskEvent(display(), PropertyChangeMask, &event) == False) {
+            ++m_timestampBlockedWaits;
+
+            if (m_timestampBlockedWaits == 1) {
+                // Written on the way IN, not on the way out. A window manager
+                // blocked in a mask wait burns no CPU and is indistinguishable
+                // from a healthy idle loop when observed from outside, so a
+                // wait that never returns has to leave its record before it
+                // starts rather than after it ends.
+                std::fprintf(stderr,
+                             "wm2: timestamp: entering blocking property wait\n");
+                std::fflush(stderr);
+            }
+
+            const auto waitStart = std::chrono::steady_clock::now();
+            XMaskEvent(display(), PropertyChangeMask, &event);
+            const long elapsedMs = static_cast<long>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - waitStart).count());
+
+            if (elapsedMs > m_timestampLongestWaitMs) {
+                m_timestampLongestWaitMs = elapsedMs;
+            }
+            if (elapsedMs > 100) {
+                // A warning, per the project's error-handling convention.
+                // Never fatal(): a slow wait is a diagnosis, not a reason to
+                // take the user's session down.
+                std::fprintf(stderr,
+                             "wm2: warning: timestamp: blocking property wait %ld ms\n",
+                             elapsedMs);
+                std::fflush(stderr);
+            }
+        }
+
+        // Classification, on both paths. PropertyChangeMask is selected on the
+        // root (initialiseScreen) AND on every managed client (Client.cpp),
+        // so the wait can be satisfied by a client's own PropertyNotify --
+        // which is then consumed here and never reaches eventProperty(). That
+        // the possibility exists is a fact about the event masks; whether it
+        // actually happens is what this counter answers.
+        if (event.xproperty.window != m_root ||
+            event.xproperty.atom != Atoms::wm2_running) {
+            ++m_timestampForeignMatches;
+            if (m_timestampForeignMatches == 1) {
+                std::fprintf(stderr,
+                             "wm2: warning: timestamp: property wait matched a foreign event\n");
+                std::fflush(stderr);
+            }
+        }
+
         m_currentTime = event.xproperty.time;
     }
 

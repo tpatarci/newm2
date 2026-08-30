@@ -622,8 +622,13 @@ if(BUILD_TESTS)
         # The tests exec the binary, so it must exist before they run.
         add_dependencies(test_wm_runtime wm2-born-again)
 
-        # ADD_TAGS_AS_LABELS is required by D-33, or the four tags this file
-        # carries are not selectable by the anchored label gates.
+        # ADD_TAGS_AS_LABELS is required by D-33, or the eleven tags this file
+        # carries are not selectable by the anchored label gates. Eleven is the
+        # figure computed by
+        #     grep -oE '\[wm_[a-z_]+\]' tests/test_wm_runtime.cpp | sort -u | wc -l
+        # -- recompute it with that command rather than by eye whenever a tag is
+        # added or removed. It read "four" until 08.5-06, which was already
+        # wrong by six before that plan added [wm_timestamp].
         #
         # A longer TIMEOUT than its siblings: the stress group churns 100+
         # windows against the WM and the config group starts eleven separate

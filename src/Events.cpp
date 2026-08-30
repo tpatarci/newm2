@@ -162,6 +162,20 @@ int WindowManager::loop()
         }
     }
 
+    // 08.5-06: the window manager's own report of the cold-cache property wait
+    // in timestamp(). This is the line that makes a REFUTATION checkable: a run
+    // that prints cold=0 is positive evidence that the cold-cache branch is not
+    // the mechanism, and the Negative-Result Contract requires that outcome to
+    // be as recordable as a confirmation. Spelled so that "never entered the
+    // branch" and "entered it and never had to block" are distinguishable.
+    //
+    // Fixed ASCII state words and integers only (threat T-8-TRACE-01).
+    std::fprintf(stderr,
+                 "wm2: timestamp: cold=%lu blocked=%lu foreign=%lu longestms=%ld\n",
+                 m_timestampColdEntries, m_timestampBlockedWaits,
+                 m_timestampForeignMatches, m_timestampLongestWaitMs);
+    std::fflush(stderr);
+
     release();
     return m_returnCode;
 }

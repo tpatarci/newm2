@@ -3883,3 +3883,125 @@ TEST_CASE("The active window's tab wears a bevel and an inactive one does not",
     CHECK_FALSE(contains(errs, "BadValue"));
     CHECK_FALSE(contains(errs, "BadDrawable"));
 }
+
+// ---------------------------------------------------------------------------
+// The window manager's own report of the cold-cache property wait (08.5-06).
+//
+// This case is the observer end of a path that starts inside the window
+// manager's event loop: src/Events.cpp invalidates m_currentTime on every
+// iteration, WindowManager::timestamp() falls into its cold-cache branch when a
+// handler did not record an event time of its own, and the counters that branch
+// keeps are printed as one summary line at the tail of loop(). The line is only
+// readable after the child has exited, which is why this case terminates the
+// window manager before reading its stderr.
+//
+// Its value is a PRINTED MEASUREMENT, not a threshold -- the same shape as the
+// [wm_stress] resident-memory case. It asserts exactly two things: that the
+// summary line reached the observer at all, and that the workload actually
+// reached the branch. The second is an ANTI-VACUITY GUARD, not a claim about
+// any defect: a case reporting cold=0 measures nothing. No bound on the wait is
+// asserted, because no bound exists yet -- installing one is plan 08.5-07's
+// work and asserting one here would pre-judge the measurement this case exists
+// to take.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The summary line's four figures, as printed by WindowManager::loop(), plus
+// the line itself. The raw line is kept because this case ECHOES it verbatim to
+// stdout: a `with message:` block is only rendered when an assertion fails, so a
+// green run would otherwise carry no evidence of the very line it exists to
+// prove reached the observer.
+struct TimestampSummary {
+    bool          found        = false;
+    unsigned long cold         = 0;
+    unsigned long blocked      = 0;
+    unsigned long foreign      = 0;
+    long          longestMs    = 0;
+    std::string   line;
+};
+
+TimestampSummary parseTimestampSummary(const std::string& stderrText)
+{
+    TimestampSummary s;
+    const char* kMarker = "wm2: timestamp: cold=";
+    const std::string::size_type at = stderrText.rfind(kMarker);
+    if (at == std::string::npos) return s;
+
+    const std::string line = stderrText.substr(at, stderrText.find('\n', at) - at);
+    if (std::sscanf(line.c_str(),
+                    "wm2: timestamp: cold=%lu blocked=%lu foreign=%lu longestms=%ld",
+                    &s.cold, &s.blocked, &s.foreign, &s.longestMs) != 4) {
+        return s;
+    }
+    s.line  = line;
+    s.found = true;
+    return s;
+}
+
+}  // namespace
+
+TEST_CASE("The window manager reports how often its timestamp path took a "
+          "cold-cache property wait", "[wm_timestamp]")
+{
+    WmFixture fixture(cleanFixture({}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window firstClient = None, secondClient = None;
+    const Window firstFrame = mapClientAndAwaitFrame(d, 40, 40, 240, 200, firstClient);
+    REQUIRE(firstFrame != None);
+    const Window secondFrame = mapClientAndAwaitFrame(d, 400, 40, 240, 200, secondClient);
+    REQUIRE(secondFrame != None);
+
+    // Drive the pointer-entry focus route: an EnterNotify reaches
+    // considerFocusChange(), the pointer-stopped deadline expires in
+    // checkDelaysForFocus(), and the activate() that follows calls
+    // timestamp(false) from a handler that recorded no event time of its own.
+    //
+    // settleWm() between iterations, never a tight pumpWm() loop: the spacing
+    // is what lets the deadline actually expire, and a tight loop of the same
+    // length measurably reads stale state elsewhere in this file.
+    for (int i = 0; i < 8; ++i) {
+        const Window target = (i % 2 == 0) ? firstClient : secondClient;
+        XWarpPointer(d, None, target, 0, 0, 0, 0, 60, 60);
+        XSync(d, False);
+        settleWm(d);
+    }
+
+    parkPointer(d);
+    settleWm(d);
+
+    REQUIRE(fixture.wmAlive());
+
+    // The summary is written at the tail of loop(), so it is only in the
+    // captured stderr once the child has exited.
+    REQUIRE(fixture.terminateWmCleanly());
+
+    const std::string errs = fixture.wmStderr();
+    const TimestampSummary summary = parseTimestampSummary(errs);
+
+    // Echoed VERBATIM, so the window manager's own line is in the ctest
+    // transcript of a passing run and not only of a failing one. The line is
+    // fixed ASCII state words plus integers by construction (T-8-TRACE-01), so
+    // echoing it into a committed transcript is safe.
+    std::printf("[wm_timestamp] %s\n",
+                summary.found ? summary.line.c_str()
+                              : "NO SUMMARY LINE -- the window manager printed none");
+    std::printf("[wm_timestamp] cold-cache property wait: "
+                "branch entries %lu, blocked waits %lu, foreign matches %lu, "
+                "longest blocked wait %ld ms\n",
+                summary.cold, summary.blocked, summary.foreign, summary.longestMs);
+    std::fflush(stdout);
+
+    INFO("wm stderr:\n" << errs);
+
+    // 1. The fact reached the observer end-to-end.
+    REQUIRE(summary.found);
+
+    // 2. ANTI-VACUITY GUARD. A run reporting zero branch entries never reached
+    //    the path and measures nothing.
+    CHECK(summary.cold > 0);
+}

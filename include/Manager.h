@@ -214,6 +214,26 @@ private:
 
     int m_currentTime;
 
+    // 08.5-06: cold-cache property-wait self-report for timestamp().
+    //
+    // src/Events.cpp invalidates m_currentTime on every loop iteration, so any
+    // timestamp(false) reached by a handler that did not itself record an event
+    // time falls into the cold-cache branch and takes a property wait on the
+    // window manager's only thread. These four counters are what let a run in
+    // which that branch was never entered be told apart from a run in which it
+    // entered and blocked -- a distinction the loop() tail reports on exit, and
+    // the reason a REFUTATION of the cold-cache hypothesis is checkable rather
+    // than merely assertable.
+    //
+    // They are diagnostics only: nothing in the window manager reads them to
+    // decide anything, and the bound that would use them belongs to 08.5-07.
+    // Declaration order here is the order the constructor's initialiser list
+    // must use, or -Wreorder fires.
+    unsigned long m_timestampColdEntries;
+    unsigned long m_timestampBlockedWaits;
+    unsigned long m_timestampForeignMatches;
+    long m_timestampLongestWaitMs;
+
     bool m_looping;
     int m_returnCode;
 
