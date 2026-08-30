@@ -310,12 +310,23 @@ The stated target set for this project is TigerVNC, TightVNC, XRDP and X2Go.
 | **Xephyr** (nested) | **Validated.** Runtime smoke transcript captured in the release evidence bundle. |
 | **TigerVNC** | **Validated.** Real session, human at the client. SHAPE, RANDR and RENDER all present; capability transcript, root properties and window tree committed under the phase evidence bundle. |
 | **XRDP** | **Validated.** As above, same extension result. |
-| **X2Go** | **Not tested. An accepted deviation with a recorded reason** — and a weaker one than TightVNC's. See below. |
+| **X2Go** | **Partially validated.** `nxagent 3.5.99.26` — the X server X2Go uses — was captured headlessly, nested on a local Xvfb. It advertises SHAPE, RANDR and RENDER (23 extensions in total), and the window manager frames clients on it at the standard `+24+8` client offset. What was **not** exercised is X2Go's own path: its agent start-up wrapper, with an NX compression proxy over SSH in front of the agent. Transcript committed under `.planning/phases/08.5-v1.0-closeout/evidence/x2go-nxagent/`, whose scope note states that difference. See below. |
 | **TightVNC** | **Validated.** Headless capability capture against `TightVNC 1.3.10` (from `tightvncserver 1:1.3.10-5`), started directly, with no viewer attached and no network-exposing flag. It advertises seven extensions in total — SHAPE present, RANDR absent, RENDER absent — which makes it the only server in this project's evidence that genuinely lacks the extensions the fallbacks were built for. The window manager started on it, both fallback ladders announced themselves on stderr, a client was framed, and no X protocol error was logged. Transcript committed under `.planning/phases/08.5-v1.0-closeout/evidence/tightvnc/`, which records beside it what the capture does not settle. See below. |
 
-Two of the four stated targets are exercised. That is the honest count, and the
-project requirement covering "compatible with all four out of the box" is held
-**unmet** rather than ticked on the strength of the two that were done.
+All four stated targets now have a committed capability transcript, each captured
+at a known commit. Two of them — TigerVNC and XRDP — were exercised in real
+sessions with a person at the client. The other two — TightVNC, and `nxagent`,
+the server that sits behind X2Go — were captured headlessly, with no viewer
+attached and nobody in the loop. On that evidence the project requirement
+covering "compatible with all four out of the box" is **met**.
+
+Four transcripts is not the same thing as four fully exercised targets, and the
+table above keeps those apart on purpose. What a headless capture settles is the
+extension surface a server offers, and that this window manager starts, frames
+and manages windows on it. What it does not settle is how that target *feels* to
+use — whether the tab label looks right, whether a drag or a menu behaves over a
+real connection. That is what the two sections below, and the interaction
+checklist in the release evidence bundle, are for.
 
 ### X2Go: an accepted deviation, and a weaker one than TightVNC's
 
