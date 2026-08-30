@@ -117,6 +117,25 @@ static RuleWindowFacts facts(const std::string& instance, const std::string& cls
     return f;
 }
 
+// The same, with a title. Separate from facts() rather than a fourth defaulted
+// parameter, so the ~20 existing call sites keep reading as three-fact windows
+// and the title cases are visibly about the title.
+static RuleWindowFacts titledFacts(const std::string& instance,
+                                   const std::string& cls,
+                                   const std::string& title,
+                                   RuleWindowType type = RuleWindowType::Normal) {
+    RuleWindowFacts f = facts(instance, cls, type);
+    f.title = title;
+    return f;
+}
+
+static WindowRule titleRule(const std::string& text) {
+    WindowRule r;
+    r.hasMatchTitle = true;
+    r.matchTitle = text;
+    return r;
+}
+
 // =============================================================================
 // Section 1: the matcher and the fold
 // =============================================================================
@@ -139,8 +158,8 @@ TEST_CASE("A rule with only a class criterion matches that class and nothing els
 // -----------------------------------------------------------------------------
 TEST_CASE("A class criterion and a name criterion are AND-ed", "[rules]") {
     WindowRule r = classRule("Firefox");
-    r.hasMatchName = true;
-    r.matchName = "navigator";
+    r.hasMatchInstance = true;
+    r.matchInstance = "navigator";
 
     REQUIRE(ruleMatches(r, facts("navigator", "Firefox")));
 
@@ -203,8 +222,8 @@ TEST_CASE("The class criterion is tested against both the instance and the class
     REQUIRE(ruleMatches(byInstanceName, facts("navigator", "Firefox")));
 
     WindowRule byName;
-    byName.hasMatchName = true;
-    byName.matchName = "Firefox";
+    byName.hasMatchInstance = true;
+    byName.matchInstance = "Firefox";
     REQUIRE_FALSE(ruleMatches(byName, facts("navigator", "Firefox")));
 }
 
@@ -235,8 +254,8 @@ TEST_CASE("Folding matching rules yields the last value set for each action", "[
     broad.posY = 100;
 
     WindowRule specific = classRule("Firefox");
-    specific.hasMatchName = true;
-    specific.matchName = "navigator";
+    specific.hasMatchInstance = true;
+    specific.matchInstance = "navigator";
     specific.hasPosition = true;
     specific.posX = 640;
     specific.posY = 480;
@@ -295,7 +314,7 @@ TEST_CASE("A later rule setting an action false overrides an earlier true", "[ru
 TEST_CASE("A class line, a name line and two action lines produce one rule", "[rules]") {
     std::string path = writeTempConfig(
         "rule-match-class = Firefox\n"
-        "rule-match-name  = navigator\n"
+        "rule-match-instance = navigator\n"
         "rule-position    = 100,200\n"
         "rule-size        = 800x600\n"
     );
@@ -307,8 +326,8 @@ TEST_CASE("A class line, a name line and two action lines produce one rule", "[r
     const WindowRule& r = cfg.rules[0];
     REQUIRE(r.hasMatchClass);
     REQUIRE(r.matchClass == "Firefox");
-    REQUIRE(r.hasMatchName);
-    REQUIRE(r.matchName == "navigator");
+    REQUIRE(r.hasMatchInstance);
+    REQUIRE(r.matchInstance == "navigator");
     REQUIRE(r.hasPosition);
     REQUIRE(r.posX == 100);
     REQUIRE(r.posY == 200);
@@ -358,7 +377,7 @@ TEST_CASE("A match line following an action line opens a second rule", "[rules]"
 TEST_CASE("Consecutive match and mode lines attach to the same rule", "[rules]") {
     std::string path = writeTempConfig(
         "rule-match-class = Firefox\n"
-        "rule-match-name  = navigator\n"
+        "rule-match-instance = navigator\n"
         "rule-match-type  = normal\n"
         "rule-match-mode  = exact\n"
         "rule-no-decorate = true\n"
@@ -370,7 +389,7 @@ TEST_CASE("Consecutive match and mode lines attach to the same rule", "[rules]")
     REQUIRE(cfg.rules.size() == 1);
     const WindowRule& r = cfg.rules[0];
     REQUIRE(r.hasMatchClass);
-    REQUIRE(r.hasMatchName);
+    REQUIRE(r.hasMatchInstance);
     REQUIRE(r.hasMatchType);
     REQUIRE(r.matchType == RuleWindowType::Normal);
     REQUIRE(r.mode == RuleMatchMode::Exact);
@@ -553,7 +572,7 @@ TEST_CASE("A malformed position or size warns and leaves that action unset", "[r
 TEST_CASE("A config file of only rule lines produces no unknown-key warnings", "[rules]") {
     std::string path = writeTempConfig(
         "rule-match-class  = Firefox\n"
-        "rule-match-name   = navigator\n"
+        "rule-match-instance  = navigator\n"
         "rule-match-type   = normal\n"
         "rule-match-mode   = substring\n"
         "rule-no-decorate  = true\n"
@@ -575,7 +594,7 @@ TEST_CASE("A config file of only rule lines produces no unknown-key warnings", "
     REQUIRE(text.find("wm2: warning:") == std::string::npos);
     REQUIRE(cfg.rules.size() == 1);
     REQUIRE(cfg.rules[0].hasMatchClass);
-    REQUIRE(cfg.rules[0].hasMatchName);
+    REQUIRE(cfg.rules[0].hasMatchInstance);
     REQUIRE(cfg.rules[0].hasMatchType);
     REQUIRE(cfg.rules[0].mode == RuleMatchMode::Substring);
     REQUIRE(cfg.rules[0].noDecorate == RuleTriState::On);
@@ -595,7 +614,7 @@ TEST_CASE("A rule value longer than the value-length limit is rejected", "[rules
 
     std::string path = writeTempConfig(
         "rule-match-class = " + longValue + "\n"
-        "rule-match-name  = navigator\n"
+        "rule-match-instance = navigator\n"
     );
 
     Config cfg;
@@ -608,8 +627,8 @@ TEST_CASE("A rule value longer than the value-length limit is rejected", "[rules
     REQUIRE(cfg.rules.size() == 1);
     REQUIRE_FALSE(cfg.rules[0].hasMatchClass);
     // ... and the next line parsed normally.
-    REQUIRE(cfg.rules[0].hasMatchName);
-    REQUIRE(cfg.rules[0].matchName == "navigator");
+    REQUIRE(cfg.rules[0].hasMatchInstance);
+    REQUIRE(cfg.rules[0].matchInstance == "navigator");
 
     removeTempFile(path);
 }
@@ -626,7 +645,7 @@ TEST_CASE("Rules append across the system-then-user chain without merging groups
     std::string systemFile = writeTempConfig(
         "rule-match-class = Firefox\n"
         "rule-position    = 100,100\n"
-        "rule-match-name  = navigator\n"
+        "rule-match-instance = navigator\n"
     );
     std::string userFile = writeTempConfig(
         "rule-match-class = XTerm\n"
@@ -645,8 +664,8 @@ TEST_CASE("Rules append across the system-then-user chain without merging groups
 
     // System rule 2 closed at the file boundary: the user file's class did not
     // get AND-ed into it.
-    REQUIRE(cfg.rules[1].hasMatchName);
-    REQUIRE(cfg.rules[1].matchName == "navigator");
+    REQUIRE(cfg.rules[1].hasMatchInstance);
+    REQUIRE(cfg.rules[1].matchInstance == "navigator");
     REQUIRE_FALSE(cfg.rules[1].hasMatchClass);
 
     // User rule, appended after the system rules in file order.
@@ -677,4 +696,177 @@ TEST_CASE("Rules append across the system-then-user chain without merging groups
     removeTempFile(userFile);
     removeTempFile(sysEndsOnAction);
     removeTempFile(userStartsOnMatch);
+}
+
+// =============================================================================
+// Section 3: the title criterion and the match-key rename (plan 08.5-01)
+//
+// RULES-01 promised matching by "WM_CLASS, WM_NAME, window type". Phase 8
+// delivered two of the three and left the requirement Pending rather than
+// rewording it, because nothing architectural was in the way -- which is what
+// these cases close.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// Test: the title criterion matches, and matches the TITLE
+// -----------------------------------------------------------------------------
+TEST_CASE("A title criterion matches on the window title", "[rules]") {
+    WindowRule r = titleRule("Inbox");
+
+    REQUIRE(ruleMatches(r, titledFacts("nav", "Firefox", "Inbox - Mail")));
+    REQUIRE_FALSE(ruleMatches(r, titledFacts("nav", "Firefox", "Drafts - Mail")));
+
+    // It is the TITLE and not either WM_CLASS field. A matcher that reached for
+    // the wrong string would pass the two assertions above whenever the title
+    // happened to resemble the class, so this pins it negatively.
+    REQUIRE_FALSE(ruleMatches(titleRule("Firefox"),
+                              titledFacts("navigator", "Firefox", "Inbox")));
+    REQUIRE_FALSE(ruleMatches(titleRule("navigator"),
+                              titledFacts("navigator", "Firefox", "Inbox")));
+}
+
+// -----------------------------------------------------------------------------
+// Test: the title criterion honours the per-rule match mode
+// -----------------------------------------------------------------------------
+TEST_CASE("A title criterion honours exact and substring modes", "[rules]") {
+    WindowRule sub = titleRule("Inbox");
+    sub.mode = RuleMatchMode::Substring;
+    REQUIRE(ruleMatches(sub, titledFacts("nav", "Firefox", "Inbox - Mail")));
+
+    WindowRule exact = titleRule("Inbox");
+    exact.mode = RuleMatchMode::Exact;
+    REQUIRE_FALSE(ruleMatches(exact, titledFacts("nav", "Firefox", "Inbox - Mail")));
+    REQUIRE(ruleMatches(exact, titledFacts("nav", "Firefox", "Inbox")));
+}
+
+// -----------------------------------------------------------------------------
+// Test: the title criterion AND-s with the others (D-21)
+// -----------------------------------------------------------------------------
+TEST_CASE("A title criterion is AND-ed with a class criterion", "[rules]") {
+    WindowRule r = classRule("Firefox");
+    r.hasMatchTitle = true;
+    r.matchTitle = "Inbox";
+
+    REQUIRE(ruleMatches(r, titledFacts("nav", "Firefox", "Inbox - Mail")));
+
+    // Class matches, title does not.
+    REQUIRE_FALSE(ruleMatches(r, titledFacts("nav", "Firefox", "Drafts")));
+    // Title matches, class does not.
+    REQUIRE_FALSE(ruleMatches(r, titledFacts("nav", "XTerm", "Inbox - Mail")));
+}
+
+// -----------------------------------------------------------------------------
+// Test: a title-only rule is a rule
+//
+// THE ONE THE POSITIVE CASES ABOVE CANNOT CATCH. ruleMatches() discards a rule
+// with no criteria, and that guard enumerates the criteria explicitly. Forget
+// the new one there and a rule whose ONLY line is rule-match-title is thrown
+// away before it is ever compared -- indistinguishable, from the outside, from
+// a rule that simply did not match.
+// -----------------------------------------------------------------------------
+TEST_CASE("A rule with only a title criterion is not treated as criterion-free",
+          "[rules]") {
+    WindowRule r = titleRule("Inbox");
+    r.noDecorate = RuleTriState::On;
+
+    REQUIRE(ruleMatches(r, titledFacts("nav", "Firefox", "Inbox")));
+
+    RuleOutcome out = applyRules({r}, titledFacts("nav", "Firefox", "Inbox"));
+    REQUIRE(out.noDecorate == RuleTriState::On);
+}
+
+// -----------------------------------------------------------------------------
+// Test: an empty title matches nothing anyone would write
+// -----------------------------------------------------------------------------
+TEST_CASE("A title criterion against an untitled window does not match", "[rules]") {
+    REQUIRE_FALSE(ruleMatches(titleRule("Inbox"),
+                              titledFacts("nav", "Firefox", "")));
+
+    // The degenerate rule -- an empty criterion -- substring-matches everything,
+    // which is what `find("")` means and is consistent with how the other two
+    // text criteria already behave. Asserted so the behaviour is a recorded
+    // choice rather than a surprise.
+    WindowRule empty = titleRule("");
+    REQUIRE(ruleMatches(empty, titledFacts("nav", "Firefox", "anything")));
+}
+
+// -----------------------------------------------------------------------------
+// Test: rule-match-title parses, and opens a rule for grouping purposes
+// -----------------------------------------------------------------------------
+TEST_CASE("rule-match-title parses and opens a rule group", "[rules]") {
+    std::string path = writeTempConfig(
+        "rule-match-title = Inbox\n"
+        "rule-no-decorate = true\n"
+    );
+
+    Config cfg;
+    cfg.applyFile(path);
+
+    REQUIRE(cfg.rules.size() == 1);
+    REQUIRE(cfg.rules[0].hasMatchTitle);
+    REQUIRE(cfg.rules[0].matchTitle == "Inbox");
+    // The action attached to it, which is what "is a match key for grouping
+    // purposes" means in practice.
+    REQUIRE(cfg.rules[0].noDecorate == RuleTriState::On);
+
+    removeTempFile(path);
+}
+
+// -----------------------------------------------------------------------------
+// Test: rule-match-instance parses and keeps the deliberate asymmetry
+// -----------------------------------------------------------------------------
+TEST_CASE("rule-match-instance matches the instance name only", "[rules]") {
+    std::string path = writeTempConfig(
+        "rule-match-instance = navigator\n"
+        "rule-no-decorate    = true\n"
+    );
+
+    Config cfg;
+    cfg.applyFile(path);
+
+    REQUIRE(cfg.rules.size() == 1);
+    REQUIRE(cfg.rules[0].hasMatchInstance);
+    REQUIRE(cfg.rules[0].matchInstance == "navigator");
+
+    REQUIRE(ruleMatches(cfg.rules[0], facts("navigator", "Firefox")));
+    // NOT the class name -- the asymmetry with rule-match-class, asserted
+    // negatively so it cannot drift.
+    REQUIRE_FALSE(ruleMatches(cfg.rules[0], facts("xterm", "navigator")));
+
+    removeTempFile(path);
+}
+
+// -----------------------------------------------------------------------------
+// Test: rule-match-name is GONE, not aliased (D-8.5-01)
+//
+// This is the case that proves the rename happened. Without it, adding
+// rule-match-instance while quietly leaving rule-match-name in the key set
+// would pass every other case in this file.
+// -----------------------------------------------------------------------------
+TEST_CASE("rule-match-name is no longer a rule key", "[rules]") {
+    std::string path = writeTempConfig(
+        "rule-match-name  = navigator\n"
+        "rule-no-decorate = true\n"
+    );
+
+    Config cfg;
+    std::string warnings;
+    {
+        StderrCapture cap;
+        cfg.applyFile(path);
+        warnings = cap.text();
+    }
+
+    // It warns as an unknown key...
+    REQUIRE_THAT(warnings, Catch::Matchers::ContainsSubstring("unknown config key"));
+    REQUIRE_THAT(warnings, Catch::Matchers::ContainsSubstring("rule-match-name"));
+
+    // ...and, being unknown, it opens NO rule. The action line that follows is
+    // therefore an orphan, which the parser warns about separately -- so the
+    // whole group contributes nothing rather than half of it silently applying.
+    REQUIRE(cfg.rules.empty());
+    REQUIRE_THAT(warnings,
+                 Catch::Matchers::ContainsSubstring("action with no preceding"));
+
+    removeTempFile(path);
 }

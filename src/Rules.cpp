@@ -29,7 +29,14 @@ bool ruleMatches(const WindowRule& rule, const RuleWindowFacts& facts) {
     // A rule with no criteria matches NOTHING, not everything. A config typo
     // that drops the only match line must not silently apply that rule's
     // actions to every window on the screen.
-    if (!rule.hasMatchClass && !rule.hasMatchName && !rule.hasMatchType) {
+    //
+    // EVERY CRITERION MUST BE COUNTED HERE. A criterion added to the matcher
+    // below but forgotten in this guard produces a rule that sets only that
+    // criterion and is then discarded as criterion-free -- which looks exactly
+    // like a rule that does not match, and is the one failure in this file that
+    // no positive test would catch.
+    if (!rule.hasMatchClass && !rule.hasMatchInstance &&
+        !rule.hasMatchTitle && !rule.hasMatchType) {
         return false;
     }
 
@@ -44,9 +51,16 @@ bool ruleMatches(const WindowRule& rule, const RuleWindowFacts& facts) {
         if (!hit) return false;
     }
 
-    if (rule.hasMatchName) {
-        // The name criterion is the precise one: instance name only.
-        if (!criterionMatches(rule.matchName, facts.instanceName, rule.mode)) {
+    if (rule.hasMatchInstance) {
+        // The instance criterion is the precise one: instance name only.
+        if (!criterionMatches(rule.matchInstance, facts.instanceName, rule.mode)) {
+            return false;
+        }
+    }
+
+    if (rule.hasMatchTitle) {
+        // The title as it stood when the window was mapped (D-8.5-03).
+        if (!criterionMatches(rule.matchTitle, facts.title, rule.mode)) {
             return false;
         }
     }

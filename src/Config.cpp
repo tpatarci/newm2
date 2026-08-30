@@ -256,12 +256,19 @@ void Config::applyKeyValue(const std::string& key, const std::string& value,
     // are not rule keys are transparent -- they leave the grouping state
     // exactly as they found it. So:
     //
-    //     rule-match-class = Firefox      # opens rule 1
-    //     rule-match-name  = navigator    # AND-ed into rule 1
-    //     rule-position    = 100,100      # action on rule 1
-    //     rule-size        = 800x600      # action on rule 1
-    //     rule-match-type  = dialog       # action boundary crossed -> rule 2
-    //     rule-no-decorate = true         # action on rule 2
+    //     rule-match-class    = Firefox      # opens rule 1
+    //     rule-match-instance = navigator    # AND-ed into rule 1
+    //     rule-position       = 100,100      # action on rule 1
+    //     rule-size           = 800x600      # action on rule 1
+    //     rule-match-type     = dialog       # action boundary crossed -> rule 2
+    //     rule-no-decorate    = true         # action on rule 2
+    //
+    // The three text criteria are named for what they compare (D-8.5-01):
+    // rule-match-class tests both WM_CLASS fields, rule-match-instance tests the
+    // instance name, rule-match-title tests the window title. The old
+    // `rule-match-name` spelling -- which compared the instance name while its
+    // name said WM_NAME -- was removed in plan 08.5-01 with no alias, before
+    // v1.0 made the mistake permanent.
     //
     // ruleState is per-file when the caller is applyFile(), and a member when
     // the caller is the public single-pair applyKeyValue(). Both are explicit
@@ -277,8 +284,9 @@ void Config::applyKeyValue(const std::string& key, const std::string& value,
     // =========================================================================
 
     const bool isRuleMatchKey =
-        (key == "rule-match-class" || key == "rule-match-name" ||
-         key == "rule-match-type"  || key == "rule-match-mode");
+        (key == "rule-match-class" || key == "rule-match-instance" ||
+         key == "rule-match-title" || key == "rule-match-type" ||
+         key == "rule-match-mode");
 
     const bool isRuleActionKey =
         (key == "rule-no-decorate" || key == "rule-position" ||
@@ -299,9 +307,15 @@ void Config::applyKeyValue(const std::string& key, const std::string& value,
             return;
         }
 
-        if (key == "rule-match-name") {
-            rule.hasMatchName = true;
-            rule.matchName = value;
+        if (key == "rule-match-instance") {
+            rule.hasMatchInstance = true;
+            rule.matchInstance = value;
+            return;
+        }
+
+        if (key == "rule-match-title") {
+            rule.hasMatchTitle = true;
+            rule.matchTitle = value;
             return;
         }
 

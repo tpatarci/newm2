@@ -47,11 +47,19 @@ enum class RuleWindowType {
     Notification
 };
 
-// A window as the matcher sees it -- the three facts plan 08-10 reads off each
-// window when it takes it under management. No Window handle, no Display.
+// A window as the matcher sees it -- the facts plan 08-10 reads off each window
+// when it takes it under management. No Window handle, no Display.
+//
+// `title` was added by plan 08.5-01 and is the reason RULES-01 was Pending
+// through the whole of Phase 8. It is the title as it stands AT MAP TIME
+// (D-8.5-03): the WM folds rules once, when a window appears, and does not
+// re-fold when a title later changes. Re-applying a rule's position and size on
+// rename would make a window jump every time a document is saved under a new
+// name or a browser tab is switched.
 struct RuleWindowFacts {
     std::string instanceName;   // WM_CLASS res_name
     std::string className;      // WM_CLASS res_class
+    std::string title;          // _NET_WM_NAME, or WM_NAME when that is absent
     RuleWindowType type = RuleWindowType::Normal;
 };
 
@@ -77,15 +85,32 @@ struct WindowRule {
     // Each carries an explicit "was set" flag, so a criterion the user never
     // wrote is distinguishable from one they wrote as an empty string.
 
-    // Tested against BOTH the instance name and the class name, because users
-    // say "Firefox" meaning either.
+    // The three text criteria, and the config keys they are spelled with.
+    //
+    // THE KEY NAMES WERE CORRECTED IN PLAN 08.5-01 (D-8.5-01), before v1.0
+    // shipped and while it was still free to do so. `rule-match-name` matched
+    // the WM_CLASS *instance name* while its name said WM_NAME, and that
+    // mismatch had already put a false promise into docs/RELEASE-NOTES.md --
+    // documented as matching the window title, which it never did. Renaming is
+    // free today and breaking the day after release, so it was taken now. There
+    // is deliberately NO alias for the old spelling: it falls through to the
+    // parser's existing unknown-key warning, which is the visible failure this
+    // rename is willing to pay for.
+
+    // `rule-match-class` -- tested against BOTH WM_CLASS fields, because users
+    // say "Firefox" meaning either. The forgiving one.
     bool hasMatchClass = false;
     std::string matchClass;
 
-    // Tested against the instance name only. The asymmetry with matchClass is
-    // deliberate: the class criterion is the forgiving one.
-    bool hasMatchName = false;
-    std::string matchName;
+    // `rule-match-instance` -- tested against the instance name only. The
+    // asymmetry with matchClass is deliberate: this is the precise one.
+    bool hasMatchInstance = false;
+    std::string matchInstance;
+
+    // `rule-match-title` -- tested against the window title (plan 08.5-01).
+    // Map-time only; see RuleWindowFacts above.
+    bool hasMatchTitle = false;
+    std::string matchTitle;
 
     bool hasMatchType = false;
     RuleWindowType matchType = RuleWindowType::Normal;
