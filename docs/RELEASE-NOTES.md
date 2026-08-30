@@ -328,46 +328,96 @@ use — whether the tab label looks right, whether a drag or a menu behaves over
 real connection. That is what the two sections below, and the interaction
 checklist in the release evidence bundle, are for.
 
-### X2Go: an accepted deviation, and a weaker one than TightVNC's
+### X2Go: measured at the agent, untested through the proxy
 
-X2Go is **not** validated for this release. `x2goserver` was never installed on
-the validation host, so there is no session, no transcript and no interaction
-record.
+X2Go is **partially** validated for this release, and the two halves are worth
+keeping apart.
 
-This should not be read as the same kind of gap as TightVNC below. TightVNC has
-a close relative under test — TigerVNC shares its `Xvnc` ancestry, so a TigerVNC
-result is genuine evidence about it. X2Go has no such proxy here. Its X server is
-`nxagent`, a different codebase from both `Xvnc` and XRDP's backends, with a
-compression proxy in front of it — precisely the layer most likely to differ on
-the things this release depends on: the Shape and RANDR extension surface, and
-the RENDER path the sideways tab font uses. **Nothing in the TigerVNC or XRDP
-results transfers to it.**
+**What was measured.** `nxagent 3.5.99.26` — the X server X2Go runs — was
+captured headlessly, nested on a local Xvfb, with this window manager started on
+it and a client framed. It advertises SHAPE, RANDR and RENDER, 23 extensions in
+total, and the window manager's own capability probes agree with `xdpyinfo`. The
+client is reparented at the standard `+24+8` offset and appears in
+`_NET_CLIENT_LIST`. The whole capture took about two minutes, with nobody sitting
+through it.
+
+That corrects two things an earlier draft of this document asserted. It said the
+X2Go server package was absent from the validation host; `/var/log/dpkg.log`
+records `x2goserver-common:all 4.1.0.3-5` installed at **2026-08-29 17:43**, so
+it was there all along. And it said none of the TigerVNC or XRDP result carried
+over, on the grounds that `nxagent`'s extension surface was unknown. It is known
+now, and it is the same surface.
+
+**What was not measured, and this is the part that matters.** X2Go does not
+simply run `nxagent`. It starts the agent through `x2gostartagent`, with an **NX
+compression proxy** between agent and client over SSH — and that proxy sits in
+front of exactly the extension surface everything above depends on. Nothing in
+this capture exercises it. Specifically untested:
+
+- menus and drag-move under compression and network latency;
+- the long-press delete timing, the one interaction with a real clock in it;
+- resize behaviour when a session is reconnected at a different geometry;
+- whatever the proxy does or does not forward for SHAPE.
+
+Nothing was judged by eye either. This was a headless capture: no screenshot, and
+no verdict on how the sideways tab looks.
+
+**So this is a floor, not a tick.** The transcript directory carries a `SCOPE.md`
+that says so in the same words, because three green files in a directory named
+for X2Go read, at a glance, like "X2Go: tested".
 
 What to expect meanwhile: X2Go is unexercised, not unsupported. If the sideways
 tab renders wrongly or frames come out unshaped under `nxagent`, that is a real
 bug worth reporting — and given the RENDER dependency it is the likeliest place
 for one to be hiding.
 
-### TightVNC: an accepted deviation, not an omission
+### TightVNC: measured, and the result disproved the reason for skipping it
 
-TightVNC is **not** validated for this release. The reason, so it can be argued
-with rather than guessed at:
+TightVNC **is** validated for this release, headlessly. It turned out to be the
+most informative capture in the bundle, because it is the only one taken against
+a server that genuinely lacks the extensions this window manager builds fallbacks
+for.
 
-- TigerVNC is TightVNC's maintained successor for the Unix server side, and both
-  descend from the same `Xvnc` lineage. Their X server behaviour — the extension
-  set they advertise, how they handle Shape, how they resize — substantially
-  overlaps.
-- **Closest tested proxy: TigerVNC.** A TigerVNC transcript is the best available
-  evidence for how TightVNC will behave, and it is committed in the evidence
-  bundle.
-- This is recorded as an accepted deviation with a named owner and a follow-up in
-  `COMPILED_CODE_BEHAVIOR_CHECKLIST.md`, which is where this project keeps its
-  signoff record. A deviation without an owner and a follow-up is not an accepted
-  deviation, it is an omission.
+| Server | Extensions | SHAPE | RANDR | RENDER |
+|---|---|---|---|---|
+| TigerVNC 1.12.0 | many | yes | yes | yes |
+| **TightVNC 1.3.10** | **7** | **yes** | **no** | **no** |
 
-**What that means for you:** if you run TightVNC and something is wrong, it is a
-real bug worth reporting, and nobody will tell you the configuration is
-unsupported. It simply has not been exercised.
+TigerVNC 1.12 is a current server; TightVNC's Unix server side is still 1.3.10,
+from 2009. An earlier draft of this document skipped TightVNC on the argument
+that a TigerVNC transcript was evidence enough for it, the two servers being
+related. On the two extensions that argument named, the two servers do not
+overlap at all. The argument was retired rather than softened, and why it failed
+is kept in `COMPILED_CODE_BEHAVIOR_CHECKLIST.md`, because the general form of it
+is worth recognising: a family resemblance between two servers is not a
+measurement of either one.
+
+**What the window manager did about it.** It started, and both fallback ladders
+announced themselves on stderr rather than degrading in silence:
+
+```
+  Shape extension available.
+wm2: warning: no xrandr extension, screen geometry will track resolution changes
+     via the root window only
+wm2: warning: no xrender extension, tab labels will be drawn through the core
+     X11 glyph path
+```
+
+The client was framed normally — frame, tab, button and resize handle all
+present — and no X protocol error was logged. There is one visible difference
+from the RENDER-capable targets, and it is expected: the client sits at `+21+8`
+inside its frame here rather than at `+24+8`, because the tab width is measured
+from whatever font fontconfig resolves, and a lower rung of the font ladder
+resolves a different one. The frame narrows to match. The geometry follows the
+font, exactly as it is designed to.
+
+**What this does not tell you.** Nothing was judged by eye: no viewer was
+attached and no screenshot was taken, so whether the core-X11 glyph path *looks*
+acceptable is unanswered — and that is precisely where a fallback tends to be
+ugly rather than broken. No interaction was exercised over a real TightVNC
+connection. And resolution changes were not tested, which on a server with no
+RANDR is the interesting case, since the fallback watches the root window
+instead. Those limits travel with the transcript, in its own `SCOPE.md`.
 
 ### A note on how "compatible" should be read
 
