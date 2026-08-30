@@ -295,7 +295,7 @@ Plans:
   6. Both Phase 8 deviations are retired on evidence or restated with a reason that is true — neither survives as written
   7. The four hard blockers are re-run at the final commit, not inherited from Phase 8's snapshot
 
-**Plans**: 3/5 plans executed (2 executed, 3 gap-closure) — 08.5-04 **halted**, 08.5-05 blocked on it
+**Plans**: 8 plans (3/8 executed) — 2 original, 6 gap-closure across two rounds. 08.5-04 stays **halted**; 08.5-05 runs last, after 08.5-08 releases its precondition
 
 Plans:
 
@@ -319,7 +319,21 @@ Gap-closure wave 2 *(blocked on gap-closure wave 1)*:
 
 Gap-closure wave 3 *(blocked on gap-closure wave 2)*:
 
-- [ ] 08.5-05-PLAN.md -- **BLOCKED by halted 08.5-04** (cannot cite a bundle that does not exist). Repoint every gate row in `COMPILED_CODE_BEHAVIOR_CHECKLIST.md` at this phase's bundle, recompute the test-surface row with its own commands, update the interaction rows from the filled table, and write `evidence/README.md` (criterion 7, record half; TEST-08)
+- [ ] 08.5-05-PLAN.md -- **BLOCKED by halted 08.5-04** (cannot cite a bundle that does not exist). Repoint every gate row in `COMPILED_CODE_BEHAVIOR_CHECKLIST.md` at this phase's bundle, recompute the test-surface row with its own commands, update the interaction rows from the filled table, and write `evidence/README.md` (criterion 7, record half; TEST-08). **Runs LAST** — 08.5-08 replaces the halted 08.5-04 as the plan that produces the bundle this one cites, and its own precondition (`evidence/gates/PROVENANCE.txt` exists and is non-empty) is what holds it until then. Its `gates/` index table needs a row for `DOC-GUARDS.txt`, a file that did not exist when it was written
+
+**Gap-closure round 2** *(added 2026-08-30 after `08.5-04` measured the debug suite red in 2 of 5 full runs. Operator ruling: **fix the flake, then capture** — a capture-with-the-flake-documented shortcut was offered and declined. Gap 1 of `08.5-VERIFICATION.md` needs no plan: all five of its artifact issues and both of its named replacement guards were re-measured clean at HEAD after `08.5-03` landed at `195ac51`, and that closure is recorded rather than assumed by `08.5-08`)*
+
+Gap-closure wave 3 (round 2):
+
+- [ ] 08.5-06-PLAN.md -- Instrument and attribute, before any fix. A behaviour-preserving cold-cache diagnostic in `WindowManager::timestamp()` reaching a ctest observer end-to-end; case 198's window-manager stderr hoisted out of the lambda that discarded it; the record that called case #93 an interactive drag corrected against the run-2 log; a host-condition wrapper around the mandated gate; and the debug gate run under load until the verdict is CONFIRMED, REFUTED or INCONCLUSIVE. **A refutation is a clean stopping point, committed with the same weight as a confirmation** (Negative-Result Contract). Ends at a `blocking-human` operator ruling (TEST-08)
+
+Gap-closure wave 4 (round 2) *(blocked on wave 3)*:
+
+- [ ] 08.5-07-PLAN.md -- Bound and narrow the timestamp wait: a deadline-bounded, predicate-matched wait that warns once and degrades to `CurrentTime` rather than blocking the window manager's only thread, and that consumes only its own root append. Two `[wm_timestamp]` regression cases, mutation-checked in the debug **and** ASan trees, including a row that wedges the loop on demand. Then ten consecutive green full debug runs — no run omitted, no run retried — with host conditions beside each (TEST-08, RULES-01)
+
+Gap-closure wave 5 (round 2) *(blocked on wave 4)*:
+
+- [ ] 08.5-08-PLAN.md -- The criterion-7 capture, retried against a gate now shown reliably green in one shot: all four hard blockers in three trees, the environment and link-surface evidence, a runtime smoke transcript, and a `PROVENANCE.txt` binding the bundle to one commit with the no-source-drift proof. Plus `DOC-GUARDS.txt`, recording at the capture commit both of gap 1's replacement guards and the RULES-01 rule-key parity guard, each with its reading (criterion 7, capture half; TEST-08, XDIS-05, RULES-01)
 
 **Key finding that shaped this phase (2026-08-30):** the handoff's decided shape moved X2Go to a v1.1 requirement on the reasoning that validating it cost a human session. Measurement falsified that — `x2goserver`/`nxagent` were already installed (dpkg stamp 2026-08-29 17:43), nxagent runs headless nested on an Xvfb, and it advertises SHAPE, RANDR and RENDER. The WM was run against it successfully. So both remaining targets are validated rather than amended away, and XDIS-05 is expected to be met **as written**. See `08.5-CONTEXT.md`, "What changed since the handoff".
 
