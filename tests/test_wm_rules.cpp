@@ -45,6 +45,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -635,4 +636,273 @@ TEST_CASE("With no rules configured a window is framed, placed and stated as bef
     settleWm(d);
     REQUIRE_FALSE(hasState(d, win, "_NET_WM_STATE_SKIP_TASKBAR"));
     REQUIRE_FALSE(hasState(d, win, "_NET_WM_STATE_SKIP_PAGER"));
+}
+
+
+// ===========================================================================
+// Behaviour 8: matching on the window TITLE (RULES-01, plan 08.5-01)
+//
+// The half of RULES-01 Phase 8 left undelivered. These drive the REAL binary:
+// the matcher's own cases live in tests/test_rules.cpp and run display-free, so
+// what these add is the wiring -- that the title the WM reads off a window is
+// the string the fold is given.
+// ===========================================================================
+
+namespace {
+
+// Set a title the way an ICCCM client does.
+void setLegacyTitle(Display* d, Window w, const char* title)
+{
+    XStoreName(d, w, title);
+    XSync(d, False);
+}
+
+// Set a title the way an EWMH client does. A window that sets ONLY this is the
+// case that fails if the title read of plan 08.5-01 Task 1 is reverted.
+void setEwmhTitle(Display* d, Window w, const char* utf8)
+{
+    Atom netWmName = XInternAtom(d, "_NET_WM_NAME", False);
+    Atom utf8String = XInternAtom(d, "UTF8_STRING", False);
+    XChangeProperty(d, w, netWmName, utf8String, 8, PropModeReplace,
+                    reinterpret_cast<const unsigned char*>(utf8),
+                    static_cast<int>(std::strlen(utf8)));
+    XSync(d, False);
+}
+
+// The sideways tab's length, which tracks the window title (deferred item 11,
+// fixed in 08-14). This is the cheapest proof from outside the process that the
+// WM has actually READ a title -- nothing publishes a client's title back out.
+//
+// The client is excluded explicitly. It is reparented into the frame and so is
+// one of its children, and on any realistic test window it is taller than the
+// tab -- so a naive "tallest child" measures the client and never changes.
+// Among what remains, the tab is the long strip and the button is the small
+// square that shares its origin (08-14), so height separates them.
+int tabLengthOf(Display* d, Window frame, Window client)
+{
+    Window wroot = None, parent = None, *children = nullptr;
+    unsigned int n = 0;
+    if (!XQueryTree(d, frame, &wroot, &parent, &children, &n) || !children) return -1;
+
+    int longest = -1;
+    for (unsigned int i = 0; i < n; ++i) {
+        if (children[i] == client) continue;
+        Rect r{};
+        if (serverRect(d, children[i], r) && r.h > longest) longest = r.h;
+    }
+    XFree(children);
+    return longest;
+}
+
+} // namespace
+
+TEST_CASE("A title rule places a window whose title matches", "[wm_rules]")
+{
+    WmFixture fx(rulesFixture(
+        "rule-match-title=Inbox\n"
+        "rule-position=140,160\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+    const Window root = DefaultRootWindow(d);
+
+    // The title, like the class hint, must be set BEFORE the map request: the WM
+    // reads it inside Client::manage(), so a title written afterwards races the
+    // read that is supposed to govern the placement.
+    Window win = createClient(d, 400, 400, 300, 220, "mail", "Mail");
+    setLegacyTitle(d, win, "Inbox - Mail");
+    REQUIRE(mapAndAwait(d, win));
+
+    const Window frame = parentOf(d, win);
+    REQUIRE(frame != root);
+    REQUIRE(frame != None);
+
+    Rect fr{};
+    REQUIRE(serverRect(d, frame, fr));
+    INFO("wm stderr:\n" << fx.wmStderr());
+    INFO("frame rect " << describe(fr));
+    REQUIRE(fr.x == 140);
+    REQUIRE(fr.y == 160);
+
+    // NEGATIVE CONTROL, same running WM: a window of the same class whose title
+    // does not match is left where it asked to be. Without this the case would
+    // pass against an implementation that placed everything at the rule's
+    // position regardless of title.
+    Window other = createClient(d, 300, 350, 300, 220, "mail", "Mail");
+    setLegacyTitle(d, other, "Drafts - Mail");
+    REQUIRE(mapAndAwait(d, other));
+
+    Rect orect{};
+    REQUIRE(serverRect(d, parentOf(d, other), orect));
+    INFO("non-matching frame rect " << describe(orect));
+    REQUIRE(orect.x != 140);
+}
+
+TEST_CASE("A title rule matches a window that advertises its title only through _NET_WM_NAME",
+          "[wm_rules]")
+{
+    // THE CASE THAT JOINS THE TWO HALVES OF THIS PLAN. Task 1 made the WM read
+    // _NET_WM_NAME; this proves a rule keyed on the title sees what that read
+    // produced. Revert Task 1 and this reddens while the WM_NAME case above
+    // stays green -- which is the whole argument for why the title read had to
+    // change before the criterion was worth having.
+    WmFixture fx(rulesFixture(
+        "rule-match-title=Inbox\n"
+        "rule-position=180,200\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+    const Window root = DefaultRootWindow(d);
+
+    Window win = createClient(d, 400, 400, 300, 220, "mail", "Mail");
+    setEwmhTitle(d, win, "Inbox - Mail");   // and deliberately no WM_NAME
+    REQUIRE(mapAndAwait(d, win));
+
+    const Window frame = parentOf(d, win);
+    REQUIRE(frame != root);
+    REQUIRE(frame != None);
+
+    Rect fr{};
+    REQUIRE(serverRect(d, frame, fr));
+    INFO("wm stderr:\n" << fx.wmStderr());
+    INFO("frame rect " << describe(fr));
+    REQUIRE(fr.x == 180);
+    REQUIRE(fr.y == 200);
+}
+
+TEST_CASE("A title rule and a class rule fold later-wins over one window", "[wm_rules]")
+{
+    // Two rules, both matching, the second overriding ONE action and leaving the
+    // other alone. A first-match implementation gives the broad rule's position;
+    // a union implementation loses the broad rule's size.
+    WmFixture fx(rulesFixture(
+        "rule-match-class=Mail\n"
+        "rule-position=100,100\n"
+        "rule-size=420x320\n"
+        "rule-match-title=Inbox\n"
+        "rule-position=260,240\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    Window win = createClient(d, 500, 500, 300, 220, "mail", "Mail");
+    setLegacyTitle(d, win, "Inbox - Mail");
+    REQUIRE(mapAndAwait(d, win));
+
+    const Window frame = parentOf(d, win);
+    REQUIRE(frame != None);
+
+    Rect fr{};
+    REQUIRE(serverRect(d, frame, fr));
+    Rect cr{};
+    REQUIRE(serverRect(d, win, cr));
+
+    INFO("wm stderr:\n" << fx.wmStderr());
+    INFO("frame " << describe(fr) << ", client " << describe(cr));
+
+    // The title rule is later, so ITS position wins.
+    REQUIRE(fr.x == 260);
+    REQUIRE(fr.y == 240);
+    // ...and the class rule's size survives, because the title rule never
+    // mentioned size. This is the assertion a union or a last-rule-wins-entirely
+    // implementation fails.
+    REQUIRE(cr.w == 420);
+    REQUIRE(cr.h == 320);
+}
+
+TEST_CASE("A title changed after mapping does not re-apply the rule", "[wm_rules]")
+{
+    // D-8.5-03, asserted rather than assumed. Rules fold ONCE, at manage time.
+    // Re-folding on a title change would make a window jump every time a
+    // document is saved under a new name or a browser tab is switched, which is
+    // worse than the gap it closes.
+    WmFixture fx(rulesFixture(
+        "rule-match-title=Inbox\n"
+        "rule-position=300,280\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    // Mapped with a title that does NOT match, so the rule does not fire.
+    //
+    // The two titles differ sharply in LENGTH as well as in content, and that is
+    // not decoration: the vacuity guard below measures the tab, the tab tracks
+    // the title's length, and two titles of the same length would leave the
+    // guard unable to tell a processed retitle from a dropped one. The first
+    // draft of this case used "Drafts - Mail" and "Inbox - Mail" -- thirteen
+    // characters each -- and MEASURED: deleting the retitle step entirely left
+    // the case green.
+    //
+    // TALL, and that is also load-bearing. fixTabHeight() bounds the tab by the
+    // window it decorates and then shortens the label to fit, so on a 220 px
+    // window a six-character title and a forty-four-character one produce 86 px
+    // and 113 px -- a real difference, but a thin margin to hang a guard on.
+    // MEASURED at 460 px: 86 -> 325.
+    Window win = createClient(d, 420, 40, 300, 460, "mail", "Mail");
+    setLegacyTitle(d, win, "Drafts");
+    REQUIRE(mapAndAwait(d, win));
+
+    const Window frame = parentOf(d, win);
+    REQUIRE(frame != None);
+
+    Rect before{};
+    REQUIRE(serverRect(d, frame, before));
+    const int tabBefore = tabLengthOf(d, frame, win);
+    INFO("before retitle: " << describe(before) << ", tab " << tabBefore << " px");
+    REQUIRE(before.x != 300);
+    REQUIRE(tabBefore > 0);
+
+    // Now retitle it to something the rule DOES match, and much longer.
+    setLegacyTitle(d, win, "Inbox - Mail With A Deliberately Longer Title");
+    settleWm(d);
+
+    // VACUITY GUARD. Without this the geometry assertion below holds for the
+    // wrong reason: it would be asserting that nothing happened because nothing
+    // was sent. The tab's length tracks the title (deferred item 11), so a WM
+    // that processed the change has a measurably longer tab.
+    //
+    // Read the WM's own rendering rather than the property just written --
+    // reading back our own XStoreName would prove only that the SERVER stored
+    // it, which was never in doubt.
+    const int tabAfter = tabLengthOf(d, frame, win);
+    INFO("tab length " << tabBefore << " -> " << tabAfter);
+    REQUIRE(tabAfter > tabBefore * 3 / 2);
+
+    Rect after{};
+    REQUIRE(serverRect(d, frame, after));
+    INFO("wm stderr:\n" << fx.wmStderr());
+    INFO("after retitle: " << describe(after) << " (rule says 300,280)");
+
+    // THE ASSERTION: the window did not move.
+    REQUIRE(after.x == before.x);
+    REQUIRE(after.y == before.y);
+}
+
+TEST_CASE("With no rules configured a titled window is placed where it asked", "[wm_rules]")
+{
+    // The control for this group. Proves the title rules above CHANGE behaviour
+    // rather than merely coexisting with it.
+    WmFixture fx(rulesFixture(""));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    Window win = createClient(d, 260, 240, 300, 220, "mail", "Mail");
+    setLegacyTitle(d, win, "Inbox - Mail");
+    REQUIRE(mapAndAwait(d, win));
+
+    const Window frame = parentOf(d, win);
+    REQUIRE(frame != None);
+
+    Rect fr{};
+    REQUIRE(serverRect(d, frame, fr));
+    INFO("wm stderr:\n" << fx.wmStderr());
+    INFO("frame rect " << describe(fr));
+    REQUIRE(fr.x == 260);
+    REQUIRE(fr.y == 240);
 }

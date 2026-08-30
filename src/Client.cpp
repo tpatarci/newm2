@@ -1089,8 +1089,20 @@ void Client::getClassHint()
 //
 // D-22: every matching rule applies in file order and the LAST one to set a
 // given action wins. The fold itself lives in src/Rules.cpp and is unit-tested
-// without a display; all this does is supply the three facts and act on the
-// result.
+// without a display; all this does is supply the facts and act on the result.
+//
+// ONCE, AT MANAGE TIME -- AND THE TITLE IS PART OF THAT (D-8.5-03, plan
+// 08.5-01). A title rule matches the title as it stands when the window is
+// mapped. The WM deliberately does NOT re-fold when a title later changes:
+// re-applying a rule's position and size on rename would make a window jump
+// every time a document is saved under a new name or a browser tab is switched,
+// which is a worse behaviour than the gap it would close. Openbox and its peers
+// resolve it the same way. The property-change handler for both title
+// properties therefore relabels the tab and stops there.
+//
+// Note the ordering this depends on: Client::manage() reads the title at the top,
+// well before it reaches here, so the fold sees the real title rather than an
+// empty string. Moving either is enough to break it silently.
 void Client::applyWindowRules()
 {
     const std::vector<WindowRule>& rules = windowManager()->config().rules;
@@ -1099,6 +1111,7 @@ void Client::applyWindowRules()
     RuleWindowFacts facts;
     facts.instanceName = m_resName;
     facts.className    = m_resClass;
+    facts.title        = m_name;
     switch (m_windowType) {
     case WindowType::Dock:         facts.type = RuleWindowType::Dock;         break;
     case WindowType::Dialog:       facts.type = RuleWindowType::Dialog;       break;
