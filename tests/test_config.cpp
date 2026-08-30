@@ -69,7 +69,9 @@ TEST_CASE("Config defaults match upstream Config.h", "[config]") {
     // Timing (milliseconds) - 3 settings
     REQUIRE(cfg.autoRaiseDelay == 400);
     REQUIRE(cfg.pointerStoppedDelay == 80);
-    REQUIRE(cfg.destroyWindowDelay == 1500);
+    // 400, not upstream's 1500. Changed in plan 08.5-02 after the operator sat
+    // with it in a real remote session; see the reasoning in include/Config.h.
+    REQUIRE(cfg.destroyWindowDelay == 400);
 
     // Frame - 1 setting
     REQUIRE(cfg.frameThickness == 7);

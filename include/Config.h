@@ -58,7 +58,22 @@ struct Config {
     // Timing (milliseconds)
     int autoRaiseDelay      = 400;
     int pointerStoppedDelay = 80;
-    int destroyWindowDelay  = 1500;
+
+    // How long a tab-button press must be HELD before it deletes rather than
+    // hides. 1500 here was upstream wm2's CONFIG_DESTROY_WINDOW_DELAY, carried
+    // over verbatim from 1997 and never revisited until an operator sat with it
+    // in a real session and reported it as "way too long" -- this is software
+    // for adept users, and a delay tuned for hesitancy taxes every close.
+    //
+    // 400 is not the minimum the parser accepts (that is 1), and the floor is
+    // real: the failure is ASYMMETRIC. A false hide costs nothing -- the window
+    // is one menu row away. A false DELETE sends WM_DELETE_WINDOW and can lose
+    // the user's work. An ordinary click runs 50-150 ms, so a threshold much
+    // under ~250 ms would let a slightly sticky click destroy a window.
+    //
+    // 400 sits clear of that, is 3.75x faster than the value it replaces, and
+    // matches autoRaiseDelay above -- one fewer arbitrary constant in the file.
+    int destroyWindowDelay  = 400;
     // Frame
     int frameThickness = 7;
     // Commands
