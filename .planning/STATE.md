@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 current_phase: 08.5
-current_phase_name: v1.0-closeout
-status: phase_complete
+current_phase_name: v1.0 Closeout *(INSERTED)*
+status: executing
 stopped_at: Phase 8.5 complete -- RULES-01, XDIS-05 and TEST-08 all met; ready for Phase 9
-last_updated: "2026-08-30T05:20:00.000Z"
+last_updated: "2026-08-30T13:21:35.194Z"
 last_activity: 2026-08-30
-last_activity_desc: Phase 8.5 complete -- three requirements closed, four remote targets measured, appearance restyled
-state_head: 0a356a788ce6f5e63d6b812beb5cf9c14a003536
+last_activity_desc: Phase 08.5 execution started
+state_head: ec84a443a1ccd605474fa7f263fb51fb0419bbcc
 progress:
-  total_phases: 9
+  total_phases: 10
   completed_phases: 4
   total_plans: 38
   completed_plans: 38
@@ -24,14 +24,14 @@ milestone_name: milestone
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** A lightweight, visually distinctive window manager that works well on resource-constrained VPS instances via remote desktop -- simple enough for non-programmers to configure, reliable enough for daily use.
-**Current focus:** Phase 08 — xrandr-vnc-compatibility-focus-rules
+**Current focus:** Phase 08.5 — v1.0 Closeout *(INSERTED)*
 
 ## Current Position
 
-Phase: 08.5 (v1.0-closeout, INSERTED) — COMPLETE
-Plan: 2 of 2
-Status: All three target requirements met. Next: Phase 9 (Config GUI + IPC)
-Last activity: 2026-08-30 — Phase 8.5 drafted
+Phase: 08.5 (v1.0 Closeout *(INSERTED)*) — EXECUTING
+Plan: 1 of 2
+Status: Executing Phase 08.5
+Last activity: 2026-08-30 — Phase 08.5 execution started
 
 Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).
 Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
