@@ -1,0 +1,23 @@
+# window tree -- tightvnc -- :93 -- 2026-08-30T08:39:07Z
+# commit 9869aea
+
+
+xwininfo: Window id: 0x25 (the root window) (has no name)
+
+  Root window id: 0x25 (the root window) (has no name)
+  Parent window id: 0x0 (none)
+     6 children:
+     0x400023 (has no name): ()  262x209+150+150  +150+150
+        3 children:
+        0x80000d "wm2-tightvnc-validation": ("xclock" "XClock")  240x200+21+8  +171+158
+           2 children:
+           0x400026 (has no name): ()  14x14+226+186  +397+344
+           0x80000e (has no name): ()  240x200+0+0  +171+158
+        0x400025 (has no name): ()  5x5+4+4  +154+154
+        0x400024 (has no name): ()  261x177+0+0  +150+150
+     0x400021 (has no name): ()  1x1+0+0  +0+0
+     0x400020 "wm2-born-agai": ()  1x1+-1+-1  +-1+-1
+     0x40001f (has no name): ()  1x1+0+0  +0+0
+     0x40001e (has no name): ()  1x1+0+0  +0+0
+     0x40001d (has no name): ()  1x1+0+0  +0+0
+

@@ -666,37 +666,48 @@ A deviation belongs here only with a **reason**, an **owner** and a
 **follow-up**. Without all three it is not an accepted deviation, it is an
 omission wearing the word "accepted".
 
-### D-8-TIGHTVNC — TightVNC is not validated for this release
+### D-8-TIGHTVNC — RETIRED 2026-08-30 by plan 08.5-02, and its rationale was wrong
 
-**What is not done.** `PROJECT.md` names TigerVNC, TightVNC, XRDP and X2Go as the
-remote-desktop targets. TightVNC has **no session, no transcript and no
-interaction record**. It is untested.
+**Retired on evidence.** TightVNC has a capability transcript, a WM startup
+banner and a window tree at
+`08.5-v1.0-closeout/evidence/tightvnc/`. The deviation's own follow-up said to
+delete it or restate it once a TightVNC server was available; one was, and this
+is the deletion — kept as a record rather than removed, because *why* it was
+wrong is worth more than the paragraph it replaces.
 
-**Rationale.** TigerVNC is TightVNC's maintained successor on the Unix server
-side, and both descend from the same `Xvnc` codebase. Their X server behaviour —
-the extension set advertised, Shape handling, resize handling, the fontconfig
-picture — substantially overlaps, so a TigerVNC result is genuine evidence about
-TightVNC rather than a guess. It is not, however, the same thing as a TightVNC
-result, which is why this is recorded as a deviation and not quietly ticked.
+**The rationale did not survive measurement.** It argued that a TigerVNC result
+was genuine evidence about TightVNC, because both descend from the same `Xvnc`
+codebase and their "extension set advertised, Shape handling, resize handling,
+the fontconfig picture — substantially overlaps".
 
-**Closest tested proxy: TigerVNC.** Its capability transcript and interaction
-record are the best available evidence for TightVNC's behaviour, and both are
-committed under the phase evidence directory alongside the other targets.
+| Server | Extensions | SHAPE | RANDR | RENDER |
+|---|---|---|---|---|
+| TigerVNC 1.12.0 | many | yes | yes | yes |
+| **TightVNC 1.3.10** | **7** | **yes** | **no** | **no** |
 
-**Owner:** whoever next stands up a remote-desktop validation session — the same
-role that runs the User Interaction Checklist for a release. TightVNC needs no
-new tooling: `scripts/capture-display-capabilities.sh <display> tightvnc` and the
-existing interaction checklist are the whole job.
+On the two extensions the argument specifically named, they do not overlap at
+all. TigerVNC 1.12 is a current server; TightVNC's Unix side is still 1.3.10 from
+2009. The deviation reasoned from **ancestry to behaviour**, and the behaviour
+disagreed — which is the general lesson worth keeping, since the same move is
+available for any "close relative" argument about an untested target.
 
-**Follow-up:** add a `tightvnc` transcript to the evidence bundle at the next
-release signoff that has a TightVNC server available, and either delete this
-entry or restate it with a fresh reason. An accepted deviation that is never
-revisited becomes a permanent gap by default, which is the failure mode this
-section exists to prevent.
+**What was found instead, and it is a good result.** This is the only capture in
+the project taken against a server that genuinely lacks the extensions Phase 8
+built fallbacks for. The WM started, both ladders announced themselves on stderr
+exactly as designed (XDIS-02, XDIS-04), the client was framed normally, and no X
+protocol error was logged. The one visible difference is a 3 px narrower tab —
+`xIndent()` follows the measured tab width, and the font ladder's lower rung
+resolves a different font. The geometry follows the font, as designed.
 
-**What a user should expect meanwhile:** if TightVNC misbehaves, that is a real
-bug worth reporting. The configuration is not unsupported; it has not been
-exercised.
+Until now the RENDER-less and RANDR-less paths had only ever been exercised
+through the `WM2_FORCE_NO_*` levers. They now have a real server behind them.
+
+**What is still not covered**, and is in `INTERACTION-CHECKLIST.md` rather than
+here: nothing was judged by eye, so whether the core-X11 glyph path *looks*
+acceptable is unanswered — which is exactly where a fallback is most likely to be
+ugly rather than broken. No interaction was exercised over a real connection, and
+resolution changes were not tested, which on a RANDR-less server is the
+interesting case. See `tightvnc/SCOPE.md`.
 
 ### D-8-X2GO — X2Go is not validated for this release
 
