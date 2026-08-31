@@ -67,6 +67,42 @@ Out of scope for this round, named in 08.5-09 rather than dropped: the ~74-site
   as the already-correct counter-example a mechanical rewrite must not "fix"), the
   `tests/support/WmFixture.h:190` socket-recheck latent bug, and 08.5-04's held
   gate capture.
+**PRECOMMITTED TERMINAL RULE (operator decision, 2026-08-31)** — set BEFORE 08.5-09
+  runs, after an adversarial second opinion (Codex CLI `gpt-5.6-sol`, read-only
+  against the tree) on whether this phase had lost its exit. Accepted finding:
+  *"You have not demonstrated a repetitive technical loop. You have demonstrated a
+  decision process without a terminal rule."* Recorded in 08.5-09-PLAN.md at the
+  Task 3 checkpoint. It binds that checkpoint:
+  - `confirmed`   → disposition `START AS WRITTEN`; execute 08.5-07, then its
+                    regression and the criterion-7 gate capture.
+  - `inconclusive`→ disposition `START AS WRITTEN`; execute 08.5-07 **anyway** —
+                    both halves of its fix are independently justified defects.
+                    **No fourth attribution round.** The extend/hold/re-plan
+                    sub-decisions are WITHDRAWN; they are what let the last two
+                    rounds terminate without ending.
+  - `refuted`     → disposition `RE-PLAN`; 08.5-07 is NOT the flake fix and must
+                    not be recorded as one. v1.0 stays blocked until the bundle
+                    table names the actual failing path, or ruling B is reversed
+                    as a new, recorded release-policy decision.
+Corrected on the same consult, and load-bearing: **a post-fix rate drop is NOT
+  attribution.** Baseline 2 red of 5; exact one-sided Fisher vs 0 red of 10 gives
+  **p ≈ 0.095**, not the `0.006` that treating 0.40 as a known rate implies.
+  Clearing p<0.05 needs 0 red of 16 (p ≈ 0.0476, ~64 min of runs); a 0.40→0.20
+  improvement needs ~36 runs for 80% power. 08.5-07's plan text advertising
+  `0.006` is arithmetically right and statistically overconfident. Its
+  re-measurement is **operational validation**, with the causal claim qualified.
+Known risks in 08.5-07, recorded and deliberately NOT folded in: (1) the
+  `CurrentTime` fallback reaches `WM_TAKE_FOCUS` — `Client::sendMessage()`
+  (`src/Client.cpp:779`) puts `timestamp(false)` in `data.l[1]`; (2) the deadline
+  bounds waiting for readability, not the surrounding `XFlush()`/Xlib round trips;
+  (3) a late `_WM2_RUNNING` `PropertyNotify` can be consumed by a later call as a
+  stale cached timestamp, and repeated timeouts can leave several outstanding.
+Also noted, unactioned: criterion 7's wording ("re-run at the final commit") does
+  NOT itself require a one-shot-green suite — the 08.5-04 hold added that release
+  policy. But TEST-06 requires full Debug/Release/ASan `ctest` for signoff, so a
+  selected green run after known reds satisfies criterion 7 literally without
+  establishing a reliable gate. Reversing ruling B is available, but only as a NEW
+  recorded operator decision — never as though ruling B had been satisfied.
 Resume: `/gsd-execute-phase 8.5 --gaps-only`. Do NOT start 08.5-07 first — 08.5-09
   is wave 3 and gates it.
 Last activity: 2026-08-31 — 08.5-09 planned and verified; chain still held pending
