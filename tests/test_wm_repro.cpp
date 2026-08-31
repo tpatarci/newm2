@@ -1,5 +1,17 @@
 // Targeted reproducer for the post-readiness reparent sequence (plan 08.5-09,
-// TEST-08).
+// TEST-08), extended by plan 08.5-10 into an INTERVENTION with a control arm.
+//
+// What plan 08.5-10 adds and why. Round 3 refuted the leading hypothesis on five
+// readable backtraces and could not attribute, for a reason it recorded honestly:
+// the healthy-window-manager calibration bundle shows the SAME frame as the five
+// trips. A backtrace cannot separate "idle with nothing to do" from "idle while
+// holding work it cannot see". A sixth passive channel would not change that. So
+// this file no longer only watches: at a trip it delivers to the window manager
+// ONE event its own handler treats as a no-op, and records whether the stalled
+// client frames as a result. Half the trips get the identical capture and no
+// event, which is what makes the debugger attach -- a real rival cause, since it
+// interrupts a blocked poll -- common to both arms instead of confounded with the
+// intervention.
 //
 // This file is a DIAGNOSTIC INSTRUMENT THAT LIVES IN THE SUITE. Its cases are
 // cheap by default -- they cost one fixture and one mapped client -- and are
@@ -36,6 +48,7 @@
 #include "support/WmFixture.h"
 
 #include "x11wrap.h"
+#include <X11/Xatom.h>
 #include <X11/Xlib.h>
 
 #include <sys/stat.h>
@@ -46,6 +59,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -68,16 +82,28 @@ constexpr int kReparentDeadlineMs = 8000;
 // before a capture is taken. Strictly inside the deadline above.
 constexpr int kDefaultThresholdMs = 500;
 
-// The five channels a bundle must be readable in. Fewer means a channel is
-// silently missing, which is the whole defect class this file exists to remove.
-const char* const kChannelNames[] = {
-    "wm-alive", "wm-stderr", "xvfb-log", "wchan", "backtrace"
-};
-constexpr int kChannelCount = 5;
+// The default wake window: how long the stalled client is watched after the arm
+// is applied. Strictly inside the deadline, and refused if the threshold plus
+// the window would reach it -- see reproWakeWaitMs() below.
+constexpr int kDefaultWakeWaitMs = 750;
 
-// The ONLY environment knob this task reads, and it is read through a string
-// literal rather than a variable so the file's whole environment surface is
-// visible to a static reading.
+// The eight channels a bundle must be readable in -- five carried forward from
+// plan 08.5-09 with their spellings and meanings UNCHANGED, so the two rounds'
+// records stay comparable, plus three added by plan 08.5-10. Fewer than eight
+// means a channel is silently missing, which is the whole defect class this file
+// exists to remove; more means one was written twice and the readings are
+// ambiguous.
+//
+// `poll-timeout` and `socket-recvq` are written by the capture tool;
+// `wake-arm` is written here, because the arm is this file's own knowledge.
+const char* const kChannelNames[] = {
+    "wm-alive", "wm-stderr", "xvfb-log", "wchan", "backtrace",
+    "poll-timeout", "socket-recvq", "wake-arm"
+};
+constexpr int kChannelCount = 8;
+
+// Read through a string literal rather than a variable so the file's whole
+// environment surface is visible to a static reading.
 //
 // Refusing the EQUAL case is deliberate, not defensive: a threshold equal to the
 // deadline collapses the two constants into one reading, and the capture would
@@ -100,6 +126,44 @@ int reproThresholdMs()
                          raw, kReparentDeadlineMs, kDefaultThresholdMs);
             std::fflush(stderr);
             return kDefaultThresholdMs;
+        }
+        return static_cast<int>(offered);
+    }();
+    return resolved;
+}
+
+// The wake window: how long the stalled client is watched after the arm is
+// applied. A NEW knob strictly inside the reparent deadline -- never a widening
+// of it. The deadline above stays a single constexpr declaration with no
+// environment override of any spelling, and the closed enumeration of this
+// file's environment surface is what makes that a reading rather than a promise:
+// a check keyed on identifiers containing the word "deadline" would be fully
+// satisfied by an override spelled to avoid the word.
+//
+// Refusing the EQUAL case is deliberate and is gated: at equality the wake
+// window ends exactly when the poll gives up, so the arm's result and the
+// deadline's expiry become the same event and the arm measures nothing.
+int reproWakeWaitMs()
+{
+    static const int resolved = [] {
+        const int threshold = reproThresholdMs();
+        const char* raw = std::getenv("WM2_REPRO_WAKE_WAIT_MS");
+        if (raw == nullptr || raw[0] == '\0') return kDefaultWakeWaitMs;
+
+        char* end = nullptr;
+        errno = 0;
+        const long offered = std::strtol(raw, &end, 10);
+        const bool parsed = (end != raw && end != nullptr && *end == '\0' && errno == 0);
+
+        if (!parsed || offered <= 0 ||
+            (static_cast<long>(threshold) + offered) >= static_cast<long>(kReparentDeadlineMs)) {
+            std::fprintf(stderr,
+                         "wm2-repro: refused WM2_REPRO_WAKE_WAIT_MS=%s -- the %d ms diagnostic "
+                         "threshold plus the offered window must stay strictly below the %d ms "
+                         "reparent deadline; using %d ms\n",
+                         raw, threshold, kReparentDeadlineMs, kDefaultWakeWaitMs);
+            std::fflush(stderr);
+            return kDefaultWakeWaitMs;
         }
         return static_cast<int>(offered);
     }();
@@ -133,9 +197,9 @@ int validatedKnob(const char* name, const char* raw, int fallback, long ceiling)
     return static_cast<int>(offered);
 }
 
-// The closed knob set. Eight members, no more: the threshold above plus these
-// seven. The reparent deadline is in neither list and has no spelling in
-// either -- it is a constexpr literal declared exactly once.
+// The closed knob set. NINE members, no more: the threshold and the wake window
+// above plus these seven. The reparent deadline is in neither list and has no
+// spelling in either -- it is a constexpr literal declared exactly once.
 int sFixtures()
 {
     static const int v = validatedKnob("WM2_REPRO_S_FIXTURES",
@@ -294,9 +358,11 @@ bool verdictWellFormed(const std::string& line, const std::string& channel)
     return false;
 }
 
-// The number of channels carrying EXACTLY ONE well-formed verdict line. Five is
-// the only acceptable reading: fewer means a channel is silently missing, more
-// means one was written twice and the bundle's readings are ambiguous.
+// The number of channels carrying EXACTLY ONE well-formed verdict line.
+// kChannelCount is the only acceptable reading: fewer means a channel is
+// silently missing, more means one was written twice and the bundle's readings
+// are ambiguous. Keyed on the constant, so raising the channel count moves every
+// assertion with it automatically.
 int wellFormedChannelCount(const std::string& capText)
 {
     int good = 0;
@@ -315,13 +381,104 @@ std::string procStateOf(const std::string& capText)
     return lines[0].substr(std::strlen("proc-state: "));
 }
 
+// --- the intervention -------------------------------------------------------
+//
+// ONE event delivered to the window manager that its own handler treats as a
+// NO-OP. Both halves of why this particular event was chosen matter, and both
+// are checkable facts rather than assumptions:
+//
+//   Delivery is CERTAIN, not hoped for. The root window's event mask carries
+//   PropertyChangeMask -- the first term on src/Manager.cpp:605, inside the mask
+//   assignment spanning src/Manager.cpp:603-605 -- so a property change on root
+//   is delivered to the window manager's connection.
+//
+//   The handler does NOTHING with it. WindowManager::eventProperty()
+//   (src/Events.cpp:535) resolves the event's window to a client and returns
+//   when there is none, and the root window is never a managed client.
+//
+// So the event adds BYTES to the connection and adds no WORK. That is what lets
+// the wake be measured without the measurement manufacturing the framing it is
+// looking for. Nothing else happens here: no window is created, mapped,
+// configured or destroyed, and no property on any client window is touched.
+//
+// Returns whether the server-side round trip confirmed the value -- which is
+// recorded in the bundle, so a run where the intervention silently never left
+// this process is visible rather than assumed.
+bool pokeRootProperty(Display* d, long sequence)
+{
+    const Atom atom = XInternAtom(d, "_WM2_REPRO_POKE", False);
+    if (atom == None) return false;
+
+    const Window root = DefaultRootWindow(d);
+    const long value = sequence;
+    XChangeProperty(d, root, atom, XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<const unsigned char*>(&value), 1);
+    XSync(d, False);
+
+    Atom actualType = None;
+    int actualFormat = 0;
+    unsigned long nitems = 0;
+    unsigned long bytesAfter = 0;
+    unsigned char* data = nullptr;
+    if (XGetWindowProperty(d, root, atom, 0, 1, False, XA_CARDINAL,
+                           &actualType, &actualFormat, &nitems, &bytesAfter,
+                           &data) != Success) {
+        return false;
+    }
+
+    const bool confirmed =
+        (actualType == XA_CARDINAL && actualFormat == 32 && nitems == 1 &&
+         data != nullptr && *reinterpret_cast<long*>(data) == value);
+    if (data) XFree(data);
+    return confirmed;
+}
+
+// Watch one client for the wake window and report whether it framed inside it.
+// The watch is the SAME round-trip query the frame poll already uses and sends
+// nothing to the window manager -- that inertness is precisely why the previous
+// round's clients could sit unframed for the full deadline while the harness
+// polled them, and it is what makes the do-nothing arm a real control rather
+// than a weaker intervention.
+bool watchForFrameWithin(Display* d, Window w, int windowMs, long& msOut)
+{
+    const Window root = DefaultRootWindow(d);
+    const auto started = Clock::now();
+    const bool framed = WmFixture::pollUntil([&] {
+        Window wroot = None, parent = None, *children = nullptr;
+        unsigned int n = 0;
+        if (!XQueryTree(d, w, &wroot, &parent, &children, &n)) return false;
+        if (children) XFree(children);
+        return parent != None && parent != root;
+    }, windowMs);
+    msOut = elapsedMsSince(started);
+    return framed;
+}
+
+// The eighth channel's reading. `applied == false` writes an ABSENT verdict
+// carrying `reason`, for the case where an arm could not be applied at all.
+struct WakeArmResult {
+    bool applied = false;
+    std::string reason = "no arm applied on this path";
+    std::string arm;
+    bool pokeIssued = false;
+    bool framedAfter = false;
+    long ms = 0;
+};
+
+// Invoked by the bundle writer AFTER the capture has completed and BEFORE the
+// eighth channel line is written. The ordering is structural rather than a
+// convention a caller has to remember: both arms take the identical capture
+// first, and only then diverge.
+using ArmApplier = std::function<WakeArmResult()>;
+
 // --- the capture helper -----------------------------------------------------
 //
 // Writes fixture.txt, the first three channel lines of capability.txt,
 // wm-stderr.txt and xvfb.log, then invokes the capture tool, which appends the
-// wchan, backtrace and proc-state readings. Any channel the tool did not reach
-// is written here as an ABSENT verdict with a stated reason, so a channel is
-// never silently missing from a bundle.
+// wchan, backtrace, poll-timeout, socket-recvq and proc-state readings, then
+// applies the arm and writes the wake-arm line. Any channel the tool did not
+// reach is written here as an ABSENT verdict with a stated reason, so a channel
+// is never silently missing from a bundle.
 
 struct CaptureOutcome {
     std::string dir;
@@ -334,7 +491,8 @@ CaptureOutcome captureBundle(WmFixture& fixture,
                              const std::string& mode,
                              const std::string& reason,
                              long elapsedMs,
-                             bool framed)
+                             bool framed,
+                             const ArmApplier& applyArm)
 {
     CaptureOutcome out;
     out.dir = dir;
@@ -404,8 +562,32 @@ CaptureOutcome captureBundle(WmFixture& fixture,
     if (channelLines(after, "backtrace").empty()) {
         appendLine(cap, "backtrace: ABSENT " + why);
     }
+    // The two channels plan 08.5-10 added to the capture tool get the same
+    // fallback as the two above: a channel the tool did not reach is recorded
+    // as an absence with a reason, never left missing.
+    if (channelLines(after, "poll-timeout").empty()) {
+        appendLine(cap, "poll-timeout: ABSENT " + why);
+    }
+    if (channelLines(after, "socket-recvq").empty()) {
+        appendLine(cap, "socket-recvq: ABSENT " + why);
+    }
     if (channelLines(after, "proc-state").empty()) {
         appendLine(cap, "proc-state: ?");
+    }
+
+    // The arm is applied HERE -- after the capture is complete, so that both
+    // arms have taken the identical capture path before they diverge, and a
+    // debugger attach (which interrupts a blocked poll, src/Events.cpp:210) is
+    // a cause COMMON to both arms rather than confounded with the intervention.
+    const WakeArmResult armResult = applyArm ? applyArm() : WakeArmResult();
+    if (armResult.applied) {
+        appendLine(cap,
+                   "wake-arm: PRESENT arm=" + armResult.arm +
+                       " poke-issued=" + (armResult.pokeIssued ? "yes" : "no") +
+                       " framed-after=" + (armResult.framedAfter ? "yes" : "no") +
+                       " ms=" + std::to_string(armResult.ms));
+    } else {
+        appendLine(cap, "wake-arm: ABSENT " + armResult.reason);
     }
 
     out.wrote = true;
@@ -456,7 +638,7 @@ struct ModeCounters {
     long capped = 0;
     long unframed = 0;
     long wallMs = 0;
-    long bundlesWithFiveVerdicts = 0;
+    long bundlesWithAllVerdicts = 0;
 };
 
 // The transcript's counter tokens are part of this measurement's contract,
@@ -528,16 +710,22 @@ bool pollForFrameWithCapture(WmFixture& fixture, Display* d, Window w,
                 const long index = ++counters.allocated;
                 const std::string dir =
                     outDirRoot() + "/trip-" + mode + "-" + std::to_string(index);
+                // No arm on this path yet: plan 08.5-10 Task 1 proves the
+                // instrument on a healthy window manager and Task 2 turns this
+                // poll into the two-arm experiment. Until then the channel is
+                // recorded as an absence WITH A REASON, which is a reading --
+                // never a silently missing channel.
                 const CaptureOutcome oc = captureBundle(
                     fixture, dir, mode,
                     "diagnostic threshold reached during a post-readiness reparent poll",
-                    elapsed, false);
+                    elapsed, false,
+                    [] { return WakeArmResult(); });
                 if (oc.wrote) {
                     ++counters.bundles;
                     const std::string capText =
                         readFileOrEmpty(dir + "/capability.txt");
                     if (wellFormedChannelCount(capText) == kChannelCount) {
-                        ++counters.bundlesWithFiveVerdicts;
+                        ++counters.bundlesWithAllVerdicts;
                     }
                 }
             } else {
@@ -657,7 +845,7 @@ ModeCounters runModeR()
 
 } // namespace
 
-TEST_CASE("The hang-time capture path yields a five-channel bundle from a healthy window manager",
+TEST_CASE("The hang-time capture path yields an eight-channel bundle and one confirmed intervention from a healthy window manager",
           "[wm_repro]")
 {
     WmFixtureOptions options;
@@ -681,12 +869,30 @@ TEST_CASE("The hang-time capture path yields a five-channel bundle from a health
     // record of what this host's backtrace looks like when the event loop is
     // behaving. Without it, a later backtrace in the event loop's own poll would
     // be an argument from absence rather than a comparison.
+    //
+    // The INTERVENTION is forced too, on the intervening arm, for the same
+    // reason: it makes this case a deterministic exercise of the arm path
+    // rather than a wait for luck, and it is what row 4 of the plan's mutation
+    // table reddens. What is deliberately NOT asserted is that the client
+    // moved -- a healthy window manager has already framed its client and there
+    // is nothing for an intervention to move, so requiring a particular
+    // framed-after value would be a criterion satisfiable only by a positive
+    // finding.
     const std::string dir =
         WmFixture::workDir() + "/repro-control-" + sanitizeDisplay(fixture.display());
     const CaptureOutcome outcome =
         captureBundle(fixture, dir, "control",
                       "calibration: forced capture against a healthy window manager",
-                      elapsedMs, framed);
+                      elapsedMs, framed,
+                      [&] {
+                          WakeArmResult r;
+                          r.applied = true;
+                          r.arm = "poke";
+                          r.pokeIssued = pokeRootProperty(d, 1);
+                          r.framedAfter = (client != None) &&
+                              watchForFrameWithin(d, client, reproWakeWaitMs(), r.ms);
+                          return r;
+                      });
 
     // BIND FIRST, THEN ANNOTATE, THEN ASSERT -- and do not "tidy" this by moving
     // the annotations back down beside their siblings. A Catch2 annotation is
@@ -700,12 +906,17 @@ TEST_CASE("The hang-time capture path yields a five-channel bundle from a health
     const int channelsWithOneVerdict = wellFormedChannelCount(capText);
     const std::string procState = procStateOf(capText);
     const bool stillAlive = fixture.wmAlive();
+    const std::vector<std::string> wakeArmLines = channelLines(capText, "wake-arm");
+    const std::string wakeArmLine = wakeArmLines.size() == 1 ? wakeArmLines[0] : std::string();
+    const bool armIsIntervening = wakeArmLine.find("arm=poke") != std::string::npos;
+    const bool armPokeIssued = wakeArmLine.find("poke-issued=yes") != std::string::npos;
 
     INFO("bundle dir: " << dir);
     INFO("elapsed ms: " << elapsedMs << ", framed: " << (framed ? "yes" : "no"));
     INFO("capture tool status: " << outcome.scriptStatus);
     INFO("capability.txt:\n" << capText);
     INFO("capture-tool.log:\n" << readFileOrEmpty(dir + "/capture-tool.log"));
+    INFO("wake-arm line: " << wakeArmLine);
     INFO("wm stderr: " << fixture.wmStderr());
 
     REQUIRE(outcome.wrote);
@@ -714,11 +925,21 @@ TEST_CASE("The hang-time capture path yields a five-channel bundle from a health
     // Counts channels, deliberately: a bundle that merely EXISTS proves nothing.
     REQUIRE(channelsWithOneVerdict == kChannelCount);
 
-    // The backtrace channel is deliberately NOT asserted PRESENT. A host without
-    // a debugger, or one whose kernel refuses the attach, must degrade to a
-    // recorded absence rather than a red suite. That this host produced real
-    // frames is a host-specific fact and is gated over the committed calibration
-    // bundle instead, which is where a host-specific fact belongs.
+    // The backtrace channel is deliberately NOT asserted PRESENT, and neither is
+    // the socket channel. A host without a debugger or without the socket tool,
+    // or one whose kernel refuses the attach, must degrade to a recorded absence
+    // rather than a red suite. That this host produced real frames and a real
+    // socket reading is a host-specific fact and is gated over the committed
+    // calibration bundle instead, which is where a host-specific fact belongs.
+
+    // The intervention, however, IS asserted -- it is this instrument's own
+    // behaviour rather than the host's. poke-issued=no would mean the property
+    // round trip never confirmed server-side, so the instrument could not show
+    // that its intervention ever left this process, and every arm reading in the
+    // measurement would be unfalsifiable. `framed-after` is deliberately NOT
+    // asserted in either direction.
+    REQUIRE(armIsIntervening);
+    REQUIRE(armPokeIssued);
 
     REQUIRE(stillAlive);
     REQUIRE_FALSE(procState.empty());
@@ -745,7 +966,7 @@ TEST_CASE("The post-readiness reparent is sampled to a stated budget in two mode
     // that follow it.
     const long totalMaps = s.maps + r.maps;
     const long totalBundles = s.bundles + r.bundles;
-    const long totalFiveVerdict = s.bundlesWithFiveVerdicts + r.bundlesWithFiveVerdicts;
+    const long totalAllVerdict = s.bundlesWithAllVerdicts + r.bundlesWithAllVerdicts;
 
     // The readout-integrity reading, per mode and never pooled: a trip that
     // produced no bundle is exactly the unreadable red that ended plan 08.5-06.
@@ -774,8 +995,8 @@ TEST_CASE("The post-readiness reparent is sampled to a stated budget in two mode
     REQUIRE(sReadable);
     REQUIRE(rReadable);
 
-    // 3. Every bundle written is readable in all five channels, which includes
+    // 3. Every bundle written is readable in all eight channels, which includes
     //    the window manager being recorded alive or recorded dead at the capture
     //    (the wm-alive channel's own verdict).
-    REQUIRE(totalFiveVerdict == totalBundles);
+    REQUIRE(totalAllVerdict == totalBundles);
 }
