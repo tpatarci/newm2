@@ -5,14 +5,14 @@ current_phase: 08.5
 current_phase_name: v1.0-closeout
 status: executing
 stopped_at: Completed 08.5-09-PLAN.md -- operator ruled REFUTED at the Task 3 blocking-human checkpoint; 08.5-07 disposition RE-PLAN. 08.5-07/-08/-05 NOT to be started; next action is re-planning the attribution
-last_updated: "2026-08-31T10:52:19.169Z"
+last_updated: "2026-08-31T13:09:09.766Z"
 last_activity: 2026-08-31
 last_activity_desc: 08.5-09 closed at Task 3 -- operator ruled REFUTED, disposition RE-PLAN
-state_head: 397310ab0e32ccf5b5826214fc5121c188a2831a
+state_head: eb9eba5b2396b3e1d1f2f21bce475e471ef27356
 progress:
   total_phases: 10
   completed_phases: 4
-  total_plans: 45
+  total_plans: 46
   completed_plans: 42
 milestone_name: milestone
 ---
@@ -28,7 +28,11 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 ## Current Position
 
-Phase: 08.5 (v1.0-closeout) — **08.5-09 COMPLETE. VERDICT REFUTED. CHAIN GOES RE-PLAN.**
+Phase: 08.5 (v1.0-closeout) — **08.5-10 PLANNED AND READY. EXECUTE 08.5-10 ONLY.**
+  "Ready to execute" here means **08.5-10 and nothing else**. 08.5-07, 08.5-08 and
+  08.5-05 remain HELD under the `RE-PLAN` disposition — see the DO NOT START block
+  below. Prior headline, still the verdict of record: 08.5-09 COMPLETE, VERDICT
+  REFUTED, CHAIN GOES RE-PLAN.
 Plan: 9 plans; 6 have summaries (08.5-01, -02, -03, -04, -06, -09). 08.5-04's gate
   capture is HELD, not passed.
 **DO NOT START 08.5-07, 08.5-08 OR 08.5-05.** The operator's disposition is
@@ -165,18 +169,51 @@ Also noted, unactioned: criterion 7's wording ("re-run at the final commit") doe
   selected green run after known reds satisfies criterion 7 literally without
   establishing a reliable gate. Reversing ruling B is available, but only as a NEW
   recorded operator decision — never as though ruling B had been satisfied.
-Resume: **the ruling has been taken and written; 08.5-09 is closed.** The next
-  action is **re-planning the attribution around the actual failing path**, add-only
-  as 08.5-09 was — `/gsd-plan-phase 8.5` for a new 08.5-10, starting from the
-  `BadWindow` reparent-cascade lead and from the fact that the WM was idle in
-  `nextEvent`'s own `poll()` at every capture. **Do NOT run
-  `/gsd-execute-phase 8.5` expecting 08.5-07 to be next.** 08.5-07, 08.5-08 and
-  08.5-05 are NOT to be started under the `RE-PLAN` disposition; starting 08.5-07
-  would record it as the flake fix, which the measurement refuted and the
-  precommitted terminal rule forbids. Reversing that is available only as a NEW,
-  separately recorded operator decision.
-Last activity: 2026-08-31 — 08.5-09 complete; verdict REFUTED, disposition RE-PLAN;
-  the held chain is broken by the ruling and the attribution is re-planned
+Resume: **the re-plan is DONE. 08.5-10 is planned, checked and committed
+  (2026-08-31).** Add-only was preserved: since `1745cfb` only `ROADMAP.md` (+8/-1)
+  and the new `08.5-10-PLAN.md` changed; `git diff --name-only` over `evidence/`,
+  `08.5-0*-PLAN.md`, `*-SUMMARY.md`, `src/`, `include/`, `tests/` and
+  `CMakeLists.txt` prints nothing. Commits: `8a16ace` (plan + scoped ROADMAP edit),
+  `e638465` (checker warnings 1-4), `eb9eba5` (instrument-failure partition closed).
+  gsd-plan-checker: **VERIFICATION PASSED** at iteration 3 (pass 1: 0 blockers /
+  4 warnings; pass 2: 0 blockers / 1 warning; pass 3: clean).
+  **The next action is `/gsd-execute-phase 8.5` — and it must run 08.5-10 ONLY.**
+  **Do NOT let it start 08.5-07, 08.5-08 or 08.5-05.** Those three are NOT to be
+  started under the `RE-PLAN` disposition; starting 08.5-07 would record it as the
+  flake fix, which the measurement refuted and the precommitted terminal rule
+  forbids. Reversing that is available only as a NEW, separately recorded operator
+  decision.
+**08.5-10 in one line:** a two-arm controlled experiment over the post-readiness
+  reparent that either names the failing path or ends the attribution effort.
+  Hypothesis under test (NOT yet a finding): `nextEvent()` gates on
+  `QLength()` (`src/Events.cpp:195`) then blocks in `poll()` (`:205`); no
+  `XPending`/`XEventsQueued` exists anywhere in `src/` or `include/`, and
+  `libX11.so.6` links `libxcb.so.1`, so the transport holds a queue neither check
+  counts. That account also predicts the `BadWindow` cascade on `0x80003b` and
+  explains why the healthy control shows the same backtrace frame.
+  Operator decision taken during planning (2026-08-31): **arm floor = four per
+  arm**, lowered from six. Six was justified by an arithmetically false claim
+  ("smallest table that can reach the threshold"); the true minimum is four
+  (`1/C(8,4) = 0.0143` clears, `1/C(6,3) = 0.050` fails). Under a terminal rule a
+  false negative is unrecoverable, and a floor of six would have routed a clearing
+  5-vs-5 table (`p = 1/252 ~ 0.004`) to `NOT-ATTRIBUTED`. Cost recorded: at exactly
+  four, only perfect separation clears, and family-wise across two eligible modes
+  the bound is ~`0.029`.
+  **Terminal rule (precommitted, in the plan before the round runs):** `ATTRIBUTED`
+  -> `FIX-PLAN`; **everything else** -> a fixed three-item menu
+  (`SHIP-WITH-RECORDED-DEFECT` | `REVERSE-RULING-B` | `DESCOPE-FROM-V1.0`).
+  Extend/hold/re-plan are WITHDRAWN. **There is no outcome whose disposition is
+  "run another attribution round."** More attribution spend is a new
+  milestone-level decision, not a disposition of this checkpoint.
+Known gate false-negative, recorded so it is not "fixed": `check.decision-coverage-plan`
+  returns `passed:false, total:0` on this phase. It is a PARSER MISMATCH, not a
+  coverage gap — this project writes decisions as `### D-8.5-01 - title` headings
+  with a three-part ID, and the gate expects `- **D-NN:** text` bullets with a
+  two-digit ID. Coverage verified manually at planning time: all 8 decisions
+  (`D-8.5-01`..`-06`, `D-8-TIGHTVNC`, `D-8-X2GO`) are cited by at least one plan;
+  `08.5-10` cites six of them.
+Last activity: 2026-08-31 — 08.5-10 planned, verified PASSED, committed; add-only
+  preserved; next action is executing 08.5-10 alone
 
 Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).
 Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
