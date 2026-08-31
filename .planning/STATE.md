@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 current_phase: 08.5
-current_phase_name: v1.0 Closeout
+current_phase_name: v1.0-closeout
 status: executing
 stopped_at: 08.5-06 complete -- verdict INCONCLUSIVE, operator ruled hold; 08.5-07/08/05 blocked on unmet CONFIRMED precondition
-last_updated: "2026-08-31T05:37:35.912Z"
+last_updated: "2026-08-31T07:45:53.842Z"
 last_activity: 2026-08-31
 last_activity_desc: 08.5-06 closed at Task 4 -- operator ruled INCONCLUSIVE / hold
-state_head: 0b6ede83a3d8a337753bf7a749011908ed0d4fbe
+state_head: 8f1e690a2754c61a849a3b55808d9cdb19a7e105
 progress:
   total_phases: 10
   completed_phases: 4
-  total_plans: 44
+  total_plans: 45
   completed_plans: 41
 milestone_name: milestone
 ---
@@ -28,34 +28,49 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 ## Current Position
 
-Phase: 08.5 (v1.0 Closeout) — EXECUTING (gap-closure pass, `--gaps-only`)
-Plan: 4 of 8 complete (08.5-01..04); 08.5-04 halted at Task 1 and still unresolved
-Status: **08.5-06 COMPLETE — all 4 tasks.** Committed: `e5c230a` (cold-cache
-  instrumentation), `ec4f8cb` (case 198 stderr hoist + two record corrections),
-  `015e8c6` (flake-run.sh wrapper), `f7a7769` (the attribution measurement),
-  `0b6ede8` (plan metadata), plus the Task 4 ruling commit.
-  **Verdict: INCONCLUSIVE.** 8 debug runs at `015e8c6`, 7 green / 1 red; the red run
-  (case #80, `test_wm_fallbacks.cpp:272`) carried no WM stderr because its `INFO`
-  guard sits below the failing assertion, so no counter reading exists for it.
-  One ASan run, green, stated as one observation.
-Operator ruling (2026-08-31, Task 4 `checkpoint:decision`, `gate="blocking-human"`):
+Phase: 08.5 (v1.0-closeout) — READY TO EXECUTE (08.5-09 only)
+Plan: 9 plans; 5 have summaries (08.5-01, -02, -03, -04, -06). 08.5-04's gate
+  capture is HELD, not passed. 08.5-07/-08/-05 are written and still held.
+Status: **08.5-09 PLANNED (2026-08-31).** The targeted-reproducer round, planned
+  add-only per operator decision: existing 08.5-01..08 untouched. Committed
+  `0c985a1` (plan + ROADMAP), revised `8f1e690` (per-mode readout gate and two
+  gates strengthened to match their prose). gsd-plan-checker: **VERIFICATION
+  PASSED** at revision iteration 2 (prior pass: 1 blocker, 2 warnings, all fixed).
+  08.5-09 is wave 3, `gap_closure: true`, `autonomous: false`, TEST-08, 3 tasks:
+  a calibration capture against a healthy WM, a budgeted two-mode sampler over the
+  post-readiness reparent, and a `blocking-human` operator ruling that writes the
+  verdict. Budget: 200 Mode-S fixtures + 2000 Mode-R maps, 10 min and 20 bundles
+  per mode, hard stop. Zero trips inside budget is INCONCLUSIVE, recorded as such.
+Prior round (08.5-06) stands unchanged: **Verdict INCONCLUSIVE.** 8 debug runs at
+  `015e8c6`, 7 green / 1 red; the red run (case #80, `test_wm_fallbacks.cpp:272`)
+  carried no WM stderr because its `INFO` guard sits below the failing assertion,
+  so no counter reading exists for it. One ASan run, green, as one observation.
+Operator ruling (2026-08-31, 08.5-06 Task 4 `checkpoint:decision`, `gate="blocking-human"`):
   **`inconclusive`, sub-decision `hold`** — the run budget was NOT extended, because
   the guard-ordering defect is widespread (14 of 59 frame assertions carry a stderr
   guard above them; a second-opinion audit put it at ~74 sites), so another red run
   would very likely also be unreadable. Recorded in
   `evidence/gates/attribution/README.md` § "Operator ruling — 2026-08-31".
-Remaining chain: 08.5-07 → 08.5-08 → 08.5-05 — **ALL BLOCKED**
-Blocked: 08.5-07 Task 1 requires a CONFIRMED verdict and is **UNMET**. The ruling
-  does not unblock it; 08.5-08 (criterion-7 capture) and 08.5-05 follow it and stay
-  held. Nothing in the chain is cleared.
-New operator decision (2026-08-31), context for the next round and NOT acted on:
-  re-plan the attribution around a **targeted reproducer** instead of more
-  full-suite sampling — an isolated post-readiness reparent loop with hang-time
-  stack capture at a ~500 ms threshold (`/proc/<pid>/wchan` plus `gdb` backtrace).
-  A backtrace inside `XMaskEvent` CONFIRMS; `poll`/Xlib round trip/teardown/dead WM
-  REFUTES. Seconds per iteration instead of ~4 minutes.
-Resume: `/gsd-plan-phase` for the targeted-reproducer round. Do NOT start 08.5-07.
-Last activity: 2026-08-31 — 08.5-06 closed; operator ruled INCONCLUSIVE / hold
+**08.5-07's Task 1 precondition is permanently unsatisfiable as written** (found
+  while planning 08.5-09, verified by the plan-checker against the tree). It is a
+  conjunction: the attribution README's single `**Verdict:**` line must read
+  `CONFIRMED` **and** `08.5-06-SUMMARY.md` must record the operator ruling
+  `confirmed`. That summary is frozen at `inconclusive` and add-only forbids
+  editing it, so no outcome of 08.5-09 can satisfy the second clause. 08.5-09
+  Task 3 therefore also writes an explicit `**08.5-07 disposition:**` line
+  (`RE-PLAN` | `START AS WRITTEN` | `STAYS HELD`) beside the verdict. **The
+  disposition, not the verdict, governs whether the held chain moves.**
+Remaining chain: 08.5-09 → (disposition) → 08.5-07 → 08.5-08 → 08.5-05.
+  08.5-07/-08/-05 stay held until 08.5-09's Task 3 checkpoint returns a disposition.
+Out of scope for this round, named in 08.5-09 rather than dropped: the ~74-site
+  `INFO("wm stderr")` guard-ordering fix (with `test_wm_geometry.cpp:1490` flagged
+  as the already-correct counter-example a mechanical rewrite must not "fix"), the
+  `tests/support/WmFixture.h:190` socket-recheck latent bug, and 08.5-04's held
+  gate capture.
+Resume: `/gsd-execute-phase 8.5 --gaps-only`. Do NOT start 08.5-07 first — 08.5-09
+  is wave 3 and gates it.
+Last activity: 2026-08-31 — 08.5-09 planned and verified; chain still held pending
+  the reproducer's disposition
 
 Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).
 Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
