@@ -1,0 +1,21 @@
+
+wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+  Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+  Copying and redistribution encouraged.  No warranty.
+
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients only on menu.
+
+  Shape extension available.
+  Xrandr extension available.
+  XRender extension available.
+wm2: timestamp: entering blocking property wait
+wm2: warning: timestamp: property wait matched a foreign event
+wm2: X_UnmapWindow (0x6002bf): BadWindow (invalid Window parameter)
+wm2: X_UnmapWindow (0x6003b7): BadWindow (invalid Window parameter)
+wm2: X_SetInputFocus (0x80008f): BadWindow (invalid Window parameter)
+wm2: X_UnmapWindow (0x600547): BadWindow (invalid Window parameter)
+wm2: X_UnmapWindow (0x60075f): BadWindow (invalid Window parameter)
+wm2: X_UnmapWindow (0x60077f): BadWindow (invalid Window parameter)
+wm2: X_UnmapWindow (0x600787): BadWindow (invalid Window parameter)
+wm2: X_UnmapWindow (0x6007a7): BadWindow (invalid Window parameter)
+wm2: X_UnmapWindow (0x6007df): BadWindow (invalid Window parameter)
