@@ -144,6 +144,27 @@ bash scripts/gates/build-all.sh debug 2>&1 | tee -a "$OUT_LOG" || GATE_STATUS=${
 } >> "$OUT_LOG"
 
 # ---------------------------------------------------------------------------
+# A red run keeps a name that says so, and keeps its index -- the naming
+# precedent set by evidence/gates/flake-measurement/ (build-all-debug-run1-
+# FAILED.log). The rename happens HERE, inside the wrapper and before the
+# ledger line is written, so the name the ledger records is the name that
+# ends up on disk. Renaming after the ledger line instead would make the
+# ledger's name set and the directory's name set disagree for every red run,
+# which is the check that is supposed to catch a deleted or hand-placed log.
+# ---------------------------------------------------------------------------
+
+if [ "$GATE_STATUS" -ne 0 ]; then
+    FAILED_LOG="${OUT_LOG%.log}-FAILED.log"
+    if [ -e "$FAILED_LOG" ]; then
+        echo "wm2: flake-run: refusing to overwrite an existing failed-run path: $FAILED_LOG" >&2
+        exit 3
+    fi
+    mv "$OUT_LOG" "$FAILED_LOG"
+    OUT_LOG="$FAILED_LOG"
+    OUT_BASE=$(basename "$OUT_LOG")
+fi
+
+# ---------------------------------------------------------------------------
 # The run ledger. Exactly one appended line per invocation, append-only.
 # ---------------------------------------------------------------------------
 
