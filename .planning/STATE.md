@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 08.5
 current_phase_name: v1.0 Closeout
 status: executing
-stopped_at: HALTED at 08.5-04-PLAN.md Task 1 -- gate capture held (operator ruling B); no criterion-7 bundle produced
-last_updated: "2026-08-30T22:42:42.762Z"
-last_activity: 2026-08-30
+stopped_at: "08.5-06 Task 4 checkpoint:decision (blocking-human) -- operator ruling on INCONCLUSIVE attribution verdict"
+last_updated: "2026-08-31T00:37:13.285Z"
+last_activity: 2026-08-31
 last_activity_desc: Phase 08.5 execution started
-state_head: 3b93ca553d8db9601d3cbdb5982aebf721948628
+state_head: f7a776969289b641b780443015af456037309de6
 progress:
   total_phases: 10
   completed_phases: 4
   total_plans: 44
-  completed_plans: 39
+  completed_plans: 41
 milestone_name: milestone
 ---
 
@@ -28,10 +28,21 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 ## Current Position
 
-Phase: 08.5 (v1.0 Closeout) — READY TO EXECUTE
-Plan: 3 of 5 complete (08.5-01, 08.5-02, 08.5-03); 08.5-04 halted; 08.5-05 blocked on it
-Status: Stuck on a halt — phase NOT verified, NOT complete. Resolve the halt before re-running verification.
-Last activity: 2026-08-30 — Phase 08.5 execution started
+Phase: 08.5 (v1.0 Closeout) — EXECUTING (gap-closure pass, `--gaps-only`)
+Plan: 4 of 8 complete (08.5-01..04); 08.5-04 halted at Task 1 and still unresolved
+Status: 08.5-06 AWAITING OPERATOR RULING at Task 4 (`checkpoint:decision`,
+  `gate="blocking-human"`). Tasks 1-3 complete and committed: `e5c230a` (cold-cache
+  instrumentation), `ec4f8cb` (case 198 stderr hoist + two record corrections),
+  `015e8c6` (flake-run.sh wrapper), `f7a7769` (the attribution measurement).
+  **Verdict: INCONCLUSIVE.** 8 debug runs at `015e8c6`, 7 green / 1 red; the red run
+  (case #80, `test_wm_fallbacks.cpp:272`) carried no WM stderr because its `INFO`
+  guard sits below the failing assertion, so no counter reading exists for it.
+  One ASan run, green, stated as one observation.
+Remaining chain: 08.5-06 (checkpoint) → 08.5-07 → 08.5-08 → 08.5-05
+Blocked: 08.5-07 Task 1 requires a CONFIRMED verdict and is UNMET.
+Resume: read `evidence/gates/attribution/README.md`, then reply `confirmed`,
+  `refuted` or `inconclusive` — and for `inconclusive`, extend the budget or hold.
+Last activity: 2026-08-31 — 08.5-06 Tasks 1-3 landed; attribution measured INCONCLUSIVE
 
 Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).
 Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
@@ -95,6 +106,7 @@ Progress: [████████░░] 81% (7/9 phases complete)
 | Phase 08 P12 | 95min | 3 tasks | 9 files |
 | Phase 08 P13 | 200min | 3 tasks | 9 files |
 | Phase 08.5 P03 | 5min | 4 tasks | 1 files |
+| Phase 08.5 P06 | 1h 0m | 3 tasks | 18 files |
 
 ## Accumulated Context
 
@@ -185,6 +197,7 @@ Recent decisions affecting current work:
 - [Phase 08.5]: 08.5-03: the shipped release notes and the signoff checklist are worded differently on purpose -- COMPILED_CODE_BEHAVIOR_CHECKLIST.md keeps the retired D-8-TIGHTVNC rationale verbatim as a record, the user-facing notes name it only as a retired argument and state the general lesson instead
 - [Phase 08.5]: 08.5-03: the literals x2gostartagent and SCOPE.md were deliberately withheld from Task 2's table cells and introduced in Task 3, so Task 3's positive guards could still redden -- a guard pre-greened by an earlier task in the same plan measures nothing, which is the exact defect this plan closes
 - [Phase 08.5]: 08.5-04: gate capture held rather than recorded on a suite that is not reliably green in one shot -- a release signoff whose gate needs retries is weaker evidence than no signoff, and the measurement (2/5 red, different case each time) is a rate rather than an attribution
+- [Phase 08.5]: 08.5-06: attribution verdict INCONCLUSIVE -- 8 debug runs at 015e8c6 produced 1 red (case #80, test_wm_fallbacks.cpp:272, 8000ms reparent poll), but that case INFO guard sits BELOW the failing assertion so no WM stderr reached the log; neither CONFIRMED nor REFUTED condition observed. 08.5-07 Task 1 precondition UNMET. — The measurement did its job and withheld an attribution the evidence does not support (Negative-Result Contract). Probe counters read cold=5 blocked=2 foreign=5 longestms=0: the branch is live and blocks but costs 0ms under that workload, and 5 of 5 waits matched a FOREIGN property event -- a separately recordable defect (eventProperty never sees those). Case #80 is the same 8000ms reparent-poll shape as the before-half case #93, in a second independent helper.
 
 ### Pending Todos
 
@@ -205,6 +218,7 @@ Recent decisions affecting current work:
 - Deferred item 12: the full process-level suite flakes at ~1 test per run on both this tree and the pre-08-06 baseline -- build-all.sh is not reliably green in one shot
 - Deferred item 13 (08-11): every client destroy logs one X_UnmapWindow BadWindow because the resize handle is a child of the client window; blocks a strict no-protocol-errors assertion
 - 08.5-04 GATE CAPTURE HELD (operator ruling B, 2026-08-30): the full debug suite is red in 2 of 5 runs at 313 tests, a DIFFERENT single case each time -- #198 exec-using-shell spawn-await (1/5 loaded, 0/12 isolated) and #93 interactive drag (test_wm_geometry.cpp:1492). [wm_menureopen] fired 0/5, so the known-intermittent framing does not cover either. Sharpens deferred item 12 from ~1 test per run to a measured 40% red-run rate. Blocks the v1.0 success-criterion-7 gate capture until the flake substrate is diagnosed. Evidence: evidence/gates/flake-measurement/ (af30f47). T-8-SHELL security half failed 0/5.
+- 08.5-06 BLOCKED ON OPERATOR RULING: attribution verdict is INCONCLUSIVE, so plan 08.5-07 Task 1 precondition (requires CONFIRMED) is UNMET and the criterion-7 capture stays held. Operator must choose extend-the-run-budget or hold. Separately: the WM stderr reaches the observer only for cases whose INFO guard precedes the first fallible assertion -- Task 2 fixed case 198 by scope, but case #80 guard is below its assertion by ordering, so another red run is likely to be unreadable again.
 
 ## Deferred Items
 
@@ -224,6 +238,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-30T18:42:41.077Z
-Stopped at: HALTED at 08.5-04-PLAN.md Task 1 -- gate capture held (operator ruling B); no criterion-7 bundle produced
-Resume file: None
+Last session: 2026-08-31T00:36:52.045Z
+Stopped at: 08.5-06 Task 4 checkpoint:decision (blocking-human) -- operator ruling on INCONCLUSIVE attribution verdict
+Resume file: .planning/phases/08.5-v1.0-closeout/evidence/gates/attribution/README.md

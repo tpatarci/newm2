@@ -295,7 +295,7 @@ Plans:
   6. Both Phase 8 deviations are retired on evidence or restated with a reason that is true — neither survives as written
   7. The four hard blockers are re-run at the final commit, not inherited from Phase 8's snapshot
 
-**Plans**: 8 plans (3/8 executed) — 2 original, 6 gap-closure across two rounds. 08.5-04 stays **halted**; 08.5-05 runs last, after 08.5-08 releases its precondition
+**Plans**: 5/8 plans executed (3/8 executed) — 2 original, 6 gap-closure across two rounds. 08.5-04 stays **halted**; 08.5-05 runs last, after 08.5-08 releases its precondition
 
 Plans:
 
@@ -315,7 +315,7 @@ Gap-closure wave 1:
 
 Gap-closure wave 2 *(blocked on gap-closure wave 1)*:
 
-- [ ] 08.5-04-PLAN.md -- **HALTED at Task 1 (operator ruling B, 2026-08-30)** — no criterion-7 bundle produced. The debug gate went red in 2 of 5 full-suite runs, a different case each time (#198 spawn-await, #93 interactive drag); `[wm_menureopen]` fired 0/5, so nothing is attributable to the known intermittent. Case 198 measured 1/5 loaded, 0/12 isolated; the T-8-SHELL security half failed 0/5. Evidence: `evidence/gates/flake-measurement/`. Original scope: capture all four hard blockers at the final commit into `08.5-v1.0-closeout/evidence/gates/`, with a `PROVENANCE.txt` that proves no source moved between the gate commit and HEAD (criterion 7, capture half; TEST-08)
+- [x] 08.5-04-PLAN.md -- **HALTED at Task 1 (operator ruling B, 2026-08-30)** — no criterion-7 bundle produced. The debug gate went red in 2 of 5 full-suite runs, a different case each time (#198 spawn-await, #93 interactive drag); `[wm_menureopen]` fired 0/5, so nothing is attributable to the known intermittent. Case 198 measured 1/5 loaded, 0/12 isolated; the T-8-SHELL security half failed 0/5. Evidence: `evidence/gates/flake-measurement/`. Original scope: capture all four hard blockers at the final commit into `08.5-v1.0-closeout/evidence/gates/`, with a `PROVENANCE.txt` that proves no source moved between the gate commit and HEAD (criterion 7, capture half; TEST-08)
 
 Gap-closure wave 3 *(blocked on gap-closure wave 2)*:
 
@@ -325,7 +325,7 @@ Gap-closure wave 3 *(blocked on gap-closure wave 2)*:
 
 Gap-closure wave 3 (round 2):
 
-- [ ] 08.5-06-PLAN.md -- Instrument and attribute, before any fix. A behaviour-preserving cold-cache diagnostic in `WindowManager::timestamp()` reaching a ctest observer end-to-end; case 198's window-manager stderr hoisted out of the lambda that discarded it; the record that called case #93 an interactive drag corrected against the run-2 log; a host-condition wrapper around the mandated gate; and the debug gate run under load until the verdict is CONFIRMED, REFUTED or INCONCLUSIVE. **A refutation is a clean stopping point, committed with the same weight as a confirmation** (Negative-Result Contract). Ends at a `blocking-human` operator ruling (TEST-08)
+- [x] 08.5-06-PLAN.md -- Instrument and attribute, before any fix. A behaviour-preserving cold-cache diagnostic in `WindowManager::timestamp()` reaching a ctest observer end-to-end; case 198's window-manager stderr hoisted out of the lambda that discarded it; the record that called case #93 an interactive drag corrected against the run-2 log; a host-condition wrapper around the mandated gate; and the debug gate run under load until the verdict is CONFIRMED, REFUTED or INCONCLUSIVE. **A refutation is a clean stopping point, committed with the same weight as a confirmation** (Negative-Result Contract). Ends at a `blocking-human` operator ruling (TEST-08)
 
 Gap-closure wave 4 (round 2) *(blocked on wave 3)*:
 
@@ -372,5 +372,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 
 | 6. EWMH Compliance | 0/3 | Planned | - |
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
 | 8. Xrandr + VNC + Focus/Rules | 14/14 | Verified with gaps | 2026-08-30 |
-| 8.5 v1.0 Closeout *(INSERTED)* | 3/5 | Halted (08.5-04) |  |
+| 8.5 v1.0 Closeout *(INSERTED)* | 5/8 | In Progress|  |
 | 9. Config GUI + IPC | 0/3 | Not started | - |
