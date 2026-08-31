@@ -4,11 +4,11 @@ milestone: v1.0
 current_phase: 08.5
 current_phase_name: v1.0-closeout
 status: executing
-stopped_at: 08.5-06 complete -- verdict INCONCLUSIVE, operator ruled hold; 08.5-07/08/05 blocked on unmet CONFIRMED precondition
-last_updated: "2026-08-31T07:45:53.842Z"
+stopped_at: "08.5-09 HALTED at Task 3 checkpoint:decision (gate=blocking-human) -- Tasks 1 and 2 complete and committed; proposed verdict REFUTED awaiting the operator ruling and the 08.5-07 disposition"
+last_updated: "2026-08-31T10:18:17.171Z"
 last_activity: 2026-08-31
 last_activity_desc: 08.5-06 closed at Task 4 -- operator ruled INCONCLUSIVE / hold
-state_head: 8f1e690a2754c61a849a3b55808d9cdb19a7e105
+state_head: 9f016a46a2c85af947e99ae60b83855046b19459
 progress:
   total_phases: 10
   completed_phases: 4
@@ -28,10 +28,36 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 ## Current Position
 
-Phase: 08.5 (v1.0-closeout) — READY TO EXECUTE (08.5-09 only)
+Phase: 08.5 (v1.0-closeout) — **08.5-09 HALTED AT ITS TASK 3 CHECKPOINT**
 Plan: 9 plans; 5 have summaries (08.5-01, -02, -03, -04, -06). 08.5-04's gate
   capture is HELD, not passed. 08.5-07/-08/-05 are written and still held.
-Status: **08.5-09 PLANNED (2026-08-31).** The targeted-reproducer round, planned
+Status: **08.5-09 EXECUTING — Tasks 1 and 2 COMPLETE and committed; Task 3 is a
+  `checkpoint:decision` with `gate="blocking-human"` and is AWAITING THE
+  OPERATOR.** No verdict has been written to
+  `evidence/gates/attribution/README.md`; its single `**Verdict:**` line still
+  reads `INCONCLUSIVE` and no `**08.5-07 disposition:**` line exists yet.
+  Commits: `8623618` (capture tool, fixture opt-in, calibration case, calibration
+  bundle), `3b0fd37` (budgeted two-mode sampler), `9f016a4` (the measurement).
+  **The reproducer REPRODUCED.** Budget stated before the run and not extended:
+  mode S 200 fixtures/1 map each, mode R 5 fixtures x 400 maps, 10 min and 20
+  bundles per mode, 500 ms threshold inside the hard 8000 ms reparent deadline.
+  Observed, per mode and never pooled: `trips-s=0` over 200 maps; `trips-r=5`
+  over 2000 maps, all five written as bundles, all five clients also failing to
+  frame inside 8000 ms. Neither mode exhausted its budget.
+  **All five backtraces name `WindowManager::nextEvent` at `src/Events.cpp:205`**
+  — the event loop's own `poll()`, `timeout=-1` — across three distinct WM
+  processes. None names `WindowManager::timestamp`; none names `XMaskEvent`. By
+  the criteria written BEFORE the run that is five REFUTED-contributing readings
+  and no CONFIRMED-shaped one, exactly at the five-backtrace floor. **Proposed
+  verdict: REFUTED** — proposed only. Mutation table green in debug AND through
+  `build-all.sh asan` (rows 2 and 3 redden the calibration case at `0 == 5` and
+  `3 == 5` respectively, which is what shows the assertion counts channels).
+  Final `build-all.sh asan` at the restored source: 316/316, no findings.
+  Expected structural warning, recorded so it is not "corrected": `wave: 3` with
+  `depends_on: []` is deliberate; `verify.plan-structure` flags it and a wave
+  normalizer computing `max(deps)+1` would rewrite it to `wave: 1`. The ordering
+  relative to 08.5-07 (`wave: 4`) holds under either value.
+Previously: **08.5-09 PLANNED (2026-08-31).** The targeted-reproducer round, planned
   add-only per operator decision: existing 08.5-01..08 untouched. Committed
   `0c985a1` (plan + ROADMAP), revised `8f1e690` (per-mode readout gate and two
   gates strengthened to match their prose). gsd-plan-checker: **VERIFICATION
@@ -103,8 +129,13 @@ Also noted, unactioned: criterion 7's wording ("re-run at the final commit") doe
   selected green run after known reds satisfies criterion 7 literally without
   establishing a reliable gate. Reversing ruling B is available, but only as a NEW
   recorded operator decision — never as though ruling B had been satisfied.
-Resume: `/gsd-execute-phase 8.5 --gaps-only`. Do NOT start 08.5-07 first — 08.5-09
-  is wave 3 and gates it.
+Resume: **the operator must rule on 08.5-09's Task 3 checkpoint** (`confirmed` |
+  `refuted` | `inconclusive`, plus the `08.5-07` disposition `RE-PLAN` |
+  `START AS WRITTEN` | `STAYS HELD`). Nothing is written until that reply exists.
+  Then `/gsd-execute-phase 8.5 --gaps-only` resumes 08.5-09 at Task 3. Do NOT
+  start 08.5-07 first — 08.5-09 is wave 3 and gates it, and under the
+  precommitted terminal rule a `refuted` ruling makes 08.5-07 `RE-PLAN`, not the
+  flake fix.
 Last activity: 2026-08-31 — 08.5-09 planned and verified; chain still held pending
   the reproducer's disposition
 
@@ -265,6 +296,8 @@ Recent decisions affecting current work:
 - [Phase 08.5]: 08.5-06 Task 4: the causal chain is real and verified, which is what keeps the hypothesis alive rather than refuted -- the fixture readiness probe returns as soon as its own window is reparented (tests/support/WmFixture.h:666), but the WM then proceeds m_border->reparent() (src/Client.cpp:251) -> activate() (src/Client.cpp:275) -> timestamp() (src/Client.cpp:315) where it can wedge, so construction can return "ready" while the WM is about to block and the NEXT window's MapRequest is never processed
 - [Phase 08.5]: 08.5-06 Task 4: foreign=5 of cold=5 claims LESS than 08.5-06 first recorded -- "foreign" also covers the WM's own root _NET_CLIENT_LIST/_NET_ACTIVE_WINDOW traffic, which eventProperty() (src/Events.cpp:535) would ignore anyway. The swallowing defect is real as a mechanism; that counter does not measure its impact
 - [Phase 08.5]: 08.5-06: attribution verdict INCONCLUSIVE -- 8 debug runs at 015e8c6 produced 1 red (case #80, test_wm_fallbacks.cpp:272, 8000ms reparent poll), but that case INFO guard sits BELOW the failing assertion so no WM stderr reached the log; neither CONFIRMED nor REFUTED condition observed. 08.5-07 Task 1 precondition UNMET. — The measurement did its job and withheld an attribution the evidence does not support (Negative-Result Contract). Probe counters read cold=5 blocked=2 foreign=5 longestms=0: the branch is live and blocks but costs 0ms under that workload, and 5 of 5 waits matched a FOREIGN property event -- a separately recordable defect (eventProperty never sees those). Case #80 is the same 8000ms reparent-poll shape as the before-half case #93, in a second independent helper.
+- [Phase 08.5]: 08.5-09 Task 2 measurement: the targeted reproducer REPRODUCED. Mode R (2000 post-readiness maps across 5 fixtures) crossed the 500 ms diagnostic threshold 5 times, all 5 clients also failed to frame inside the hard 8000 ms deadline, and all 5 bundles are readable in five channels. Mode S (200 maps) tripped 0 times. Neither mode exhausted its 10-minute budget and the budget was NOT extended. — Evidence: evidence/gates/reproducer/ at 3b0fd37 (measurement), committed 9f016a4. Per-mode counters, never pooled: trips-s=0 bundles-s=0 capped-s=0 maps-s=200; trips-r=5 bundles-r=5 capped-r=0 maps-r=2000 unframed-r=5.
+- [Phase 08.5]: 08.5-09 Task 2: all five trip backtraces name WindowManager::nextEvent at src/Events.cpp:205 -- the event loop's own poll(), timeout=-1 -- across three distinct WM processes. None names WindowManager::timestamp and none names XMaskEvent. By the criteria written BEFORE the run that is five REFUTED-contributing readings and no CONFIRMED-shaped one, exactly at the five-backtrace floor. PROPOSED verdict REFUTED -- proposed only; the verdict of record is the operator's at Task 3 and has NOT been taken. — The calibration capture against a healthy WM (evidence/gates/reproducer/control/) shows the SAME frame, which is what makes the trip reading a comparison rather than an argument from absence: an idle WM and a WM that has not reparented for 500 ms are, at this level, both blocked in the event loop's poll with no deadline armed. A refutation of this mechanism is not an attribution to another one.
 
 ### Pending Todos
 
@@ -308,6 +341,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-31T05:37:35.636Z
-Stopped at: 08.5-06 complete -- verdict INCONCLUSIVE, operator ruled hold; 08.5-07/08/05 blocked on unmet CONFIRMED precondition
+Last session: 2026-08-31T10:18:09.450Z
+Stopped at: 08.5-09 HALTED at Task 3 checkpoint:decision (gate=blocking-human) -- Tasks 1 and 2 complete and committed; proposed verdict REFUTED awaiting the operator ruling and the 08.5-07 disposition
 Resume file: None
