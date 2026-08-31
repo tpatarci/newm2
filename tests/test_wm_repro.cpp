@@ -45,6 +45,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -105,6 +106,78 @@ int reproThresholdMs()
     return resolved;
 }
 
+// Every budget knob below is validated the same way: parsed as an integer, a
+// non-positive or absurd value refused with one prefixed message, then the
+// default used. The already-fetched value is passed in so that every
+// environment read in this file is a call on a STRING LITERAL -- a getenv
+// reached through a variable would put the knob set beyond a static reading,
+// and the closed enumeration of that set is what makes the no-widening claim
+// checkable rather than promised.
+int validatedKnob(const char* name, const char* raw, int fallback, long ceiling)
+{
+    if (raw == nullptr || raw[0] == '\0') return fallback;
+
+    char* end = nullptr;
+    errno = 0;
+    const long offered = std::strtol(raw, &end, 10);
+    const bool parsed = (end != raw && end != nullptr && *end == '\0' && errno == 0);
+
+    if (!parsed || offered <= 0 || offered > ceiling) {
+        std::fprintf(stderr,
+                     "wm2-repro: refused %s=%s -- must be a positive integer no greater "
+                     "than %ld; using %d\n",
+                     name, raw, ceiling, fallback);
+        std::fflush(stderr);
+        return fallback;
+    }
+    return static_cast<int>(offered);
+}
+
+// The closed knob set. Eight members, no more: the threshold above plus these
+// seven. The reparent deadline is in neither list and has no spelling in
+// either -- it is a constexpr literal declared exactly once.
+int sFixtures()
+{
+    static const int v = validatedKnob("WM2_REPRO_S_FIXTURES",
+                                       std::getenv("WM2_REPRO_S_FIXTURES"), 2, 100000);
+    return v;
+}
+
+int rFixtures()
+{
+    static const int v = validatedKnob("WM2_REPRO_R_FIXTURES",
+                                       std::getenv("WM2_REPRO_R_FIXTURES"), 1, 10000);
+    return v;
+}
+
+int rMaps()
+{
+    static const int v = validatedKnob("WM2_REPRO_R_MAPS",
+                                       std::getenv("WM2_REPRO_R_MAPS"), 5, 100000);
+    return v;
+}
+
+int sWallMs()
+{
+    static const int v = validatedKnob("WM2_REPRO_S_WALL_MS",
+                                       std::getenv("WM2_REPRO_S_WALL_MS"), 20000, 7200000);
+    return v;
+}
+
+int rWallMs()
+{
+    static const int v = validatedKnob("WM2_REPRO_R_WALL_MS",
+                                       std::getenv("WM2_REPRO_R_WALL_MS"), 20000, 7200000);
+    return v;
+}
+
+int bundleCap()
+{
+    static const int v = validatedKnob("WM2_REPRO_BUNDLE_CAP",
+                                       std::getenv("WM2_REPRO_BUNDLE_CAP"), 20, 10000);
+    return v;
+}
+
 // --- small filesystem helpers ----------------------------------------------
 
 bool mkdirp(const std::string& path)
@@ -160,6 +233,38 @@ std::string sanitizeDisplay(const std::string& display)
         if (ch == ':' || ch == '.' || ch == '/') ch = '-';
     }
     return s;
+}
+
+// Where trip bundles are written. Validated on the same terms as every other
+// knob: an absolute path with no parent-directory component, or the default
+// under the build tree. There is no fixed temporary-directory name anywhere in
+// this file (threat T-8-TMP).
+std::string outDirRoot()
+{
+    static const std::string resolved = [] {
+        const std::string fallback = WmFixture::workDir() + "/repro-bundles";
+        const char* raw = std::getenv("WM2_REPRO_OUT_DIR");
+        if (raw == nullptr || raw[0] == '\0') return fallback;
+
+        const std::string offered(raw);
+        if (offered[0] != '/' || offered.find("..") != std::string::npos) {
+            std::fprintf(stderr,
+                         "wm2-repro: refused WM2_REPRO_OUT_DIR=%s -- must be an absolute "
+                         "path with no parent-directory component; using the build tree\n",
+                         raw);
+            std::fflush(stderr);
+            return fallback;
+        }
+        return offered;
+    }();
+    return resolved;
+}
+
+long elapsedMsSince(const Clock::time_point& start)
+{
+    return static_cast<long>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            Clock::now() - start).count());
 }
 
 // Every line of `text` that begins "<channel>: ".
@@ -339,6 +444,217 @@ Window mapClientAndPoll(Display* d, Window& clientOut, long& elapsedMsOut, bool&
     return framedOut ? frame : None;
 }
 
+// --- the budgeted sampler ---------------------------------------------------
+
+struct ModeCounters {
+    long fixtures = 0;
+    long startFailures = 0;
+    long maps = 0;
+    long trips = 0;
+    long allocated = 0;
+    long bundles = 0;
+    long capped = 0;
+    long unframed = 0;
+    long wallMs = 0;
+    long bundlesWithFiveVerdicts = 0;
+};
+
+// The transcript's counter tokens are part of this measurement's contract,
+// because the readout-integrity gate parses them.
+//
+// EVERY key carries its mode letter and there is deliberately NO mode-agnostic
+// spelling of any of them. A pooled scalar read with `tail -1` reports whichever
+// mode printed last and hides the other, which fails in both directions: one
+// mode's trips vanish behind the other mode's zero, or an honest single-mode
+// reproduction is reddened by the other mode's zero. Hiding one mode behind the
+// other is the exact false reading this measurement exists to eliminate.
+//
+// Printed UNCONDITIONALLY, including for a mode that observed nothing, so a
+// missing token is a defect rather than a value of zero.
+//
+// `startfail-<m>` is recorded beyond the contract's seven mandatory keys: a
+// fixture whose window manager wedged during its OWN startup never reaches a
+// post-readiness map, and a run that lost fixtures that way must not read as a
+// run that sampled cleanly.
+void printModeSummary(const std::string& mode, const ModeCounters& c)
+{
+    const char* m = mode.c_str();
+    std::printf("wm2-repro: mode-%s fixtures-%s=%ld startfail-%s=%ld maps-%s=%ld "
+                "trips-%s=%ld bundles-%s=%ld capped-%s=%ld unframed-%s=%ld "
+                "wallms-%s=%ld\n",
+                m, m, c.fixtures, m, c.startFailures, m, c.maps, m, c.trips,
+                m, c.bundles, m, c.capped, m, c.unframed, m, c.wallMs);
+    std::fflush(stdout);
+}
+
+// The shared poll: the hard reparent deadline, with the diagnostic threshold
+// checked inside it.
+//
+// The comparison is `>=` and the capture is LATCHED per poll, so an elapsed
+// reading landing exactly on the threshold trips exactly once -- not zero times
+// and not twice. The bundle index is allocated from a per-mode MONOTONIC
+// counter starting at 1, never from a timestamp and never from a directory
+// listing, so two trips can never be handed the same directory name.
+//
+// After a trip the poll CONTINUES to the deadline, so whether the client
+// eventually framed is recorded rather than lost. That elapsed figure is a
+// liveness record, NOT a stall measurement: a debugger attach suspends the
+// observed process for the duration of the backtrace, so everything after a
+// capture is perturbed by the capture.
+bool pollForFrameWithCapture(WmFixture& fixture, Display* d, Window w,
+                             const std::string& mode, ModeCounters& counters)
+{
+    Window root = DefaultRootWindow(d);
+    const auto started = Clock::now();
+    const long thresholdMs = static_cast<long>(reproThresholdMs());
+    const long cap = static_cast<long>(bundleCap());
+    bool latched = false;
+
+    for (;;) {
+        Window wroot = None, parent = None, *children = nullptr;
+        unsigned int n = 0;
+        if (XQueryTree(d, w, &wroot, &parent, &children, &n)) {
+            if (children) XFree(children);
+            if (parent != None && parent != root) return true;
+        }
+
+        const long elapsed = elapsedMsSince(started);
+
+        if (!latched && elapsed >= thresholdMs) {
+            latched = true;
+            ++counters.trips;
+
+            if (counters.allocated < cap) {
+                const long index = ++counters.allocated;
+                const std::string dir =
+                    outDirRoot() + "/trip-" + mode + "-" + std::to_string(index);
+                const CaptureOutcome oc = captureBundle(
+                    fixture, dir, mode,
+                    "diagnostic threshold reached during a post-readiness reparent poll",
+                    elapsed, false);
+                if (oc.wrote) {
+                    ++counters.bundles;
+                    const std::string capText =
+                        readFileOrEmpty(dir + "/capability.txt");
+                    if (wellFormedChannelCount(capText) == kChannelCount) {
+                        ++counters.bundlesWithFiveVerdicts;
+                    }
+                }
+            } else {
+                // Declined because the per-mode cap was already reached. The
+                // identity trips == bundles + capped therefore holds by
+                // construction, which is what makes a DROPPED write visible in
+                // the transcript rather than silently absorbed.
+                ++counters.capped;
+            }
+        }
+
+        if (elapsed >= static_cast<long>(kReparentDeadlineMs)) return false;
+        pollSleep();
+    }
+}
+
+Window createAndMap(Display* d)
+{
+    Window root = DefaultRootWindow(d);
+    Window w = XCreateSimpleWindow(d, root, 60, 50, 240, 180, 0,
+                                   BlackPixel(d, DefaultScreen(d)),
+                                   WhitePixel(d, DefaultScreen(d)));
+    XMapWindow(d, w);
+    XSync(d, False);
+    return w;
+}
+
+// Mode S -- the startup-adjacent shape. A fresh fixture, exactly ONE client
+// mapped after it reports ready, then teardown. This is the shape both case #80
+// and the before-half's case #93 exhibited, and it is the more faithful
+// reproduction of the two.
+ModeCounters runModeS()
+{
+    ModeCounters c;
+    const auto started = Clock::now();
+    const long budgetMs = static_cast<long>(sWallMs());
+    const int fixtures = sFixtures();
+
+    for (int i = 0; i < fixtures; ++i) {
+        if (elapsedMsSince(started) >= budgetMs) break;
+
+        try {
+            WmFixtureOptions options;
+            options.allowTestProcessPtrace = true;
+            WmFixture fixture(options);
+            ++c.fixtures;
+
+            x11::DisplayPtr conn = fixture.openDisplay();
+            if (!conn) continue;
+            Display* d = conn.get();
+
+            Window w = createAndMap(d);
+            ++c.maps;
+            if (!pollForFrameWithCapture(fixture, d, w, "s", c)) ++c.unframed;
+            XDestroyWindow(d, w);
+            XSync(d, False);
+        } catch (const std::exception&) {
+            // A fixture that never reached "ready" is RECORDED, never asserted.
+            // A window manager wedged during its own startup is precisely the
+            // observation this instrument exists to make.
+            ++c.startFailures;
+        }
+    }
+
+    c.wallMs = elapsedMsSince(started);
+    return c;
+}
+
+// Mode R -- the repeated-map shape. One fixture, many clients mapped, awaited
+// and destroyed in sequence inside it. Every mapped client traverses
+// reparent -> activate -> timestamp, and the cached time is invalidated on
+// every loop iteration, so every one of those activations takes the cold-cache
+// path. Mode R therefore samples the same branch at a fraction of Mode S's
+// per-sample cost, and running both is itself informative: trips in R and not
+// in S per unit of sampling means the mechanism is per-activation; trips only in
+// S means it is startup-adjacent. The two modes' counts are recorded separately
+// and are never pooled into one rate.
+ModeCounters runModeR()
+{
+    ModeCounters c;
+    const auto started = Clock::now();
+    const long budgetMs = static_cast<long>(rWallMs());
+    const int fixtures = rFixtures();
+    const int mapsPerFixture = rMaps();
+
+    for (int i = 0; i < fixtures; ++i) {
+        if (elapsedMsSince(started) >= budgetMs) break;
+
+        try {
+            WmFixtureOptions options;
+            options.allowTestProcessPtrace = true;
+            WmFixture fixture(options);
+            ++c.fixtures;
+
+            x11::DisplayPtr conn = fixture.openDisplay();
+            if (!conn) continue;
+            Display* d = conn.get();
+
+            for (int j = 0; j < mapsPerFixture; ++j) {
+                if (elapsedMsSince(started) >= budgetMs) break;
+                if (!fixture.wmAlive()) break;
+
+                Window w = createAndMap(d);
+                ++c.maps;
+                if (!pollForFrameWithCapture(fixture, d, w, "r", c)) ++c.unframed;
+                XDestroyWindow(d, w);
+                XSync(d, False);
+            }
+        } catch (const std::exception&) {
+            ++c.startFailures;
+        }
+    }
+
+    c.wallMs = elapsedMsSince(started);
+    return c;
+}
+
 } // namespace
 
 TEST_CASE("The hang-time capture path yields a five-channel bundle from a healthy window manager",
@@ -413,4 +729,53 @@ TEST_CASE("The hang-time capture path yields a five-channel bundle from a health
         XDestroyWindow(d, client);
         XSync(d, False);
     }
+}
+
+TEST_CASE("The post-readiness reparent is sampled to a stated budget in two modes",
+          "[wm_repro]")
+{
+    const ModeCounters s = runModeS();
+    printModeSummary("s", s);
+
+    const ModeCounters r = runModeR();
+    printModeSummary("r", r);
+
+    // BIND FIRST, THEN ANNOTATE, THEN ASSERT. See the calibration case above for
+    // why the ordering is not stylistic: an annotation covers only assertions
+    // that follow it.
+    const long totalMaps = s.maps + r.maps;
+    const long totalBundles = s.bundles + r.bundles;
+    const long totalFiveVerdict = s.bundlesWithFiveVerdicts + r.bundlesWithFiveVerdicts;
+
+    // The readout-integrity reading, per mode and never pooled: a trip that
+    // produced no bundle is exactly the unreadable red that ended plan 08.5-06.
+    const bool sReadable = (s.trips == 0) || (s.bundles >= 1);
+    const bool rReadable = (r.trips == 0) || (r.bundles >= 1);
+
+    INFO("mode s: fixtures-s=" << s.fixtures << " startfail-s=" << s.startFailures
+         << " maps-s=" << s.maps << " trips-s=" << s.trips
+         << " bundles-s=" << s.bundles << " capped-s=" << s.capped
+         << " unframed-s=" << s.unframed << " wallms-s=" << s.wallMs);
+    INFO("mode r: fixtures-r=" << r.fixtures << " startfail-r=" << r.startFailures
+         << " maps-r=" << r.maps << " trips-r=" << r.trips
+         << " bundles-r=" << r.bundles << " capped-r=" << r.capped
+         << " unframed-r=" << r.unframed << " wallms-r=" << r.wallMs);
+    INFO("bundle root: " << outDirRoot());
+
+    // 1. The anti-vacuity guard. A sampler that sampled nothing proves nothing,
+    //    and every plan from 08-07 through 08-14 found a test that did not test
+    //    its own name.
+    REQUIRE(totalMaps >= 1);
+
+    // 2. The readout-integrity assertion, and the defect class this whole file
+    //    exists to close. A client that never framed is RECORDED, not asserted --
+    //    the wedge is the observation, not the failure -- but a trip that
+    //    produced no bundle is a failure of the instrument itself.
+    REQUIRE(sReadable);
+    REQUIRE(rReadable);
+
+    // 3. Every bundle written is readable in all five channels, which includes
+    //    the window manager being recorded alive or recorded dead at the capture
+    //    (the wm-alive channel's own verdict).
+    REQUIRE(totalFiveVerdict == totalBundles);
 }
