@@ -1,0 +1,112 @@
+Internal ctest changing into directory: /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3dae5c755583b237/build/debug
+Test project /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3dae5c755583b237/build/debug
+      Start 319: start_xvfb
+ 1/11 Test #319: start_xvfb ....................................................................................................   Passed    0.12 sec
+      Start  24: FdGuard default constructed has fd -1
+ 2/11 Test  #24: FdGuard default constructed has fd -1 .........................................................................   Passed    0.00 sec
+      Start  25: pump-reports-what-is-available: the pump must not report zero while an event is already in hand
+ 3/11 Test  #25: pump-reports-what-is-available: the pump must not report zero while an event is already in hand ...............***Failed    0.01 sec
+Filters: "pump-reports-what-is-available: the pump must not report zero while an event is already in hand"
+Randomness seeded to: 769390188
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_eventloop is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+pump-reports-what-is-available: the pump must not report zero while an event is
+already in hand
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3dae5c755583b237/tests/test_eventloop.cpp:125
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3dae5c755583b237/tests/test_eventloop.cpp:171: FAILED:
+  REQUIRE( reported > 0 )
+with expansion:
+  0 > 0
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 6 | 5 passed | 1 failed
+
+
+      Start  26: FdGuard closes fd on destruction
+ 4/11 Test  #26: FdGuard closes fd on destruction ..............................................................................   Passed    0.00 sec
+      Start  27: FdGuard move assignment transfers ownership
+ 5/11 Test  #27: FdGuard move assignment transfers ownership ...................................................................   Passed    0.00 sec
+      Start  28: readable-is-not-deliverable: a readable descriptor carrying a protocol error must not mean deliver-an-event
+ 6/11 Test  #28: readable-is-not-deliverable: a readable descriptor carrying a protocol error must not mean deliver-an-event ...***Failed    0.00 sec
+Filters: "readable-is-not-deliverable: a readable descriptor carrying a protocol error must not mean deliver-an-event"
+Randomness seeded to: 702745171
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_eventloop is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+readable-is-not-deliverable: a readable descriptor carrying a protocol error
+must not mean deliver-an-event
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3dae5c755583b237/tests/test_eventloop.cpp:212
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3dae5c755583b237/tests/test_eventloop.cpp:259: FAILED:
+  REQUIRE( eventPumpDecide(state) != EventPumpAction::DeliverEvent )
+with expansion:
+  0 != 0
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 5 | 4 passed | 1 failed
+
+
+      Start  29: pump-reports-zero-when-idle: a quiescent connection reports nothing pending
+ 7/11 Test  #29: pump-reports-zero-when-idle: a quiescent connection reports nothing pending ...................................   Passed    0.00 sec
+      Start  30: exit-flag-stops-the-loop: the decision must be to stop when the exit flag is set
+ 8/11 Test  #30: exit-flag-stops-the-loop: the decision must be to stop when the exit flag is set ..............................***Failed    0.01 sec
+Filters: "exit-flag-stops-the-loop: the decision must be to stop when the exit flag is set"
+Randomness seeded to: 1596242430
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_eventloop is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+exit-flag-stops-the-loop: the decision must be to stop when the exit flag is
+set
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3dae5c755583b237/tests/test_eventloop.cpp:266
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3dae5c755583b237/tests/test_eventloop.cpp:282: FAILED:
+  REQUIRE( eventPumpDecide(state) == EventPumpAction::StopOnSignal )
+with expansion:
+  2 == 4
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 1 | 1 failed
+
+
+      Start  31: FdGuard move transfers ownership
+ 9/11 Test  #31: FdGuard move transfers ownership ..............................................................................   Passed    0.01 sec
+      Start  32: Self-pipe can be created and used
+10/11 Test  #32: Self-pipe can be created and used .............................................................................   Passed    0.01 sec
+      Start 320: stop_xvfb
+11/11 Test #320: stop_xvfb .....................................................................................................   Passed    0.00 sec
+
+73% tests passed, 3 tests failed out of 11
+
+Label Time Summary:
+eventloop    =   0.04 sec*proc (9 tests)
+pipe         =   0.01 sec*proc (1 test)
+pump         =   0.02 sec*proc (4 tests)
+raii         =   0.02 sec*proc (4 tests)
+
+Total Test time (real) =   0.20 sec
+
+The following tests FAILED:
+	 25 - pump-reports-what-is-available: the pump must not report zero while an event is already in hand (Failed)
+	 28 - readable-is-not-deliverable: a readable descriptor carrying a protocol error must not mean deliver-an-event (Failed)
+	 30 - exit-flag-stops-the-loop: the decision must be to stop when the exit flag is set (Failed)
+Errors while running CTest
