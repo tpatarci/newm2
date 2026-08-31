@@ -295,7 +295,7 @@ Plans:
   6. Both Phase 8 deviations are retired on evidence or restated with a reason that is true — neither survives as written
   7. The four hard blockers are re-run at the final commit, not inherited from Phase 8's snapshot
 
-**Plans**: 5/9 plans executed, 5 executed — 2 original, 7 gap-closure across three rounds. 08.5-04 stays **halted**; 08.5-09 (round 3, the targeted reproducer) runs next at wave 3 and produces the verdict 08.5-07/08/05 are held on; 08.5-05 still runs last, after 08.5-08 releases its precondition
+**Plans**: 6/9 plans executed — 2 original, 7 gap-closure across three rounds. 08.5-04 stays **halted**. 08.5-09 (round 3, the targeted reproducer) is **COMPLETE and returned the verdict `REFUTED` with the `08.5-07` disposition `RE-PLAN`** (operator ruling, 2026-08-31). **08.5-07, 08.5-08 and 08.5-05 are therefore NOT to be started** — they stay written and stay held, and the next action is a new add-only round re-planning the attribution around the actual failing path. v1.0 stays blocked until the reproducer's bundle table names that path, or ruling B is reversed as a NEW, separately recorded release-policy decision
 
 Plans:
 
@@ -331,9 +331,9 @@ Gap-closure wave 3 (round 2):
 
 Gap-closure round 3, wave 3 *(runs strictly before wave 4)*:
 
-- [ ] 08.5-09-PLAN.md -- The targeted reproducer. Isolate the post-readiness reparent sequence, capture a five-channel diagnostic bundle at a 500 ms threshold **while the window manager is still wedged** (liveness, WM stderr, Xvfb log, `/proc/<pid>/wchan`, and a debugger backtrace behind an exe-plus-display anchored refusal), calibrate it against a healthy window manager, sample two modes to a budget stated before it runs, and end at a `blocking-human` operator ruling that writes one of CONFIRMED / REFUTED / INCONCLUSIVE to the single `**Verdict:**` line in `evidence/gates/attribution/README.md` plus an explicit `**08.5-07 disposition:**`. A backtrace naming `WindowManager::timestamp` under an Xlib event wait CONFIRMS; one in `nextEvent`, an Xlib round trip, teardown or a dead WM REFUTES; an expired budget with no trip is INCONCLUSIVE and is recorded as such (Negative-Result Contract). Deliberately out of scope and recorded rather than dropped: the widespread annotation-ordering fix, the `WmFixture.h:190` socket recheck, and 08.5-04's held gate capture (TEST-08)
+- [x] 08.5-09-PLAN.md -- The targeted reproducer. Isolate the post-readiness reparent sequence, capture a five-channel diagnostic bundle at a 500 ms threshold **while the window manager is still wedged** (liveness, WM stderr, Xvfb log, `/proc/<pid>/wchan`, and a debugger backtrace behind an exe-plus-display anchored refusal), calibrate it against a healthy window manager, sample two modes to a budget stated before it runs, and end at a `blocking-human` operator ruling that writes one of CONFIRMED / REFUTED / INCONCLUSIVE to the single `**Verdict:**` line in `evidence/gates/attribution/README.md` plus an explicit `**08.5-07 disposition:**`. A backtrace naming `WindowManager::timestamp` under an Xlib event wait CONFIRMS; one in `nextEvent`, an Xlib round trip, teardown or a dead WM REFUTES; an expired budget with no trip is INCONCLUSIVE and is recorded as such (Negative-Result Contract). Deliberately out of scope and recorded rather than dropped: the widespread annotation-ordering fix, the `WmFixture.h:190` socket recheck, and 08.5-04's held gate capture (TEST-08)
 
-Gap-closure wave 4 (round 2) *(blocked on wave 3; additionally held on 08.5-09's verdict — its Task 1 precondition requires CONFIRMED and is a conjunction whose second clause names the frozen `08.5-06-SUMMARY.md`, so it is unsatisfiable as written and the operator's recorded disposition, not the verdict alone, is what releases it)*:
+Gap-closure wave 4 (round 2) *(**HELD — DO NOT START.** 08.5-09 ruled `REFUTED` on 2026-08-31 and the operator's disposition is `RE-PLAN`, not `START AS WRITTEN`: 08.5-07 is not the flake fix and must not be recorded as one. Its Task 1 precondition also requires CONFIRMED and is a conjunction whose second clause names the frozen `08.5-06-SUMMARY.md`, so it is unsatisfiable as written — the operator's recorded disposition, not the verdict, is what releases this wave, and it has not)*:
 
 - [ ] 08.5-07-PLAN.md -- Bound and narrow the timestamp wait: a deadline-bounded, predicate-matched wait that warns once and degrades to `CurrentTime` rather than blocking the window manager's only thread, and that consumes only its own root append. Two `[wm_timestamp]` regression cases, mutation-checked in the debug **and** ASan trees, including a row that wedges the loop on demand. Then ten consecutive green full debug runs — no run omitted, no run retried — with host conditions beside each (TEST-08, RULES-01)
 
@@ -378,5 +378,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 
 | 6. EWMH Compliance | 0/3 | Planned | - |
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
 | 8. Xrandr + VNC + Focus/Rules | 14/14 | Verified with gaps | 2026-08-30 |
-| 8.5 v1.0 Closeout *(INSERTED)* | 5/9 | In Progress|  |
+| 8.5 v1.0 Closeout *(INSERTED)* | 6/9 | In Progress|  |
 | 9. Config GUI + IPC | 0/3 | Not started | - |

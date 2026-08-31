@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 08.5
 current_phase_name: v1.0-closeout
 status: executing
-stopped_at: "08.5-09 HALTED at Task 3 checkpoint:decision (gate=blocking-human) -- Tasks 1 and 2 complete and committed; proposed verdict REFUTED awaiting the operator ruling and the 08.5-07 disposition"
-last_updated: "2026-08-31T10:18:17.171Z"
+stopped_at: Completed 08.5-09-PLAN.md -- operator ruled REFUTED at the Task 3 blocking-human checkpoint; 08.5-07 disposition RE-PLAN. 08.5-07/-08/-05 NOT to be started; next action is re-planning the attribution
+last_updated: "2026-08-31T10:52:19.169Z"
 last_activity: 2026-08-31
-last_activity_desc: 08.5-06 closed at Task 4 -- operator ruled INCONCLUSIVE / hold
-state_head: 9f016a46a2c85af947e99ae60b83855046b19459
+last_activity_desc: 08.5-09 closed at Task 3 -- operator ruled REFUTED, disposition RE-PLAN
+state_head: 397310ab0e32ccf5b5826214fc5121c188a2831a
 progress:
   total_phases: 10
   completed_phases: 4
   total_plans: 45
-  completed_plans: 41
+  completed_plans: 42
 milestone_name: milestone
 ---
 
@@ -28,16 +28,45 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 ## Current Position
 
-Phase: 08.5 (v1.0-closeout) — **08.5-09 HALTED AT ITS TASK 3 CHECKPOINT**
-Plan: 9 plans; 5 have summaries (08.5-01, -02, -03, -04, -06). 08.5-04's gate
-  capture is HELD, not passed. 08.5-07/-08/-05 are written and still held.
-Status: **08.5-09 EXECUTING — Tasks 1 and 2 COMPLETE and committed; Task 3 is a
-  `checkpoint:decision` with `gate="blocking-human"` and is AWAITING THE
-  OPERATOR.** No verdict has been written to
-  `evidence/gates/attribution/README.md`; its single `**Verdict:**` line still
-  reads `INCONCLUSIVE` and no `**08.5-07 disposition:**` line exists yet.
+Phase: 08.5 (v1.0-closeout) — **08.5-09 COMPLETE. VERDICT REFUTED. CHAIN GOES RE-PLAN.**
+Plan: 9 plans; 6 have summaries (08.5-01, -02, -03, -04, -06, -09). 08.5-04's gate
+  capture is HELD, not passed.
+**DO NOT START 08.5-07, 08.5-08 OR 08.5-05.** The operator's disposition is
+  `RE-PLAN`, not `START AS WRITTEN`. Those three plans stay written and stay held;
+  executing any of them as written would record 08.5-07 as the flake fix, which
+  this round's measurement refuted and which the precommitted terminal rule
+  forbids. **The next action is RE-PLANNING the attribution around the actual
+  failing path** — an add-only round, as 08.5-09 was.
+Status: **08.5-09 COMPLETE (2026-08-31).** All three tasks executed; the operator
+  ruled at the Task 3 `checkpoint:decision` (`gate="blocking-human"`).
+  **Verdict of record: `REFUTED`. `08.5-07` disposition: `RE-PLAN`. No
+  sub-decision** (a sub-decision is carried only by an `inconclusive` ruling).
+  `evidence/gates/attribution/README.md` now carries exactly one `**Verdict:**`
+  line reading `REFUTED` and exactly one `**08.5-07 disposition:** RE-PLAN` line,
+  with one two-ended delimited region beneath saying which measurement the verdict
+  reports and what it does not cover. Every measured figure, per-run table, log
+  filename, counter reading and the prior round's ruling section in that file are
+  untouched; the eight-run sampling measurement's own `INCONCLUSIVE` outcome
+  stands unchanged.
   Commits: `8623618` (capture tool, fixture opt-in, calibration case, calibration
-  bundle), `3b0fd37` (budgeted two-mode sampler), `9f016a4` (the measurement).
+  bundle), `3b0fd37` (budgeted two-mode sampler), `9f016a4` (the measurement),
+  `397310a` (the operator ruling).
+  **REFUTED is a SUCCESSFUL outcome under the Negative-Result Contract in
+  `08.5-VALIDATION.md`, not a failed plan** — a refutation is committed with the
+  same weight as a confirmation, and an attribution is withheld when the
+  measurement does not support one.
+  **Lead for the next round, recorded and explicitly NOT attributed:** `trip-r-3`,
+  `trip-r-4` and `trip-r-5` each carry a `BadWindow` cascade — `X_CreateWindow`,
+  `X_ReparentWindow`, `X_MapWindow`, `X_ChangeSaveSet` all failing on window
+  `0x80003b`, i.e. the WM framing a window that no longer exists. `trip-r-1` and
+  `trip-r-2` have clean 12-line stderr and still failed to frame, so the cascade
+  is in 3 of 5 and is NOT the universal signature. A refutation of one mechanism
+  is not an attribution to another.
+  **Corroborating reading ruled on at the checkpoint:** the stderr pair
+  `timestamp: entering blocking property wait` / `property wait matched a foreign
+  event` appears exactly ONCE in EVERY bundle **including the healthy control**,
+  so the swallowing mechanism fires identically in the healthy case and does not
+  discriminate a stalled WM from a healthy one.
   **The reproducer REPRODUCED.** Budget stated before the run and not extended:
   mode S 200 fixtures/1 map each, mode R 5 fixtures x 400 maps, 10 min and 20
   bundles per mode, 500 ms threshold inside the hard 8000 ms reparent deadline.
@@ -48,8 +77,13 @@ Status: **08.5-09 EXECUTING — Tasks 1 and 2 COMPLETE and committed; Task 3 is 
   — the event loop's own `poll()`, `timeout=-1` — across three distinct WM
   processes. None names `WindowManager::timestamp`; none names `XMaskEvent`. By
   the criteria written BEFORE the run that is five REFUTED-contributing readings
-  and no CONFIRMED-shaped one, exactly at the five-backtrace floor. **Proposed
-  verdict: REFUTED** — proposed only. Mutation table green in debug AND through
+  and no CONFIRMED-shaped one, exactly at the five-backtrace floor — met exactly,
+  not with margin, across three independent WM processes (68887; 69033 twice;
+  69518 twice), and the operator was shown that explicitly and ruled the floor
+  satisfied. The proposed verdict REFUTED is now the **verdict of record**. The
+  healthy-WM calibration bundle shows the SAME frame, which is what makes this a
+  comparison rather than an argument from absence.
+  Mutation table green in debug AND through
   `build-all.sh asan` (rows 2 and 3 redden the calibration case at `0 == 5` and
   `3 == 5` respectively, which is what shows the assertion counts channels).
   Final `build-all.sh asan` at the restored source: 316/316, no findings.
@@ -86,8 +120,10 @@ Operator ruling (2026-08-31, 08.5-06 Task 4 `checkpoint:decision`, `gate="blocki
   Task 3 therefore also writes an explicit `**08.5-07 disposition:**` line
   (`RE-PLAN` | `START AS WRITTEN` | `STAYS HELD`) beside the verdict. **The
   disposition, not the verdict, governs whether the held chain moves.**
-Remaining chain: 08.5-09 → (disposition) → 08.5-07 → 08.5-08 → 08.5-05.
-  08.5-07/-08/-05 stay held until 08.5-09's Task 3 checkpoint returns a disposition.
+Remaining chain: the old chain 08.5-09 → 08.5-07 → 08.5-08 → 08.5-05 is **BROKEN
+  BY THE RULING.** The disposition returned `RE-PLAN`, so 08.5-07/-08/-05 are NOT
+  next and are NOT to be started. The chain is now: 08.5-09 (done) → **re-plan the
+  attribution around the actual failing path** → then, and only then, a fix plan.
 Out of scope for this round, named in 08.5-09 rather than dropped: the ~74-site
   `INFO("wm stderr")` guard-ordering fix (with `test_wm_geometry.cpp:1490` flagged
   as the already-correct counter-example a mechanical rewrite must not "fix"), the
@@ -129,15 +165,18 @@ Also noted, unactioned: criterion 7's wording ("re-run at the final commit") doe
   selected green run after known reds satisfies criterion 7 literally without
   establishing a reliable gate. Reversing ruling B is available, but only as a NEW
   recorded operator decision — never as though ruling B had been satisfied.
-Resume: **the operator must rule on 08.5-09's Task 3 checkpoint** (`confirmed` |
-  `refuted` | `inconclusive`, plus the `08.5-07` disposition `RE-PLAN` |
-  `START AS WRITTEN` | `STAYS HELD`). Nothing is written until that reply exists.
-  Then `/gsd-execute-phase 8.5 --gaps-only` resumes 08.5-09 at Task 3. Do NOT
-  start 08.5-07 first — 08.5-09 is wave 3 and gates it, and under the
-  precommitted terminal rule a `refuted` ruling makes 08.5-07 `RE-PLAN`, not the
-  flake fix.
-Last activity: 2026-08-31 — 08.5-09 planned and verified; chain still held pending
-  the reproducer's disposition
+Resume: **the ruling has been taken and written; 08.5-09 is closed.** The next
+  action is **re-planning the attribution around the actual failing path**, add-only
+  as 08.5-09 was — `/gsd-plan-phase 8.5` for a new 08.5-10, starting from the
+  `BadWindow` reparent-cascade lead and from the fact that the WM was idle in
+  `nextEvent`'s own `poll()` at every capture. **Do NOT run
+  `/gsd-execute-phase 8.5` expecting 08.5-07 to be next.** 08.5-07, 08.5-08 and
+  08.5-05 are NOT to be started under the `RE-PLAN` disposition; starting 08.5-07
+  would record it as the flake fix, which the measurement refuted and the
+  precommitted terminal rule forbids. Reversing that is available only as a NEW,
+  separately recorded operator decision.
+Last activity: 2026-08-31 — 08.5-09 complete; verdict REFUTED, disposition RE-PLAN;
+  the held chain is broken by the ruling and the attribution is re-planned
 
 Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).
 Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
@@ -202,6 +241,7 @@ Progress: [████████░░] 81% (7/9 phases complete)
 | Phase 08 P13 | 200min | 3 tasks | 9 files |
 | Phase 08.5 P03 | 5min | 4 tasks | 1 files |
 | Phase 08.5 P06 | 1h 0m | 3 tasks | 18 files |
+| Phase 08.5 P09 | 1h 17m | 3 tasks | 51 files |
 
 ## Accumulated Context
 
@@ -298,6 +338,9 @@ Recent decisions affecting current work:
 - [Phase 08.5]: 08.5-06: attribution verdict INCONCLUSIVE -- 8 debug runs at 015e8c6 produced 1 red (case #80, test_wm_fallbacks.cpp:272, 8000ms reparent poll), but that case INFO guard sits BELOW the failing assertion so no WM stderr reached the log; neither CONFIRMED nor REFUTED condition observed. 08.5-07 Task 1 precondition UNMET. — The measurement did its job and withheld an attribution the evidence does not support (Negative-Result Contract). Probe counters read cold=5 blocked=2 foreign=5 longestms=0: the branch is live and blocks but costs 0ms under that workload, and 5 of 5 waits matched a FOREIGN property event -- a separately recordable defect (eventProperty never sees those). Case #80 is the same 8000ms reparent-poll shape as the before-half case #93, in a second independent helper.
 - [Phase 08.5]: 08.5-09 Task 2 measurement: the targeted reproducer REPRODUCED. Mode R (2000 post-readiness maps across 5 fixtures) crossed the 500 ms diagnostic threshold 5 times, all 5 clients also failed to frame inside the hard 8000 ms deadline, and all 5 bundles are readable in five channels. Mode S (200 maps) tripped 0 times. Neither mode exhausted its 10-minute budget and the budget was NOT extended. — Evidence: evidence/gates/reproducer/ at 3b0fd37 (measurement), committed 9f016a4. Per-mode counters, never pooled: trips-s=0 bundles-s=0 capped-s=0 maps-s=200; trips-r=5 bundles-r=5 capped-r=0 maps-r=2000 unframed-r=5.
 - [Phase 08.5]: 08.5-09 Task 2: all five trip backtraces name WindowManager::nextEvent at src/Events.cpp:205 -- the event loop's own poll(), timeout=-1 -- across three distinct WM processes. None names WindowManager::timestamp and none names XMaskEvent. By the criteria written BEFORE the run that is five REFUTED-contributing readings and no CONFIRMED-shaped one, exactly at the five-backtrace floor. PROPOSED verdict REFUTED -- proposed only; the verdict of record is the operator's at Task 3 and has NOT been taken. — The calibration capture against a healthy WM (evidence/gates/reproducer/control/) shows the SAME frame, which is what makes the trip reading a comparison rather than an argument from absence: an idle WM and a WM that has not reparented for 500 ms are, at this level, both blocked in the event loop's poll with no deadline armed. A refutation of this mechanism is not an attribution to another one.
+- [Phase 08.5]: 08.5-09 Task 3 operator ruling (2026-08-31): attribution verdict REFUTED, and the 08.5-07 disposition is RE-PLAN. Five hang-time backtraces from three distinct WM processes all name WindowManager::nextEvent at src/Events.cpp:205 inside poll(timeout=-1); none names WindowManager::timestamp or XMaskEvent, and the healthy-WM calibration capture has the SAME shape. REFUTED is a successful outcome under the Negative-Result Contract, not a failed plan. 08.5-07/-08/-05 are NOT to be started; v1.0 stays blocked until the bundle table names the actual failing path or ruling B is reversed as a NEW recorded release-policy decision.
+- [Phase 08.5]: 08.5-09 Task 3: the DISPOSITION, not the verdict, governs the held chain. 08.5-07's Task 1 precondition is a conjunction whose second clause requires 08.5-06-SUMMARY.md to record confirmed; that summary is frozen at inconclusive and add-only forbids editing it, so the precondition is unsatisfiable by ANY measurement including a confirming one. Amending the single Verdict line therefore neither starts nor unblocks 08.5-07.
+- [Phase 08.5]: 08.5-09: the BadWindow reparent cascade (X_CreateWindow/X_ReparentWindow/X_MapWindow/X_ChangeSaveSet on window 0x80003b) in trip-r-3/-4/-5 is recorded as a LEAD and explicitly NOT as an attribution -- it is present in 3 of 5 bundles, and trip-r-1/-2 have clean stderr and still failed to frame, so it is not the universal signature. A refutation of one mechanism is not an attribution to another.
 
 ### Pending Todos
 
@@ -313,7 +356,7 @@ Recent decisions affecting current work:
 - Phase 9 (Config GUI): GTK3 performance over SSH X forwarding is unvalidated
 - Bare 'ctest --test-dir build/asan' fails 3 xft tests on a pre-existing fontconfig cache leak: tests/lsan.supp is wired only into the forked WM child, not the Catch2 test binaries. Run the asan tree via scripts/gates/build-all.sh until fixed (deferred-items.md item 5).
 - ~~PRE-EXISTING: WindowManager::circulate() spins at 100% CPU forever when no client is Normal~~ RESOLVED in 08-07 (`62e9c0d`): bounded scan plus a [wm_circulate] regression test asserting both responsiveness and idleness. deferred-items.md item 6.
-- 08-05 deferred item 10: rare WM startup hang between the EWMH publication and the event loop, suspected timestamp()'s unbounded XMaskEvent. Pre-existing code path; needs one backtrace from a hung child to confirm
+- 08-05 deferred item 10: rare WM startup hang between the EWMH publication and the event loop, suspected timestamp()'s unbounded XMaskEvent. **The suspicion is REFUTED for the post-readiness reparent shape as of 08.5-09 (2026-08-31)**: five hang-time backtraces from three WM processes all name WindowManager::nextEvent at src/Events.cpp:205 inside poll(timeout=-1); none names WindowManager::timestamp or XMaskEvent, and the healthy-WM calibration has the same shape. timestamp()'s unbounded wait remains a real defect on its own merits; it is no longer the attributed cause.
 - Deferred item 11: the sideways tab does not grow with the window title (axis-swapped rotated extents) -- measured in 08-06, out of scope there, recommended for 08-14
 - Deferred item 12: the full process-level suite flakes at ~1 test per run on both this tree and the pre-08-06 baseline -- build-all.sh is not reliably green in one shot
 - Deferred item 13 (08-11): every client destroy logs one X_UnmapWindow BadWindow because the resize handle is a child of the client window; blocks a strict no-protocol-errors assertion
@@ -322,6 +365,8 @@ Recent decisions affecting current work:
 - 08.5-06 Task 4 finding: the WM stderr guard-ordering defect is WIDESPREAD, not a one-off -- only 14 of 59 frame assertions across tests/test_wm_*.cpp carry an INFO("wm stderr guard within two lines above them (a second-opinion audit put it at ~74 sites, naming test_wm_fallbacks.cpp:272, test_wm_lifecycle.cpp:569, test_wm_rules.cpp:355, test_wm_state.cpp:780). CORRECTION to the earlier record: test_wm_geometry.cpp:1490 already carries its guard ABOVE the assertion at :1492 -- that site is correct and the defect must not be described as universal. And hoisting a guard to the TOP of a case does NOT fix it: wmStderr() is evaluated when INFO executes, so a top-of-case guard captures stale pre-stall output. Correct shape: bind the poll result first, then INFO, then assert.
 - 08.5-06 Task 4 finding: the 8.23s/8.35s failure times are CENSORED OBSERVATIONS -- the tests' own 8000ms reparent-poll deadlines expiring, not measured stalls. They never supported the cold-cache hypothesis and do not contradict longestms=0. Also: 08.5-07's fix must NOT be split -- shipping the predicate narrowing without the deadline would make the hang MORE deterministic, since the foreign events currently consumed are what accidentally wake the unbounded wait.
 - 08.5-06 Task 4 latent bug, not implicated in either red run: after taking the fixture flock, display reservation rechecks the X lock file but NOT the socket (tests/support/WmFixture.h:190). Worth a test.
+- **08.5-09 RULED 2026-08-31: verdict REFUTED, 08.5-07 disposition RE-PLAN. 08.5-07, 08.5-08 and 08.5-05 are NOT to be started.** The precommitted terminal rule binds: 08.5-07 is NOT the flake fix and must not be recorded as one. timestamp() may still be hardened on its own merits, but v1.0 stays blocked until the bundle table names the actual failing path, or ruling B is reversed as a NEW, separately recorded release-policy decision. Evidence: evidence/gates/reproducer/ and the single **Verdict:** line in evidence/gates/attribution/README.md (397310a).
+- 08.5-09 lead, recorded and NOT attributed: trip-r-3/-4/-5 each carry a BadWindow cascade (X_CreateWindow, X_ReparentWindow, X_MapWindow, X_ChangeSaveSet, all on window 0x80003b) -- the WM framing a window that no longer exists. trip-r-1 and trip-r-2 have clean 12-line stderr and still failed to frame, so it is 3 of 5 and NOT the universal signature. Starting point for the re-plan; a refutation of one mechanism is not an attribution to another.
 
 ## Deferred Items
 
@@ -341,6 +386,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-31T10:18:09.450Z
-Stopped at: 08.5-09 HALTED at Task 3 checkpoint:decision (gate=blocking-human) -- Tasks 1 and 2 complete and committed; proposed verdict REFUTED awaiting the operator ruling and the 08.5-07 disposition
+Last session: 2026-08-31T10:52:18.892Z
+Stopped at: Completed 08.5-09-PLAN.md -- operator ruled REFUTED at the Task 3 blocking-human checkpoint; 08.5-07 disposition RE-PLAN. 08.5-07/-08/-05 NOT to be started; next action is re-planning the attribution
 Resume file: None
