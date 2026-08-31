@@ -639,6 +639,17 @@ struct ModeCounters {
     long unframed = 0;
     long wallMs = 0;
     long bundlesWithAllVerdicts = 0;
+
+    // The arm table, per mode. `trips == pokeTrips + ctlTrips` holds by
+    // construction because the arm is assigned from the trip index the moment
+    // the trip is counted, so a trip cannot be measured and then dropped from
+    // the table -- and the readout-integrity gate checks that identity.
+    long pokeTrips = 0;
+    long pokeWoke = 0;
+    long pokeUnframed = 0;
+    long ctlTrips = 0;
+    long ctlWoke = 0;
+    long ctlUnframed = 0;
 };
 
 // The transcript's counter tokens are part of this measurement's contract,
@@ -658,6 +669,13 @@ struct ModeCounters {
 // fixture whose window manager wedged during its OWN startup never reaches a
 // post-readiness map, and a run that lost fixtures that way must not read as a
 // run that sampled cleanly.
+// Plan 08.5-10 adds six per-mode arm tokens. Every token plan 08.5-09 printed
+// keeps its spelling exactly, so the two rounds' transcripts stay comparable.
+//
+// One honesty item that belongs beside `unframed-<m>`: it is NO LONGER
+// comparable to the previous round's figure, because on half the trips this
+// instrument now intervenes. The comparable figure is `ctlunframed-<m>` -- the
+// do-nothing arm's own never-framed count.
 void printModeSummary(const std::string& mode, const ModeCounters& c)
 {
     const char* m = mode.c_str();
@@ -666,6 +684,10 @@ void printModeSummary(const std::string& mode, const ModeCounters& c)
                 "wallms-%s=%ld\n",
                 m, m, c.fixtures, m, c.startFailures, m, c.maps, m, c.trips,
                 m, c.bundles, m, c.capped, m, c.unframed, m, c.wallMs);
+    std::printf("wm2-repro: arm-%s poke-%s=%ld pokewoke-%s=%ld pokeunframed-%s=%ld "
+                "ctl-%s=%ld ctlwoke-%s=%ld ctlunframed-%s=%ld\n",
+                m, m, c.pokeTrips, m, c.pokeWoke, m, c.pokeUnframed,
+                m, c.ctlTrips, m, c.ctlWoke, m, c.ctlUnframed);
     std::fflush(stdout);
 }
 
@@ -683,6 +705,26 @@ void printModeSummary(const std::string& mode, const ModeCounters& c)
 // liveness record, NOT a stall measurement: a debugger attach suspends the
 // observed process for the duration of the backtrace, so everything after a
 // capture is perturbed by the capture.
+//
+// THE ARM RULE, fixed in plan 08.5-10 before the run and carrying NO KNOB.
+// Each trip is assigned an arm by the parity of that mode's trip index, counted
+// from one: ODD indices take the intervening arm, EVEN indices take the
+// do-nothing arm. Deterministic, balanced by construction, and unreachable from
+// the environment -- an arm assignment a knob could steer would let a run be
+// steered after the fact, which is the objection this whole round exists to be
+// immune to. Because the bundle index and the trip index advance together while
+// the cap is not binding, the contiguity gate over the bundle directories is
+// also a check on the arm rule: a hole or a duplicate index would re-assign
+// arms silently.
+//
+// BOTH ARMS TAKE THE IDENTICAL CAPTURE FIRST, and that ordering is structural
+// rather than a convention -- the bundle writer owns the arm and invokes it only
+// after the capture has completed. It is not a convenience either: a debugger
+// attach interrupts a blocked poll and the loop's interrupt branch
+// (src/Events.cpp:210) resumes and re-checks the queue, so the attach is a
+// genuine rival cause of any subsequent wake. Giving both arms the same attach
+// makes that cause COMMON rather than confounded, which is why the control arm
+// is required rather than merely nice to have.
 bool pollForFrameWithCapture(WmFixture& fixture, Display* d, Window w,
                              const std::string& mode, ModeCounters& counters)
 {
@@ -690,36 +732,49 @@ bool pollForFrameWithCapture(WmFixture& fixture, Display* d, Window w,
     const auto started = Clock::now();
     const long thresholdMs = static_cast<long>(reproThresholdMs());
     const long cap = static_cast<long>(bundleCap());
+    const int wakeWaitMs = reproWakeWaitMs();
     bool latched = false;
+    bool armIsPoke = false;
 
     for (;;) {
         Window wroot = None, parent = None, *children = nullptr;
         unsigned int n = 0;
         if (XQueryTree(d, w, &wroot, &parent, &children, &n)) {
             if (children) XFree(children);
-            if (parent != None && parent != root) return true;
+            if (parent != None && parent != root) break;
         }
 
         const long elapsed = elapsedMsSince(started);
 
         if (!latched && elapsed >= thresholdMs) {
             latched = true;
-            ++counters.trips;
+            const long tripIndex = ++counters.trips;
+            armIsPoke = (tripIndex % 2) == 1;
+            if (armIsPoke) ++counters.pokeTrips; else ++counters.ctlTrips;
+
+            WakeArmResult armResult;
+            const ArmApplier applyArm = [&]() -> WakeArmResult {
+                WakeArmResult r;
+                r.applied = true;
+                r.arm = armIsPoke ? "poke" : "control";
+                // The intervening arm delivers one no-op event; the do-nothing
+                // arm calls nothing at all.
+                r.pokeIssued = armIsPoke ? pokeRootProperty(d, tripIndex) : false;
+                // Both arms then watch the same client the same way, with the
+                // same inert round-trip query.
+                r.framedAfter = watchForFrameWithin(d, w, wakeWaitMs, r.ms);
+                armResult = r;
+                return r;
+            };
 
             if (counters.allocated < cap) {
                 const long index = ++counters.allocated;
                 const std::string dir =
                     outDirRoot() + "/trip-" + mode + "-" + std::to_string(index);
-                // No arm on this path yet: plan 08.5-10 Task 1 proves the
-                // instrument on a healthy window manager and Task 2 turns this
-                // poll into the two-arm experiment. Until then the channel is
-                // recorded as an absence WITH A REASON, which is a reading --
-                // never a silently missing channel.
                 const CaptureOutcome oc = captureBundle(
                     fixture, dir, mode,
                     "diagnostic threshold reached during a post-readiness reparent poll",
-                    elapsed, false,
-                    [] { return WakeArmResult(); });
+                    elapsed, false, applyArm);
                 if (oc.wrote) {
                     ++counters.bundles;
                     const std::string capText =
@@ -732,14 +787,28 @@ bool pollForFrameWithCapture(WmFixture& fixture, Display* d, Window w,
                 // Declined because the per-mode cap was already reached. The
                 // identity trips == bundles + capped therefore holds by
                 // construction, which is what makes a DROPPED write visible in
-                // the transcript rather than silently absorbed.
+                // the transcript rather than silently absorbed. The trip STILL
+                // takes its arm and is still measured -- only the bundle is
+                // declined -- so the arm counts stay complete when the cap binds.
                 ++counters.capped;
+                applyArm();
+            }
+
+            if (armResult.framedAfter) {
+                if (armIsPoke) ++counters.pokeWoke; else ++counters.ctlWoke;
             }
         }
 
-        if (elapsed >= static_cast<long>(kReparentDeadlineMs)) return false;
+        if (elapsedMsSince(started) >= static_cast<long>(kReparentDeadlineMs)) {
+            if (latched) {
+                if (armIsPoke) ++counters.pokeUnframed; else ++counters.ctlUnframed;
+            }
+            return false;
+        }
         pollSleep();
     }
+
+    return true;
 }
 
 Window createAndMap(Display* d)
@@ -973,6 +1042,18 @@ TEST_CASE("The post-readiness reparent is sampled to a stated budget in two mode
     const bool sReadable = (s.trips == 0) || (s.bundles >= 1);
     const bool rReadable = (r.trips == 0) || (r.bundles >= 1);
 
+    // The arm identity, per mode: every trip carries an arm, including a trip
+    // past the bundle cap, so a trip cannot be measured and then dropped from
+    // the table.
+    const bool sArmsSum = (s.trips == s.pokeTrips + s.ctlTrips);
+    const bool rArmsSum = (r.trips == r.pokeTrips + r.ctlTrips);
+
+    INFO("arm s: poke-s=" << s.pokeTrips << " pokewoke-s=" << s.pokeWoke
+         << " pokeunframed-s=" << s.pokeUnframed << " ctl-s=" << s.ctlTrips
+         << " ctlwoke-s=" << s.ctlWoke << " ctlunframed-s=" << s.ctlUnframed);
+    INFO("arm r: poke-r=" << r.pokeTrips << " pokewoke-r=" << r.pokeWoke
+         << " pokeunframed-r=" << r.pokeUnframed << " ctl-r=" << r.ctlTrips
+         << " ctlwoke-r=" << r.ctlWoke << " ctlunframed-r=" << r.ctlUnframed);
     INFO("mode s: fixtures-s=" << s.fixtures << " startfail-s=" << s.startFailures
          << " maps-s=" << s.maps << " trips-s=" << s.trips
          << " bundles-s=" << s.bundles << " capped-s=" << s.capped
@@ -999,4 +1080,13 @@ TEST_CASE("The post-readiness reparent is sampled to a stated budget in two mode
     //    the window manager being recorded alive or recorded dead at the capture
     //    (the wm-alive channel's own verdict).
     REQUIRE(totalAllVerdict == totalBundles);
+
+    // 4. Every trip carries an arm and the arm counts sum to the trip count in
+    //    each mode. This case must NEVER redden because a client failed to
+    //    frame, and must NEVER redden because the intervention proved inert --
+    //    both are observations this instrument exists to make. The four
+    //    assertions above and this one are the only ones, and each has a real
+    //    failure mode that is a statement about this round's own code.
+    REQUIRE(sArmsSum);
+    REQUIRE(rArmsSum);
 }
