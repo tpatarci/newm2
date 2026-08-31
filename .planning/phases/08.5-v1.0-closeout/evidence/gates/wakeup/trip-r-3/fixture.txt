@@ -1,0 +1,7 @@
+display: :120
+wm-pid: 507142
+mode: r
+reason: diagnostic threshold reached during a post-readiness reparent poll
+threshold-ms: 500
+elapsed-ms: 505
+framed: no

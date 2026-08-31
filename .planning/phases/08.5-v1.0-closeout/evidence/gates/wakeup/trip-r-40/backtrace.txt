@@ -1,0 +1,12 @@
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x0000768230118bd7 in __GI___poll (fds=0x7ffc09b9a3d0, nfds=2, timeout=-1) at ../sysdeps/unix/sysv/linux/poll.c:29
+29	../sysdeps/unix/sysv/linux/poll.c: Nema takve datoteke ili direktorija.
+
+Thread 1 (Thread 0x76823062cbc0 (LWP 508513) "wm2-born-again"):
+#0  0x0000768230118bd7 in __GI___poll (fds=0x7ffc09b9a3d0, nfds=2, timeout=-1) at ../sysdeps/unix/sysv/linux/poll.c:29
+#1  0x000056c8e98bab90 in WindowManager::nextEvent (this=0x7ffc09b9a820, e=0x7ffc09b9a440) at /home/tomislav/development/wm2-born-again/src/Events.cpp:205
+#2  0x000056c8e98ba61e in WindowManager::loop (this=0x7ffc09b9a820) at /home/tomislav/development/wm2-born-again/src/Events.cpp:20
+#3  0x000056c8e988fa7b in WindowManager::WindowManager (this=0x7ffc09b9a820, config=..., apps=std::vector of length 320, capacity 320 = {...}) at /home/tomislav/development/wm2-born-again/src/Manager.cpp:295
+#4  0x000056c8e988dfa8 in main (argc=2, argv=0x7ffc09b9ad48) at /home/tomislav/development/wm2-born-again/src/main.cpp:9
+[Inferior 1 (process 508513) detached]

@@ -1,0 +1,31 @@
+wm2-repro measurement run -- plan 08.5-10 Task 2
+started-utc: 2026-08-31T15:34:33Z
+commit: 7cb1b39bdd781312c6712bb233a1f096220436c6
+branch: main
+uncommitted under src/ include/ tests/ scripts/ CMakeLists.txt: []
+budget (stated before the run): mode S 200 fixtures, one post-readiness map each, hard stop at 200 or 600000 ms; mode R 8 fixtures x 1000 maps, hard stop at 8000 maps or 1500000 ms; at most 40 bundles per mode; diagnostic threshold 500 ms and wake window 750 ms, both strictly inside the hard 8000 ms reparent deadline
+host:  17:34:33 up 17 days, 28 min, 10 users,  load average: 3,43, 3,25, 4,53
+               total        used        free      shared  buff/cache   available
+Mem:           32012       10141         777       14138       21093        7276
+Swap:           8191        8191           0
+in-pool survivors before the run: 0
+exe-anchored processes OUTSIDE the pool, deliberately not touched: 0 ()
+--- capability probe ---
+gdb: PRESENT /usr/bin/gdb GNU gdb (Ubuntu 12.1-0ubuntu1~22.04.2) 12.1
+ptrace-scope: PRESENT 1
+wchan: PRESENT self=0
+ss: PRESENT /usr/bin/ss ss utility, iproute2-5.15.0
+run: sequence=1
+--- run ---
+Filters: "The post-readiness reparent*"
+Randomness seeded to: 3370359288
+wm2-repro: mode-s fixtures-s=200 startfail-s=0 maps-s=200 trips-s=0 bundles-s=0 capped-s=0 unframed-s=0 wallms-s=38050
+wm2-repro: arm-s poke-s=0 pokewoke-s=0 pokeunframed-s=0 ctl-s=0 ctlwoke-s=0 ctlunframed-s=0
+wm2-repro: mode-r fixtures-r=8 startfail-r=0 maps-r=8000 trips-r=129 bundles-r=40 capped-r=89 unframed-r=64 wallms-r=741405
+wm2-repro: arm-r poke-r=65 pokewoke-r=65 pokeunframed-r=0 ctl-r=64 ctlwoke-r=0 ctlunframed-r=64
+===============================================================================
+All tests passed (6 assertions in 1 test case)
+
+
+MEASUREMENT EXIT=0
+finished-utc: 2026-08-31T15:47:33Z
