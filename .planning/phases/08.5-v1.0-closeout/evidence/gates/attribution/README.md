@@ -237,7 +237,100 @@ is not the first. One green run says nothing about how often this tree is green.
 
 ## Verdict
 
-**Verdict:** INCONCLUSIVE
+**Verdict:** REFUTED
+
+**08.5-07 disposition:** RE-PLAN
+
+### What this verdict reports, and what it does not cover
+
+**The verdict line above reports the targeted-reproducer measurement recorded in
+`evidence/gates/reproducer/README.md`. It does not report the eight-run
+full-suite sampling measurement recorded in the body of this file.** It was ruled
+by the operator on 2026-08-31 at plan 08.5-09's Task 3 checkpoint
+(`checkpoint:decision`, `gate="blocking-human"`), against verdict criteria written
+into that record before the measurement ran.
+
+**The eight-run sampling measurement reached `INCONCLUSIVE` on its own terms and
+that outcome is unchanged.** Plan 08.5-09 replaced the *method* — full-suite
+sampling gave way to a targeted reproducer — not that measurement's result. Every
+per-run table row, host-condition column, rate, log filename, counter reading,
+ASan observation and second-opinion finding beneath this section stands exactly as
+it was written, and the operator's ruling on that measurement is still recorded in
+§ "Operator ruling — 2026-08-31" below.
+
+**The reading the operator ruled on.** Five trips occurred inside a budget stated
+before the run — neither mode exhausted it, no extension was requested, no third
+mode was added and no sequence was restarted — and five readable backtraces were
+captured. None was CONFIRMED-shaped. Every one of the five names
+`WindowManager::nextEvent` at `src/Events.cpp:205`, inside `poll(nfds=2,
+timeout=-1)` — the event loop's own idle wait with no deadline armed — under a
+`wchan` of `do_poll.constprop.0`. **No frame in any bundle names
+`WindowManager::timestamp`, and none names `XMaskEvent`.** The window manager was
+idle, not wedged in the hypothesised wait. The calibration capture in
+`evidence/gates/reproducer/control/`, taken against a healthy window manager that
+framed its client in 20 ms, carries the same shape, which is what makes this a
+comparison rather than an argument from absence. A further reading surfaced at the
+checkpoint and ruled on with it: the stderr pair `timestamp: entering blocking
+property wait` / `property wait matched a foreign event` appears exactly once in
+**every** bundle including the healthy control, so the swallowing mechanism fires
+identically in the healthy case and does not discriminate a stalled window manager
+from a healthy one — which corroborates the refutation rather than merely failing
+to confirm it. The five-backtrace floor is met exactly, not with margin, across
+three independent window-manager processes (68887; 69033 twice; 69518 twice); the
+operator was shown that explicitly and ruled the floor satisfied.
+
+**A refutation is a successful outcome, not a failed plan.** Under the
+Negative-Result Contract in `08.5-VALIDATION.md` it is committed with the same
+weight as a confirmation, and an attribution is withheld when the measurement does
+not support one.
+
+**Why the disposition line above exists, and why it and not the verdict governs
+the held chain.** Plan 08.5-07's Task 1 precondition is a *conjunction*: the single
+`**Verdict:**` line above must read `CONFIRMED`, **and** plan 08.5-06's summary
+must record the operator ruling `confirmed` at its checkpoint. `08.5-06-SUMMARY.md`
+is frozen at `inconclusive`, and this add-only round is forbidden to edit it — so
+that precondition as literally written is unsatisfiable by **any** measurement
+whatsoever, including a confirming one. Amending the verdict line therefore
+neither starts nor unblocks 08.5-07 and must not be read as if it did. What
+governs the held chain is the `**08.5-07 disposition:**` line above it.
+
+**The disposition, and the precommitted rule it follows.** `RE-PLAN`, chosen by
+the operator in explicit honouring of the terminal rule precommitted on 2026-08-31
+— set *before* the reproducer ran, so that a third inconclusive-or-negative
+measurement could not produce a fourth attribution round. Under that rule a
+`refuted` ruling means **08.5-07 is not the flake fix and must not be recorded as
+one.** `timestamp()` may still be hardened on its own merits, but v1.0 stays
+blocked until the reproducer's bundle table names the actual failing path, or
+ruling B is reversed as a NEW, separately recorded release-policy decision.
+Performing that re-plan is a later round's work; plan 08.5-09 performs none of it,
+and 08.5-07, 08.5-08 and 08.5-05 are not started on this ruling.
+
+**One lead, recorded and deliberately NOT attributed.** `trip-r-3`, `trip-r-4` and
+`trip-r-5` each carry a `BadWindow` cascade — `X_CreateWindow`,
+`X_ReparentWindow`, `X_MapWindow` and `X_ChangeSaveSet` all failing on window
+`0x80003b`, i.e. the window manager framing a window that no longer exists.
+`trip-r-1` and `trip-r-2` have clean 12-line stderr and still failed to frame, so
+the cascade is present in three of five and is **not** the universal signature. It
+is a lead for the next round and nothing more: a refutation of one mechanism is
+not an attribution to another.
+
+**What this verdict does not cover — three items plan 08.5-09 left out of scope,
+named rather than dropped.** First, the widespread `INFO("wm stderr")`
+guard-ordering fix: it improves the readout of full-suite sampling, which this
+round replaced with the targeted reproducer, and folding roughly 74 mechanical
+sites in would have made that plan's diff about the suite rather than about the
+attribution — and `tests/test_wm_geometry.cpp:1490` already carries its guard
+above the assertion at `:1492`, so it is the correct counter-example a mechanical
+rewrite must not "fix". Second, the display-reservation socket recheck at
+`tests/support/WmFixture.h:190`: no evidence links it to run 6 or to the
+before-half's case #93, and fixing a second harness defect inside the measurement
+window would have made this readout ambiguous about which change moved what.
+Third, plan `08.5-04`'s held criterion-7 gate capture: it is downstream of this
+verdict, capturing a release-signoff bundle against a suite whose flake is still
+undiagnosed is exactly the shortcut the operator declined on 2026-08-30, and
+08.5-08 remains its written and still-held replacement.
+
+### Below this line: the eight-run sampling measurement, unchanged
 
 The eight-run budget expired without an attribution-bearing observation. Seven
 of eight debug runs were green; the one red run,

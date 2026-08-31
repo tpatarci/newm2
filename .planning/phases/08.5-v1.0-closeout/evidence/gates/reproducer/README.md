@@ -317,3 +317,66 @@ plan's Task 3.
   words plus integers, and its protocol-error lines carry window ids in hex, never
   titles. The absolute repository path appears exactly as it does in Phase 8's own
   committed logs.
+
+## Operator ruling — 2026-08-31
+
+Taken at plan 08.5-09's Task 3 `checkpoint:decision`, `gate="blocking-human"`, on
+the evidence presented above. **Every measured figure above this section is
+untouched by this ruling.**
+
+**Ruling: `refuted`.** The proposed verdict is accepted as the verdict of record
+and written to the single `**Verdict:**` line in
+`evidence/gates/attribution/README.md`, which now reads `REFUTED`.
+
+**Sub-decision: none.** A sub-decision is carried only by an `inconclusive`
+ruling, and under the precommitted terminal rule the extend/hold/re-plan
+sub-decisions are withdrawn in any case.
+
+**`08.5-07` disposition: `RE-PLAN`.** The operator chose explicitly to honour the
+precommitted terminal rule of 2026-08-31 rather than override it.
+
+**The operator's stated reason, recorded as ruled:**
+
+1. Five trips occurred inside the stated budget — neither mode exhausted it, and
+   there was no extension, no third mode and no restart. Five readable backtraces
+   were captured and **none** was CONFIRMED-shaped. Every one names
+   `WindowManager::nextEvent` at `src/Events.cpp:205` inside
+   `poll(nfds=2, timeout=-1)` — the event loop's own idle wait with no deadline
+   armed — under `wchan` `do_poll.constprop.0`. **No frame in any bundle names
+   `WindowManager::timestamp` or `XMaskEvent`.** The window manager was idle, not
+   wedged.
+
+2. The calibration capture against a healthy window manager that framed in 20 ms
+   has the **same shape**, which is what makes this a comparison rather than an
+   argument from absence.
+
+3. An additional reading, surfaced at the checkpoint and ruled on with the rest:
+   the pair `timestamp: entering blocking property wait` /
+   `property wait matched a foreign event` appears exactly **once in every
+   bundle, including the healthy control**. The swallowing mechanism therefore
+   fires identically in the healthy case and does not discriminate a stalled
+   window manager from a healthy one. That corroborates the refutation rather
+   than merely failing to confirm.
+
+4. The five-backtrace floor is met **exactly, not with margin**, and across three
+   independent window-manager processes (68887; 69033 twice; 69518 twice). The
+   operator was shown this explicitly and ruled the floor satisfied.
+
+5. `RE-PLAN` follows the precommitted terminal rule: **08.5-07 is NOT the flake
+   fix and must not be recorded as one.** v1.0 stays blocked until the bundle
+   table names the actual failing path, or ruling B is reversed as a NEW,
+   separately recorded release-policy decision.
+
+6. Lead for the next round, recorded but **not** attributed: `trip-r-3`,
+   `trip-r-4` and `trip-r-5` each carry a `BadWindow` cascade —
+   `X_CreateWindow`, `X_ReparentWindow`, `X_MapWindow` and `X_ChangeSaveSet` all
+   failing on window `0x80003b`, i.e. the window manager framing a window that no
+   longer exists. `trip-r-1` and `trip-r-2` have clean 12-line stderr and still
+   failed to frame, so the cascade is present in **three of five** and is not the
+   universal signature. A refutation of one mechanism is not an attribution to
+   another.
+
+Under the Negative-Result Contract in `08.5-VALIDATION.md` this refutation is
+committed with the same weight as a confirmation. Withholding the attribution the
+evidence does not support is the correct outcome of the method, not a failure of
+the plan.
