@@ -1,5 +1,6 @@
 #include "Manager.h"
 #include "Client.h"
+#include "EventPump.h"
 #include <X11/extensions/Xrandr.h>
 #include <cstdio>
 #include <cstring>
@@ -191,29 +192,37 @@ void WindowManager::nextEvent(XEvent *e)
 
     while (m_looping) {
 
-        // Check Xlib's internal queue first (Xlib may have buffered events)
-        if (QLength(display()) > 0) {
+        // The pre-poll pump, extracted to include/EventPump.h so a test can
+        // reach it. Same decision as the inline code it replaces.
+        if (eventPumpPending(display()) > 0) {
             XNextEvent(display(), e);
             return;
         }
 
-        // Flush pending X output before blocking
-        XFlush(display());
-
         int timeout = computePollTimeout();
 
         int r = poll(fds, 2, timeout);
+        int pollErrno = errno;
 
-        if (r < 0) {
-            if (errno == EINTR) continue;  // signal interrupted, re-check m_looping
+        // The post-poll decision, likewise extracted. Everything it is
+        // allowed to look at is gathered here and nowhere else.
+        EventPumpPollResult state;
+        state.pollResult    = r;
+        state.pollErrno     = pollErrno;
+        state.xRevents      = fds[0].revents;
+        state.pipeRevents   = fds[1].revents;
+        state.exitFlagSet   = (m_signalled != 0);
+        state.focusChanging = m_focusChanging;
+
+        switch (eventPumpDecide(state)) {
+
+        case EventPumpAction::StopOnError:
             std::perror("wm2: poll failed");
             m_looping = false;
             m_returnCode = 1;
             return;
-        }
 
-        // Signal pipe readable? (signal handler wrote a byte)
-        if (fds[1].revents & POLLIN) {
+        case EventPumpAction::StopOnSignal: {
             // Drain pipe (handler may have written multiple bytes)
             char buf[32];
             while (read(m_pipeRead.get(), buf, sizeof(buf)) > 0) { /* drain */ }
@@ -223,18 +232,17 @@ void WindowManager::nextEvent(XEvent *e)
             return;
         }
 
-        // Timer expired (r == 0 means timeout, no fd ready)
-        if (r == 0) {
-            if (m_focusChanging) {
-                checkDelaysForFocus();
-            }
-            continue;  // re-check X11 queue, then poll again
-        }
+        case EventPumpAction::ServiceFocusTick:
+            checkDelaysForFocus();
+            continue;  // re-pump, then poll again
 
-        // X11 fd readable
-        if (fds[0].revents & POLLIN) {
+        case EventPumpAction::DeliverEvent:
             XNextEvent(display(), e);
             return;
+
+        case EventPumpAction::Block:
+        case EventPumpAction::Retry:
+            continue;
         }
     }
 }

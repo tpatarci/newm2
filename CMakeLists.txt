@@ -202,7 +202,7 @@ if(BUILD_TESTS)
         message(WARNING "Xvfb not found -- smoke tests disabled")
     endif()
 
-    # Event loop unit tests (need X11 headers but no display)
+    # Event loop unit tests (need X11 headers and a display -- TEST-08)
     add_executable(test_eventloop tests/test_eventloop.cpp)
     target_link_libraries(test_eventloop PRIVATE
         Catch2::Catch2WithMain
@@ -212,7 +212,12 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/include
         ${XFT_INCLUDE_DIRS}
     )
-    catch_discover_tests(test_eventloop ADD_TAGS_AS_LABELS)
+    catch_discover_tests(test_eventloop ADD_TAGS_AS_LABELS
+        PROPERTIES
+            ENVIRONMENT "DISPLAY=:99"
+            FIXTURES_REQUIRED "xvfb_display;preflight_ok"
+            RESOURCE_LOCK "x_display_99"
+    )
 
     # Auto-raise timer unit tests (pure chrono arithmetic, no display needed)
     add_executable(test_autoraise tests/test_autoraise.cpp)
