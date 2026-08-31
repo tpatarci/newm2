@@ -4,11 +4,11 @@ milestone: v1.0
 current_phase: 08.5
 current_phase_name: v1.0 Closeout
 status: executing
-stopped_at: "08.5-06 Task 4 checkpoint:decision (blocking-human) -- operator ruling on INCONCLUSIVE attribution verdict"
-last_updated: "2026-08-31T00:37:13.285Z"
+stopped_at: 08.5-06 complete -- verdict INCONCLUSIVE, operator ruled hold; 08.5-07/08/05 blocked on unmet CONFIRMED precondition
+last_updated: "2026-08-31T05:37:35.912Z"
 last_activity: 2026-08-31
-last_activity_desc: Phase 08.5 execution started
-state_head: f7a776969289b641b780443015af456037309de6
+last_activity_desc: 08.5-06 closed at Task 4 -- operator ruled INCONCLUSIVE / hold
+state_head: 0b6ede83a3d8a337753bf7a749011908ed0d4fbe
 progress:
   total_phases: 10
   completed_phases: 4
@@ -30,19 +30,32 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 Phase: 08.5 (v1.0 Closeout) — EXECUTING (gap-closure pass, `--gaps-only`)
 Plan: 4 of 8 complete (08.5-01..04); 08.5-04 halted at Task 1 and still unresolved
-Status: 08.5-06 AWAITING OPERATOR RULING at Task 4 (`checkpoint:decision`,
-  `gate="blocking-human"`). Tasks 1-3 complete and committed: `e5c230a` (cold-cache
+Status: **08.5-06 COMPLETE — all 4 tasks.** Committed: `e5c230a` (cold-cache
   instrumentation), `ec4f8cb` (case 198 stderr hoist + two record corrections),
-  `015e8c6` (flake-run.sh wrapper), `f7a7769` (the attribution measurement).
+  `015e8c6` (flake-run.sh wrapper), `f7a7769` (the attribution measurement),
+  `0b6ede8` (plan metadata), plus the Task 4 ruling commit.
   **Verdict: INCONCLUSIVE.** 8 debug runs at `015e8c6`, 7 green / 1 red; the red run
   (case #80, `test_wm_fallbacks.cpp:272`) carried no WM stderr because its `INFO`
   guard sits below the failing assertion, so no counter reading exists for it.
   One ASan run, green, stated as one observation.
-Remaining chain: 08.5-06 (checkpoint) → 08.5-07 → 08.5-08 → 08.5-05
-Blocked: 08.5-07 Task 1 requires a CONFIRMED verdict and is UNMET.
-Resume: read `evidence/gates/attribution/README.md`, then reply `confirmed`,
-  `refuted` or `inconclusive` — and for `inconclusive`, extend the budget or hold.
-Last activity: 2026-08-31 — 08.5-06 Tasks 1-3 landed; attribution measured INCONCLUSIVE
+Operator ruling (2026-08-31, Task 4 `checkpoint:decision`, `gate="blocking-human"`):
+  **`inconclusive`, sub-decision `hold`** — the run budget was NOT extended, because
+  the guard-ordering defect is widespread (14 of 59 frame assertions carry a stderr
+  guard above them; a second-opinion audit put it at ~74 sites), so another red run
+  would very likely also be unreadable. Recorded in
+  `evidence/gates/attribution/README.md` § "Operator ruling — 2026-08-31".
+Remaining chain: 08.5-07 → 08.5-08 → 08.5-05 — **ALL BLOCKED**
+Blocked: 08.5-07 Task 1 requires a CONFIRMED verdict and is **UNMET**. The ruling
+  does not unblock it; 08.5-08 (criterion-7 capture) and 08.5-05 follow it and stay
+  held. Nothing in the chain is cleared.
+New operator decision (2026-08-31), context for the next round and NOT acted on:
+  re-plan the attribution around a **targeted reproducer** instead of more
+  full-suite sampling — an isolated post-readiness reparent loop with hang-time
+  stack capture at a ~500 ms threshold (`/proc/<pid>/wchan` plus `gdb` backtrace).
+  A backtrace inside `XMaskEvent` CONFIRMS; `poll`/Xlib round trip/teardown/dead WM
+  REFUTES. Seconds per iteration instead of ~4 minutes.
+Resume: `/gsd-plan-phase` for the targeted-reproducer round. Do NOT start 08.5-07.
+Last activity: 2026-08-31 — 08.5-06 closed; operator ruled INCONCLUSIVE / hold
 
 Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).
 Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
@@ -197,6 +210,9 @@ Recent decisions affecting current work:
 - [Phase 08.5]: 08.5-03: the shipped release notes and the signoff checklist are worded differently on purpose -- COMPILED_CODE_BEHAVIOR_CHECKLIST.md keeps the retired D-8-TIGHTVNC rationale verbatim as a record, the user-facing notes name it only as a retired argument and state the general lesson instead
 - [Phase 08.5]: 08.5-03: the literals x2gostartagent and SCOPE.md were deliberately withheld from Task 2's table cells and introduced in Task 3, so Task 3's positive guards could still redden -- a guard pre-greened by an earlier task in the same plan measures nothing, which is the exact defect this plan closes
 - [Phase 08.5]: 08.5-04: gate capture held rather than recorded on a suite that is not reliably green in one shot -- a release signoff whose gate needs retries is weaker evidence than no signoff, and the measurement (2/5 red, different case each time) is a rate rather than an attribution
+- [Phase 08.5]: 08.5-06 Task 4 operator ruling (2026-08-31): `inconclusive`, sub-decision HOLD -- the run budget was NOT extended, because the guard-ordering defect is widespread (14 of 59 frame assertions carry a stderr guard above them; ~74 sites by a second-opinion audit) so another red run would very likely also be unreadable. Separate NEW operator decision, recorded as context and not acted on: re-plan the attribution around a targeted reproducer (isolated post-readiness reparent loop, ~500ms diagnostic threshold, /proc/<pid>/wchan plus gdb backtrace -- XMaskEvent CONFIRMS, poll/Xlib/teardown/dead-WM REFUTES) instead of more full-suite sampling. The ruling does NOT unblock 08.5-07/08/05.
+- [Phase 08.5]: 08.5-06 Task 4: the causal chain is real and verified, which is what keeps the hypothesis alive rather than refuted -- the fixture readiness probe returns as soon as its own window is reparented (tests/support/WmFixture.h:666), but the WM then proceeds m_border->reparent() (src/Client.cpp:251) -> activate() (src/Client.cpp:275) -> timestamp() (src/Client.cpp:315) where it can wedge, so construction can return "ready" while the WM is about to block and the NEXT window's MapRequest is never processed
+- [Phase 08.5]: 08.5-06 Task 4: foreign=5 of cold=5 claims LESS than 08.5-06 first recorded -- "foreign" also covers the WM's own root _NET_CLIENT_LIST/_NET_ACTIVE_WINDOW traffic, which eventProperty() (src/Events.cpp:535) would ignore anyway. The swallowing defect is real as a mechanism; that counter does not measure its impact
 - [Phase 08.5]: 08.5-06: attribution verdict INCONCLUSIVE -- 8 debug runs at 015e8c6 produced 1 red (case #80, test_wm_fallbacks.cpp:272, 8000ms reparent poll), but that case INFO guard sits BELOW the failing assertion so no WM stderr reached the log; neither CONFIRMED nor REFUTED condition observed. 08.5-07 Task 1 precondition UNMET. — The measurement did its job and withheld an attribution the evidence does not support (Negative-Result Contract). Probe counters read cold=5 blocked=2 foreign=5 longestms=0: the branch is live and blocks but costs 0ms under that workload, and 5 of 5 waits matched a FOREIGN property event -- a separately recordable defect (eventProperty never sees those). Case #80 is the same 8000ms reparent-poll shape as the before-half case #93, in a second independent helper.
 
 ### Pending Todos
@@ -218,7 +234,10 @@ Recent decisions affecting current work:
 - Deferred item 12: the full process-level suite flakes at ~1 test per run on both this tree and the pre-08-06 baseline -- build-all.sh is not reliably green in one shot
 - Deferred item 13 (08-11): every client destroy logs one X_UnmapWindow BadWindow because the resize handle is a child of the client window; blocks a strict no-protocol-errors assertion
 - 08.5-04 GATE CAPTURE HELD (operator ruling B, 2026-08-30): the full debug suite is red in 2 of 5 runs at 313 tests, a DIFFERENT single case each time -- #198 exec-using-shell spawn-await (1/5 loaded, 0/12 isolated) and #93 interactive drag (test_wm_geometry.cpp:1492). [wm_menureopen] fired 0/5, so the known-intermittent framing does not cover either. Sharpens deferred item 12 from ~1 test per run to a measured 40% red-run rate. Blocks the v1.0 success-criterion-7 gate capture until the flake substrate is diagnosed. Evidence: evidence/gates/flake-measurement/ (af30f47). T-8-SHELL security half failed 0/5.
-- 08.5-06 BLOCKED ON OPERATOR RULING: attribution verdict is INCONCLUSIVE, so plan 08.5-07 Task 1 precondition (requires CONFIRMED) is UNMET and the criterion-7 capture stays held. Operator must choose extend-the-run-budget or hold. Separately: the WM stderr reaches the observer only for cases whose INFO guard precedes the first fallible assertion -- Task 2 fixed case 198 by scope, but case #80 guard is below its assertion by ordering, so another red run is likely to be unreadable again.
+- ~~08.5-06 BLOCKED ON OPERATOR RULING~~ RULED 2026-08-31: `inconclusive`, sub-decision **hold**. The run budget was NOT extended. 08.5-06 is complete; the CHAIN REMAINS BLOCKED -- 08.5-07 Task 1 requires CONFIRMED and is UNMET, so 08.5-07, 08.5-08 (criterion-7 capture) and 08.5-05 all stay held. New operator decision: re-plan around a targeted reproducer, not more full-suite sampling. Do not start 08.5-07.
+- 08.5-06 Task 4 finding: the WM stderr guard-ordering defect is WIDESPREAD, not a one-off -- only 14 of 59 frame assertions across tests/test_wm_*.cpp carry an INFO("wm stderr guard within two lines above them (a second-opinion audit put it at ~74 sites, naming test_wm_fallbacks.cpp:272, test_wm_lifecycle.cpp:569, test_wm_rules.cpp:355, test_wm_state.cpp:780). CORRECTION to the earlier record: test_wm_geometry.cpp:1490 already carries its guard ABOVE the assertion at :1492 -- that site is correct and the defect must not be described as universal. And hoisting a guard to the TOP of a case does NOT fix it: wmStderr() is evaluated when INFO executes, so a top-of-case guard captures stale pre-stall output. Correct shape: bind the poll result first, then INFO, then assert.
+- 08.5-06 Task 4 finding: the 8.23s/8.35s failure times are CENSORED OBSERVATIONS -- the tests' own 8000ms reparent-poll deadlines expiring, not measured stalls. They never supported the cold-cache hypothesis and do not contradict longestms=0. Also: 08.5-07's fix must NOT be split -- shipping the predicate narrowing without the deadline would make the hang MORE deterministic, since the foreign events currently consumed are what accidentally wake the unbounded wait.
+- 08.5-06 Task 4 latent bug, not implicated in either red run: after taking the fixture flock, display reservation rechecks the X lock file but NOT the socket (tests/support/WmFixture.h:190). Worth a test.
 
 ## Deferred Items
 
@@ -238,6 +257,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-31T00:36:52.045Z
-Stopped at: 08.5-06 Task 4 checkpoint:decision (blocking-human) -- operator ruling on INCONCLUSIVE attribution verdict
-Resume file: .planning/phases/08.5-v1.0-closeout/evidence/gates/attribution/README.md
+Last session: 2026-08-31T05:37:35.636Z
+Stopped at: 08.5-06 complete -- verdict INCONCLUSIVE, operator ruled hold; 08.5-07/08/05 blocked on unmet CONFIRMED precondition
+Resume file: None

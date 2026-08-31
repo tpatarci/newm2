@@ -345,3 +345,167 @@ directory are only worth something if the exceptions are visible.
   word plus an integer (`wm2: timestamp: cold=5 blocked=2 foreign=5
   longestms=0`), so byte-equality greps over these logs are the check
   (T-8.5-TRACE-01).
+
+## Operator ruling — 2026-08-31
+
+Plan 08.5-06's Task 4 is a `checkpoint:decision` with `gate="blocking-human"`.
+It was presented to the operator on **2026-08-31** and the operator has ruled.
+
+**Ruling: `inconclusive`. Budget sub-decision: `hold`.**
+
+The measured outcome recorded in the section above stands unchanged and is
+accepted as written. The operator did **not** extend the eight-run budget.
+
+### Why the budget was not extended
+
+Because another eight runs would very probably buy another unreadable red. The
+"Where this goes next" section above already named the blocker — the window
+manager's stderr does not reach the observer for most cases — and the
+second-opinion review below establishes that this is a *widespread* property of
+the suite rather than a defect at one or two sites. Spending roughly another
+half hour of wall clock per run against a ~1-in-8 red rate, with the red run
+still likely to arrive without an attribution-bearing stderr block, is compute
+spent on a sampling problem whose readout is known to be broken. Holding is the
+honest stop; the Negative-Result Contract in `08.5-VALIDATION.md` is what makes
+it a clean one rather than a failure.
+
+**This ruling does not unblock anything.** Plan 08.5-07's Task 1 precondition
+requires a CONFIRMED result and remains **unmet**, so 08.5-07, 08.5-08 and
+08.5-05 all stay blocked.
+
+### New operator decision, recorded here as context and not acted on
+
+> **New operator decision (2026-08-31): the phase re-plans the attribution
+> around a targeted reproducer instead of more full-suite sampling.**
+
+Task 4's own `<resolution>` text anticipated exactly this shape of outcome —
+"If the operator wants \[a different path\] ... that is a new operator decision
+and a re-plan, not a resolution of this checkpoint." That is what this is. It is
+**not** a resolution of the checkpoint, it does **not** substitute for a
+CONFIRMED result, and it does **not** license starting 08.5-07. It is direction
+for the next planning round, and nothing in plan 08.5-06 executes it.
+
+### Second-opinion findings, recorded because the next planner must reach them
+
+The ruling was informed by an adversarial second opinion from Codex CLI
+(`gpt-5.6-sol`, read-only against the live working tree). Every finding below
+was independently re-verified against the tree by the orchestrator before the
+ruling was made, and the file:line references were re-checked once more while
+this section was written. They are recorded here rather than in a scratch note
+because the next plan in this phase is going to be built on them.
+
+**1. Extending the run budget is wasted compute — the guard-ordering defect is
+widespread, not a one-off.** The orchestrator's own check: of **59** frame
+assertions across `tests/test_wm_*.cpp`, only **14** carry an
+`INFO("wm stderr` guard within two lines above them. Codex's broader audit put
+the affected-site count at roughly **74**, naming
+`tests/test_wm_fallbacks.cpp:272`, `tests/test_wm_lifecycle.cpp:569`,
+`tests/test_wm_rules.cpp:355` and `tests/test_wm_state.cpp:780`. Another red run
+landing anywhere in that population would also be unreadable.
+
+**2. CORRECTION to an earlier reading in this record: the geometry site is
+already ordered CORRECTLY.** The "Where this goes next" section above says case
+\#93's guard is "a single `INFO` covering only its own file's helper", which
+reads as though that site shares case \#80's ordering defect. It does not.
+`tests/test_wm_geometry.cpp:1490` carries
+`INFO("wm stderr: " << fixture.wmStderr())` **directly above** the assertion at
+`tests/test_wm_geometry.cpp:1492`, and re-reading those lines confirms it. Only
+the fallbacks site is mis-ordered — assertion at
+`tests/test_wm_fallbacks.cpp:272`, guard at
+`tests/test_wm_fallbacks.cpp:278`. **The ordering defect must not be described as
+universal.** It is common (finding 1) but it is not everywhere, and the geometry
+site is a counter-example that a mechanical rewrite must not "fix".
+
+**3. Hoisting the guard to the top of a case does NOT fix it.**
+`fixture.wmStderr()` is evaluated at the moment the `INFO` statement executes,
+not at the moment the annotated assertion fails. A guard placed at the top of a
+case therefore captures the window manager's output as it stood *before* the
+stall, which is exactly the output that carries no information about the stall.
+The correct shape binds the poll result first, then reads stderr, then asserts:
+
+```cpp
+bool framed = pollUntil(...);
+INFO("wm stderr: " << fixture.wmStderr());
+REQUIRE(framed);
+```
+
+This matters for whatever plan generalises Task 2's hoist: the naive
+generalisation — move every guard to the top of its case — would produce 74
+sites that all look fixed and all still report stale output.
+
+**4. The 8-second figure is a CENSORED OBSERVATION, not a measured stall.** The
+`***Failed 8.23 sec` on run 6 and the `8.35 s` on the before-half's case \#93
+are the tests' own **8000 ms** reparent-poll deadlines expiring
+(`tests/test_wm_fallbacks.cpp:148`), plus fixture startup. Neither is a measured
+eight-second wait inside `timestamp()`. The true stall length is unobserved and
+bounded only from below: it is *at least* long enough to outlast the poll, and
+the poll expiring is what ended the observation. Two consequences. First, this
+is why `longestms=0` does not contradict the 8.23 s — they are not measurements
+of the same thing, and the record above should be read with that in mind.
+Second, and more sharply: **the eight seconds never supported the cold-cache
+hypothesis in the first place.** It was the harness's own timeout being reported
+back, and reading it as evidence about the window manager's wait was a category
+error.
+
+**5. Do NOT split plan 08.5-07's fix.** 08.5-07 scopes two changes to
+`timestamp()`: (a) bounding the wait with a deadline, and (b) narrowing the
+event predicate so the wait stops consuming property events that belong to
+something else. Shipping (b) without (a) would make the hang **more** reliable,
+not less. The foreign property events that the wait currently swallows are what
+accidentally wake it; remove them and leave the wait unbounded and it wedges
+deterministically instead of intermittently. Verified as sound against
+`src/Manager.cpp`. Relatedly, the `foreign=5` of `cold=5` reading above is a
+weaker finding than the "separate finding" paragraph makes it sound:
+**`foreign` does not mean "a client event `eventProperty()` needed."** It means
+"not the window manager's own root append on `_WM2_RUNNING`", which also covers
+the window manager's own root `_NET_CLIENT_LIST` and `_NET_ACTIVE_WINDOW`
+traffic — property changes `eventProperty()` (`src/Events.cpp:535`) would ignore
+anyway. Five of five being foreign is consistent with nothing of consequence
+having been swallowed. The swallowing defect is real as a *mechanism*; this
+counter reading does not measure its *impact*.
+
+**6. The causal chain is real and verified — which is what keeps the hypothesis
+alive rather than refuted.** The fixture's readiness probe returns as soon as
+its own probe window is reparented (`tests/support/WmFixture.h:666`). But the
+window manager, having reparented that window, then proceeds:
+`m_border->reparent()` (`src/Client.cpp:251`) → `activate()`
+(`src/Client.cpp:275`) → `timestamp()` (`src/Client.cpp:315`) — where it can
+wedge on the unbounded wait. So fixture construction can legitimately return
+"ready" at the exact moment the window manager is about to block, and the
+**next** window's `MapRequest` is then never processed. That is a complete,
+line-by-line path from "fixture says ready" to "the next client is never
+framed", and it is the shape both \#80 and \#93 exhibit. All four line
+references re-checked against the tree.
+
+**7. The recommended next round: a cheaper decisive experiment.** An isolated
+post-readiness reparent reproducer with hang-time stack capture. Loop only the
+startup-and-reparent sequence rather than the full suite; on a short diagnostic
+threshold — around **500 ms**, well inside the existing 8000 ms deadline so the
+capture happens while the window manager is still wedged rather than after the
+poll has given up — capture `fixture.wmAlive()`, the window manager's stderr,
+the Xvfb log, `/proc/<wm-pid>/wchan`, and ideally
+`gdb -batch -p <pid> -ex 'thread apply all bt'`. The readout is decisive in both
+directions: a backtrace **inside `XMaskEvent` CONFIRMS** the hypothesis; a
+backtrace in `poll`, in an Xlib round trip, in teardown, or against a window
+manager that is already dead **REFUTES** it. Iteration cost is seconds rather
+than the ~4 minutes a full-suite debug run costs, which is the whole argument
+for preferring it over more sampling.
+
+**8. A separate latent bug worth a test, not implicated in either red run.**
+After taking the fixture's flock, the display reservation re-checks the X lock
+file but not the socket (`tests/support/WmFixture.h:190`). An external X server
+that has created its socket but not yet its lock file — or whose lock file has
+been cleared while the socket lives — would pass this re-check. Recorded here so
+it is not lost; there is no evidence it contributed to run 6 or to the
+before-half's case \#93, and it should not be folded into the attribution
+question.
+
+### What this ruling changes in the record above
+
+Nothing, except by correction. The per-run table, the host-condition columns,
+the rates, the log filenames, the counter readings, the ASan observation and the
+stated outcome are all unchanged and are still the record. Finding 2 corrects
+one interpretive reading about the geometry site; finding 4 corrects how the
+8.23 s / 8.35 s figures should be read; finding 5 narrows what the
+`foreign=5` reading is entitled to claim. The measured facts those readings were
+drawn from are not disturbed.
