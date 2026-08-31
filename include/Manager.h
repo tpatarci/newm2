@@ -314,6 +314,17 @@ private:
 
     void nextEvent(XEvent *ev);
 
+    // Shutdown taken because the exit flag or the self-pipe fired. Drains the
+    // pipe, reports, and stops the loop with status 0. Called from the three
+    // points in nextEvent() that can observe the flag. Never called from the
+    // signal handler, which must stay a flag write and a pipe write.
+    void shutdownOnSignal();
+
+    // Wakes a blocked poll() the same way a signal does, by writing the
+    // self-pipe. The root menu's Exit action uses this so that choosing Exit
+    // does not have to wait for the next X event to be noticed.
+    void wakeEventLoop();
+
     // XDIS-01 / D-25: the single settling point for a resolution change, shared
     // by the RANDR notification and the root-ConfigureNotify fallback. Both
     // entry points live in src/Events.cpp; the definition is in src/Manager.cpp

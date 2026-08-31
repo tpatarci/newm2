@@ -258,8 +258,18 @@ TEST_CASE("readable-is-not-deliverable: a readable descriptor carrying a "
     // the self-pipe and every timer behind it.
     REQUIRE(eventPumpDecide(state) != EventPumpAction::DeliverEvent);
 
-    XSetErrorHandler(previous);
+    // Dispatch the error while OUR handler is still installed. The error is
+    // still sitting unread on the connection at this point, and both
+    // XCloseDisplay() and a restored default handler would process it under
+    // Xlib's default handler -- which prints and terminates the process,
+    // taking the whole binary down instead of failing this case. Draining it
+    // here also proves the request really did generate a protocol error
+    // rather than the descriptor being readable for some other reason.
+    XSync(D, False);
+    REQUIRE(g_protocolErrors == 1);
+
     XCloseDisplay(D);
+    XSetErrorHandler(previous);
 }
 
 

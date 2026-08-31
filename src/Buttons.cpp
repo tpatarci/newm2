@@ -589,6 +589,10 @@ void WindowManager::menu(XButtonEvent *e)
 
     if (allowExit && chosenOuter == n - 1) {
         m_signalled = 1;
+        // Wake a blocked poll() the same way a signal does. The loop now
+        // observes m_signalled, but if it is already parked in poll() with no
+        // timer armed nothing would arrive to make it look.
+        wakeEventLoop();
         return;
     }
 

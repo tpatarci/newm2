@@ -192,14 +192,35 @@ void WindowManager::nextEvent(XEvent *e)
 
     while (m_looping) {
 
-        // The pre-poll pump, extracted to include/EventPump.h so a test can
-        // reach it. Same decision as the inline code it replaces.
+        // The exit flag, observed independently of queue depth: a sustained
+        // event stream must not be able to starve shutdown.
+        if (m_signalled) {
+            shutdownOnSignal();
+            return;
+        }
+
+        // The pump: one operation that both tests and flushes. Delivery
+        // happens HERE and nowhere else -- the post-poll decision never
+        // answers "deliver", because descriptor readability does not imply an
+        // event is available.
         if (eventPumpPending(display()) > 0) {
             XNextEvent(display(), e);
             return;
         }
 
+        // Checked again: a signal can arrive while the flush is in progress.
+        if (m_signalled) {
+            shutdownOnSignal();
+            return;
+        }
+
+        // Nothing may go between the zero pump result above and the poll()
+        // below except this call, which reads local state only.
         int timeout = computePollTimeout();
+
+        // Never trust the previous iteration's revents.
+        fds[0].revents = 0;
+        fds[1].revents = 0;
 
         int r = poll(fds, 2, timeout);
         int pollErrno = errno;
@@ -217,33 +238,56 @@ void WindowManager::nextEvent(XEvent *e)
         switch (eventPumpDecide(state)) {
 
         case EventPumpAction::StopOnError:
-            std::perror("wm2: poll failed");
+            if (r < 0) {
+                errno = pollErrno;
+                std::perror("wm2: poll failed");
+            } else {
+                // A failed descriptor. Reported rather than spun on: this
+                // branch did not exist before, so an errored descriptor
+                // matched nothing, fell through, and re-polled at full CPU.
+                std::fprintf(stderr,
+                             "wm2: event loop descriptor failed "
+                             "(x revents 0x%x, pipe revents 0x%x), exiting\n",
+                             (unsigned)fds[0].revents,
+                             (unsigned)fds[1].revents);
+            }
             m_looping = false;
             m_returnCode = 1;
             return;
 
-        case EventPumpAction::StopOnSignal: {
-            // Drain pipe (handler may have written multiple bytes)
-            char buf[32];
-            while (read(m_pipeRead.get(), buf, sizeof(buf)) > 0) { /* drain */ }
-            std::fprintf(stderr, "wm2: signal caught, exiting\n");
-            m_looping = false;
-            m_returnCode = 0;
+        case EventPumpAction::StopOnSignal:
+            shutdownOnSignal();
             return;
-        }
 
         case EventPumpAction::ServiceFocusTick:
             checkDelaysForFocus();
             continue;  // re-pump, then poll again
 
         case EventPumpAction::DeliverEvent:
-            XNextEvent(display(), e);
-            return;
-
         case EventPumpAction::Block:
         case EventPumpAction::Retry:
             continue;
         }
+    }
+}
+
+
+void WindowManager::shutdownOnSignal()
+{
+    // Drain pipe (handler may have written multiple bytes)
+    char buf[32];
+    while (read(m_pipeRead.get(), buf, sizeof(buf)) > 0) { /* drain */ }
+    std::fprintf(stderr, "wm2: signal caught, exiting\n");
+    m_looping = false;
+    m_returnCode = 0;
+}
+
+
+void WindowManager::wakeEventLoop()
+{
+    if (s_pipeWriteFd >= 0) {
+        char c = 'x';
+        (void)write(s_pipeWriteFd, &c, 1);
     }
 }
 
