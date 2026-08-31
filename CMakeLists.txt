@@ -687,6 +687,64 @@ if(BUILD_TESTS)
                 FIXTURES_REQUIRED preflight_ok
                 TIMEOUT 600
         )
+
+        # --- Targeted post-readiness reparent reproducer (TEST-08, plan
+        #     08.5-09) ---
+        #
+        # A DIAGNOSTIC INSTRUMENT that lives in the suite. Its purpose is to make
+        # a wedged reparent READABLE -- five diagnostic channels captured while
+        # the window manager is still wedged -- rather than to certify anything.
+        #
+        # ITS CASES ARE BUDGET-DRIVEN AND CHEAP BY DEFAULT: one fixture and one
+        # mapped client each, seconds of wall clock. The sampling budget is
+        # widened only by an explicit measurement run that sets the knobs in the
+        # environment. Do NOT "optimise" the default budget away, and do NOT
+        # raise it here -- a budget baked into the build is a budget the ordinary
+        # gate suite pays on every run.
+        #
+        # Cloned from test_wm_state above. Neither XTEST nor XEXT is linked:
+        # nothing here drives synthetic input and nothing reads back a shape.
+        #
+        # Own display per fixture instance, so deliberately NO shared-display
+        # binding and NO `FIXTURES_REQUIRED xvfb_display`.
+        add_executable(test_wm_repro tests/test_wm_repro.cpp)
+        target_link_libraries(test_wm_repro PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+        )
+        target_include_directories(test_wm_repro PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/tests
+            ${XFT_INCLUDE_DIRS}
+        )
+
+        # The fourth definition is the source-tree root: the case locates the
+        # capture script under scripts/diag/ through it, so no path to the script
+        # is fixed in the test source.
+        target_compile_definitions(test_wm_repro PRIVATE
+            WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
+            WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
+            WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+            WM2_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        )
+
+        # The tests exec the binary, so it must exist before they run.
+        add_dependencies(test_wm_repro wm2-born-again)
+
+        # ADD_TAGS_AS_LABELS is required by D-33, or the single tag this file
+        # carries is not selectable by `ctest -L '^wm_repro$' --no-tests=error`,
+        # which would then match NOTHING.
+        #
+        # TIMEOUT is the 300-second class its two nearest siblings use, NOT the
+        # 600 that test_wm_runtime and test_wm_resource carry. Those two hold a
+        # stress group and a pair of thirty-second idle windows respectively; the
+        # default budget here is seconds, and a measurement run deliberately
+        # bypasses ctest so this timeout never applies to it.
+        catch_discover_tests(test_wm_repro ADD_TAGS_AS_LABELS
+            PROPERTIES
+                FIXTURES_REQUIRED preflight_ok
+                TIMEOUT 300
+        )
     endif()
 
     # Config parsing unit tests (pure data transformation, no X11 needed)

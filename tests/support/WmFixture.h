@@ -29,6 +29,7 @@
 #include <X11/Xatom.h>
 
 #include <sys/file.h>
+#include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -300,6 +301,14 @@ struct WmFixtureOptions {
     std::map<std::string, std::string> childEnv;        // explicit child env overrides
     int readinessTimeoutMs = 10000;
     int serverTimeoutMs = 10000;
+
+    // Opt-in (plan 08.5-09, TEST-08): let the TEST PROCESS -- and only the test
+    // process and its descendants -- attach a debugger to the forked window
+    // manager. Defaults false, so the ordinary suite is byte-identical to what
+    // it was: no fixture that does not ask for this changes behaviour in any
+    // way. See the declaration site inside spawnWm() for why the narrow form is
+    // used and what it does not grant.
+    bool allowTestProcessPtrace = false;
 };
 
 class WmFixture {
@@ -422,6 +431,20 @@ public:
         }
     }
 
+    // A LIVE diagnostics snapshot (plan 08.5-09), taken while both children are
+    // still running rather than after a failed startup.
+    //
+    // The refresh is the whole point. diagnostics() reads the cached stderr
+    // string; before this plan it did not repopulate it, because its only caller
+    // was start()'s failure path, which drains first. A snapshot taken mid-run
+    // would therefore have reported whatever was last drained -- which for a
+    // fixture that has never failed is nothing at all.
+    std::string diagnosticsSnapshot()
+    {
+        collectStderr();
+        return diagnostics();
+    }
+
 private:
     void start()
     {
@@ -533,6 +556,35 @@ private:
         if (pid < 0) return false;
         if (pid == 0) {
             redirectChildOutput(m_stderrPath);
+
+            // Plan 08.5-09: the hang-time diagnostic bundle's backtrace channel.
+            //
+            // WHY IT EXISTS: this host runs Yama in restricted mode
+            // (/proc/sys/kernel/yama/ptrace_scope reads 1), under which only a
+            // process's own ancestors may attach a debugger to it. A debugger
+            // the test process SPAWNS is a sibling of this child, not an
+            // ancestor, so without the declaration below every attach is
+            // refused by the kernel and the backtrace channel can only ever
+            // record an absence. Checked empirically on this host: refused
+            // without the declaration, admitted with it, and the declaration
+            // survives execve().
+            //
+            // WHY IT DEFAULTS OFF: it is an opt-in field on WmFixtureOptions, so
+            // no existing fixture's child changes at all. Only a fixture that
+            // deliberately asks to be observed gets a permitted tracer.
+            //
+            // WHY THE NARROW FORM: the request below names ONE process by pid --
+            // ::getppid(), the test process. Under Yama's restricted mode the
+            // declared process and its descendants become the permitted tracers,
+            // which admits a debugger this test spawned and nothing else on the
+            // machine. The wildcard spelling of this request would admit ANY
+            // process on the host, which is a strictly wider grant than this
+            // needs and is forbidden by a paired negative gate.
+            if (m_options.allowTestProcessPtrace) {
+                ::prctl(PR_SET_PTRACER,
+                        static_cast<unsigned long>(::getppid()), 0UL, 0UL, 0UL);
+            }
+
             ::setsid();
             execArgv(argv, env);
             _exit(127);
@@ -719,6 +771,10 @@ private:
     // plus both captured logs.
     std::string diagnostics()
     {
+        // 08.5-09: refresh before reading. A no-op on the existing
+        // startup-failure path, which already drains before calling this.
+        collectStderr();
+
         std::string out;
         out += "--- fixture diagnostics ---\n";
         out += "display: " + m_display + "\n";
@@ -758,11 +814,15 @@ private:
         return out;
     }
 
+public:
+    // Public since 08.5-09 so a diagnostic case can copy the Xvfb log into a
+    // capture bundle as its own channel. Signature and body unchanged.
     std::string xvfbLogPath() const
     {
         return workDir() + "/xvfb" + sanitizedDisplay() + ".log";
     }
 
+private:
     void collectStderr()
     {
         if (m_stderrPath.empty()) return;
