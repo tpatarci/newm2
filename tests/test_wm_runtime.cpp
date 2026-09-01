@@ -69,6 +69,14 @@
 #include <X11/extensions/shape.h>
 #include <X11/Xutil.h>
 
+// dirent.h and fcntl.h are included for this file's OWN uses -- opendir(),
+// readdir(), struct dirent, and the O_WRONLY passed to open(). They arrived
+// transitively until now, which compiles but is not something this translation
+// unit is entitled to rely on: a header it does not control dropping an
+// include it never promised would break the build for reasons nothing here
+// names. Same reasoning for <sstream> and <stdexcept> below.
+#include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -81,6 +89,8 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -3210,9 +3220,14 @@ TEST_CASE("Highlighting a root-menu row does not erase its label, and neither "
     Window menu = None;
     Rect menuRect;
     std::string why;
-    INFO("menu open diagnostics: " << why);
     REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
                                  menu, menuRect, why, namedPixel(d, "blue")));
+    // INFO placed AFTER the call, not before it. Catch2 evaluates the
+    // streamed expression where the INFO stands, so reading `why` above the
+    // call that fills it captured the empty string it still held -- every
+    // failure downstream printed a diagnostics line with nothing after the
+    // colon, which is exactly when that line was wanted.
+    INFO("menu open diagnostics: " << why);
 
     // --- A: nothing hovered. selecting is -1 until the first MotionNotify, so
     //     the initial Expose draws every label and highlights nothing.
@@ -3368,9 +3383,9 @@ TEST_CASE("Highlighting a category submenu row does not erase its label either",
     Window menu = None;
     Rect menuRect;
     std::string why;
-    INFO("menu open diagnostics: " << why);
     REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
                                  menu, menuRect, why, namedPixel(d, "blue")));
+    INFO("menu open diagnostics: " << why);
 
     // Row height is MEASURED, not computed: hover row 0 and read back the
     // height of the highlight fill. entryHeight depends on the menu font.
@@ -3560,9 +3575,9 @@ TEST_CASE("The root menu still opens and tracks the pointer after a submenu epis
     Window menu = None;
     Rect menuRect;
     std::string why;
-    INFO("first menu open: " << why);
     REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
                                  menu, menuRect, why, namedPixel(d, "blue")));
+    INFO("first menu open: " << why);
 
     REQUIRE(nudgeUntil(driver, menuRect.x + menuRect.w / 2, menuRect.y + 14, [&] {
         return countAll(captureRootBitmap(d, menuRect), hl) > 0;

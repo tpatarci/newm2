@@ -249,7 +249,11 @@ link_audit() {
     # that legitimately links libXtst (the test targets do).
     local bin="${1:-build/release/wm2-born-again}"
     if [ ! -x "$bin" ]; then
-        echo "wm2: build-all: link audit skipped -- $bin not built" >&2
+        # "failed", not "skipped": this returns 1, and the caller treats it as a
+        # failing audit. Calling it skipped described a non-event while the gate
+        # went red, which sends whoever reads the log looking for the real
+        # failure somewhere else.
+        echo "wm2: build-all: link audit FAILED -- $bin not built" >&2
         return 1
     fi
 

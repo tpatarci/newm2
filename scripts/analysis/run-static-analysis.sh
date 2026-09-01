@@ -183,10 +183,36 @@ normalise_findings() {
 
 echo "== cppcheck $CPPCHECK_VERSION =="
 
+# cppcheck's OWN exit status, taken from PIPESTATUS before anything else can
+# overwrite it.
+#
+# The `| grep ... || true` below discards two different things and only one of
+# them is meant to be discarded. `grep` exits 1 when it matches nothing, which
+# is the ordinary clean-tree case and must not fail the gate -- that is what the
+# `|| true` is for. But the pipeline's status is grep's, so cppcheck's own
+# status was discarded along with it: if cppcheck failed to start, died on a bad
+# argument, or aborted part-way through the translation units, raw.txt came back
+# empty, CURRENT_COUNT came back 0, and the gate reported a clean tree it had
+# never actually analysed. A tool that did not run is not a tool that found
+# nothing, and this gate could not tell the two apart.
 cppcheck_run 2>&1 >/dev/null | grep "^${CC_MARK}|" > "$WORK/raw.txt" || true
+CPPCHECK_STATUS=${PIPESTATUS[0]}
+
 normalise_findings < "$WORK/raw.txt" > "$WORK/current.tsv"
 CURRENT_COUNT=$(wc -l < "$WORK/current.tsv")
 echo "  $CURRENT_COUNT finding(s) in src/ and include/ before suppression"
+
+# Evaluated on its own, independently of the suppression comparison further
+# down: a non-zero cppcheck status with nothing parsed is the vacuous-green
+# case, and it is a gate failure rather than a pass.
+if [ "$CPPCHECK_STATUS" -ne 0 ] && [ "$CURRENT_COUNT" -eq 0 ]; then
+    echo "  cppcheck exited $CPPCHECK_STATUS and produced no parseable findings." >&2
+    echo "  Refusing to report a clean tree from a run that did not complete." >&2
+    exit 1
+fi
+if [ "$CPPCHECK_STATUS" -ne 0 ]; then
+    echo "  note: cppcheck exited $CPPCHECK_STATUS; $CURRENT_COUNT finding(s) were still parsed" >&2
+fi
 
 # --- XML helpers -----------------------------------------------------------
 

@@ -190,6 +190,18 @@ mkdir -p "$OUTDIR"
 
 CAP="$OUTDIR/capability.txt"
 
+# NOT truncated here, deliberately, and a review suggestion to do so was
+# declined. capability.txt is CO-AUTHORED: this script contributes the channels
+# it can observe from outside the process, and its caller appends further
+# channels of its own (wake-arm among them) to the same file. Truncating at this
+# point discards whatever the caller wrote before invoking the capture, which
+# turns an eight-channel bundle into a five-channel one.
+#
+# The concern behind the suggestion is real but belongs to the CALLER: two
+# captures aimed at one output directory do accumulate. Every caller in-tree
+# gives each capture its own directory, so the accumulating case does not arise
+# today.
+
 # ---------------------------------------------------------------------------
 # Channel: wchan
 #
@@ -312,9 +324,15 @@ else
         RECVQS=$(ss -x -a -n -H 2>/dev/null | awk -v want="$INODES" '
             BEGIN { n = split(want, a, " "); for (i = 1; i <= n; i++) if (a[i] != "") s[a[i]] = 1 }
             {
-                for (f = 5; f <= NF; f++) {
-                    if ($f ~ /^[0-9]+$/) { if ($f in s) print $3; break }
-                }
+                # Field 6 is the local socket INODE, named explicitly rather
+                # than found by scanning for the first numeric field from 5
+                # onwards. Field 5 is the local address, and for a bound unix
+                # socket that is a PATHNAME: a path whose last component is all
+                # digits is itself numeric, so the old scan could match the path
+                # and then test THAT against the inode set. A row matched on
+                # such a coincidence belongs to some other process, and its
+                # receive queue would have been reported as ours.
+                if ($6 ~ /^[0-9]+$/ && $6 in s) print $3
             }' | tr '\n' ',' || true)
         RECVQS="${RECVQS%,}"
 

@@ -182,10 +182,22 @@ int pumpedStackIndex(Display* d, Window w)
     return stackIndex(d, w);
 }
 
+// NOTE ON ATOM CACHING, which the helpers below all follow.
+//
+// An Atom is a per-SERVER identifier, not a global constant: the id is assigned
+// by the server that interned it. These helpers used to cache the result in a
+// function-local static, which is only safe while one process talks to exactly
+// one server for its whole life -- and this binary does not. WmFixture picks a
+// free display number per fixture, so successive cases run against DIFFERENT
+// Xvfb instances, and a value interned on the first one was then used to
+// address properties on the second. It survives only when both servers happen
+// to assign the same id, which depends on the order earlier interns ran in.
+//
+// XInternAtom is not worth caching around anyway: Xlib keeps its own per-display
+// atom cache, so a repeat call for a known name is answered locally.
 Window activeWindow(Display* d)
 {
-    static Atom atom = None;
-    if (atom == None) atom = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+    const Atom atom = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
     Window w = None;
     if (!readWindowProp(d, DefaultRootWindow(d), atom, w)) return None;
     return w;
@@ -357,9 +369,26 @@ Time serverTime(Display* d)
     Atom probe = XInternAtom(d, "_WM2TEST_TIME_PROBE", False);
     XChangeProperty(d, w, probe, XA_STRING, 8, PropModeAppend, nullptr, 0);
 
+    // Polled with a DEADLINE rather than waited on with XWindowEvent.
+    //
+    // XWindowEvent is a blocking selector with no timeout: it returns when a
+    // matching event arrives and otherwise never returns at all. The property
+    // change above is expected to produce one, but "expected to" is exactly the
+    // assumption a test should not hang on -- a BadMatch on the append, or a
+    // server that never delivers, turns a failing assertion into a suite that
+    // stops. XCheckWindowEvent is the non-blocking form, and pollUntil supplies
+    // the deadline this file already uses everywhere else.
     XEvent ev;
-    XWindowEvent(d, w, PropertyChangeMask, &ev);
-    const Time t = ev.xproperty.time;
+    bool got = false;
+    WmFixture::pollUntil([&] {
+        got = XCheckWindowEvent(d, w, PropertyChangeMask, &ev) == True;
+        return got;
+    }, 2000);
+
+    // 0 on expiry. Callers compare timestamps for staleness, and 0 is older
+    // than any real server time, so a caller that ignores the failure reports a
+    // stale-timestamp result rather than silently inventing a plausible one.
+    const Time t = got ? ev.xproperty.time : 0;
 
     XDestroyWindow(d, w);
     XSync(d, False);
@@ -368,8 +397,7 @@ Time serverTime(Display* d)
 
 void setUserTimeProp(Display* d, Window w, Time t)
 {
-    static Atom a = None;
-    if (a == None) a = XInternAtom(d, "_NET_WM_USER_TIME", False);
+    const Atom a = XInternAtom(d, "_NET_WM_USER_TIME", False);
     unsigned long v = static_cast<unsigned long>(t);
     XChangeProperty(d, w, a, XA_CARDINAL, 32, PropModeReplace,
                     reinterpret_cast<unsigned char*>(&v), 1);
@@ -377,8 +405,7 @@ void setUserTimeProp(Display* d, Window w, Time t)
 
 void setUserTimeWindowProp(Display* d, Window w, Window proxy)
 {
-    static Atom a = None;
-    if (a == None) a = XInternAtom(d, "_NET_WM_USER_TIME_WINDOW", False);
+    const Atom a = XInternAtom(d, "_NET_WM_USER_TIME_WINDOW", False);
     unsigned long v = static_cast<unsigned long>(proxy);
     XChangeProperty(d, w, a, XA_WINDOW, 32, PropModeReplace,
                     reinterpret_cast<unsigned char*>(&v), 1);
@@ -389,9 +416,8 @@ void setUserTimeWindowProp(Display* d, Window w, Window proxy)
 // discoverable as wanting the user, not merely absent from the focus.
 bool hasDemandsAttention(Display* d, Window w)
 {
-    static Atom stateAtom = None, demands = None;
-    if (stateAtom == None) stateAtom = XInternAtom(d, "_NET_WM_STATE", False);
-    if (demands == None) demands = XInternAtom(d, "_NET_WM_STATE_DEMANDS_ATTENTION", False);
+    const Atom stateAtom = XInternAtom(d, "_NET_WM_STATE", False);
+    const Atom demands   = XInternAtom(d, "_NET_WM_STATE_DEMANDS_ATTENTION", False);
 
     Atom actualType = None;
     int actualFormat = 0;
@@ -499,8 +525,7 @@ Window mapClientWithUserTime(Display* d, int x, int y, int w, int h,
 void sendActivation(Display* d, Window target, long source, Time stamp,
                     int format = 32)
 {
-    static Atom a = None;
-    if (a == None) a = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+    const Atom a = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
 
     XEvent ev;
     std::memset(&ev, 0, sizeof(ev));
@@ -524,8 +549,7 @@ void sendActivation(Display* d, Window target, long source, Time stamp,
 // coincidence rather than as the intent.
 void sendLegacyActivation(Display* d, Window target)
 {
-    static Atom a = None;
-    if (a == None) a = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+    const Atom a = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
 
     XEvent ev;
     std::memset(&ev, 0, sizeof(ev));

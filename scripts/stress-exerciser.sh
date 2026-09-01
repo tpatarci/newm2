@@ -39,11 +39,20 @@ for t in Xvfb xclock xeyes xdotool; do
     command -v "$t" >/dev/null || { echo "wm2: need $t" >&2; exit 1; }
 done
 
+# The window manager's log. Created with mktemp rather than written to a fixed
+# path under /tmp, for two reasons: a predictable name in a world-writable
+# directory is one another user can pre-create as a symlink pointing anywhere
+# this script can write, and two concurrent runs of this exerciser would
+# otherwise interleave into one file and corrupt each other's error counts.
+WM_LOG=$(mktemp -t wm2-stress-wm.XXXXXXXXXX) || {
+    echo "wm2: could not create the window manager log" >&2; exit 1; }
+
 cleanup() {
     [ -n "${CLIENT_PIDS:-}" ] && kill $CLIENT_PIDS 2>/dev/null
     [ -n "${WM_PID:-}"   ] && kill "$WM_PID"   2>/dev/null
     [ -n "${XVFB_PID:-}" ] && kill "$XVFB_PID" 2>/dev/null
     wait 2>/dev/null
+    [ -n "${WM_LOG:-}" ] && rm -f "$WM_LOG"
 }
 trap cleanup EXIT
 
@@ -58,10 +67,10 @@ XVFB_PID=$!
 sleep 2
 DISPLAY="$DISPLAY_NUM" xdpyinfo >/dev/null 2>&1 || { echo "wm2: Xvfb failed" >&2; exit 1; }
 
-DISPLAY="$DISPLAY_NUM" "$WM" > /tmp/wm2-stress-wm.log 2>&1 &
+DISPLAY="$DISPLAY_NUM" "$WM" > "$WM_LOG" 2>&1 &
 WM_PID=$!
 sleep 2
-kill -0 "$WM_PID" 2>/dev/null || { echo "wm2: WM died at startup" >&2; cat /tmp/wm2-stress-wm.log; exit 1; }
+kill -0 "$WM_PID" 2>/dev/null || { echo "wm2: WM died at startup" >&2; cat "$WM_LOG"; exit 1; }
 
 rss_kb() { awk '/^VmRSS:/ {print $2}' "/proc/$WM_PID/status" 2>/dev/null || echo 0; }
 fds()    { ls "/proc/$WM_PID/fd" 2>/dev/null | wc -l; }
@@ -105,14 +114,14 @@ for c in $(seq 1 "$CYCLES"); do
     if ! kill -0 "$WM_PID" 2>/dev/null; then
         echo
         echo "wm2: *** THE WINDOW MANAGER DIED IN CYCLE $c ***" >&2
-        tail -20 /tmp/wm2-stress-wm.log >&2
+        tail -20 "$WM_LOG" >&2
         exit 1
     fi
 
     NOW=$(rss_kb)
     # `grep -c` prints its count AND exits non-zero when the count is zero, so a
     # naive `|| echo 0` emits the count and a second 0 on its own line.
-    ERRS=$(grep -c "X protocol error\|BadWindow\|BadMatch\|BadValue\|BadDrawable" /tmp/wm2-stress-wm.log 2>/dev/null) || true
+    ERRS=$(grep -c "X protocol error\|BadWindow\|BadMatch\|BadValue\|BadDrawable" "$WM_LOG" 2>/dev/null) || true
     ERRS="${ERRS:-0}"
     printf "%5s   %7s   %7s   %+5s   %3s   %8s\n" "$c" "0" "$NOW" "$((NOW - PREV))" "$(fds)" "$ERRS"
     PREV=$NOW

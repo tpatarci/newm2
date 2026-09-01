@@ -1102,7 +1102,18 @@ TEST_CASE("Redelivered screen-change notifications carrying stale dimensions cha
     }
 
     // Give the WM real opportunities to misbehave before concluding it did not.
-    for (int i = 0; i < 10; ++i) pumpWm(d.get());
+    //
+    // SPACED by the 20 ms this file already uses elsewhere, because ten pumps
+    // issued back-to-back are not ten opportunities. They complete in well under
+    // a millisecond, so all ten can land inside a single scheduling slice during
+    // which the window manager never ran at all -- and the negative assertions
+    // below would then be reporting that nothing had happened YET rather than
+    // that nothing WILL happen, which is the opposite of what this case claims.
+    // The pump count is unchanged; only the interval between them is.
+    for (int i = 0; i < 10; ++i) {
+        pumpWm(d.get());
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
 
     Rect got;
     REQUIRE(pumpedRect(d.get(), client, got));

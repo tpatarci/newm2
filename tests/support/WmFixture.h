@@ -479,6 +479,15 @@ private:
 
             // Lost the display, or the server died on startup. Drop everything
             // and try the next candidate.
+            //
+            // m_keepAlive is dropped FIRST and is not optional. waitForXServer()
+            // may have already opened it (it is the connection held so Xvfb
+            // never sees zero clients), and it can succeed on a server that then
+            // fails the rest of this branch. Leaving it set carries a live
+            // DisplayPtr to a server we are about to shut down into the next
+            // candidate's attempt -- a stale connection to a dead display, and
+            // an fd leaked once per retry.
+            m_keepAlive.reset();
             m_xvfb.shutdown();
             m_reservation.release();
             m_display.clear();

@@ -81,8 +81,18 @@ exec "$WM" --new-window-command=xclock
 XS
 chmod +x "$XSTARTUP"
 
+# The commit is a LABEL for the transcript, not a precondition for running the
+# session. Under `set -e` an unguarded git rev-parse aborts the whole script
+# when the tree is not a git checkout -- an exported tarball, a release archive,
+# or a copy made with cp -r -- and it aborts AFTER the isolated CFG_BASE has
+# already been built, so the failure is both fatal and confusing. Falling back
+# to "unknown" keeps the session runnable where the label simply is not
+# available.
+SESSION_COMMIT=$(cd "$REPO_ROOT" && git rev-parse --short HEAD 2>/dev/null) || SESSION_COMMIT=unknown
+[ -n "$SESSION_COMMIT" ] || SESSION_COMMIT=unknown
+
 echo "wm2: starting a validation session on $DISPLAY_NUM"
-echo "wm2:   commit    $(cd "$REPO_ROOT" && git rev-parse --short HEAD)"
+echo "wm2:   commit    $SESSION_COMMIT"
 echo "wm2:   binary    $WM"
 echo "wm2:   config    $CFG_BASE/wm2-born-again/config  (isolated)"
 echo

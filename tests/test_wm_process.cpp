@@ -397,12 +397,18 @@ TEST_CASE("SIGTERM shuts the WM down cleanly with exit status 0", "[wm_process]"
 // therefore exercise the genuine path.
 //
 // SCOPE, stated precisely: this asserts that synthesised input AS A WHOLE
-// (warp + press + release) drives the WM. It does NOT isolate the click from the
-// warp, because today's WM activates on pointer entry -- the three focus
-// booleans are parsed but unwired (D-15), so click-to-focus does not yet exist
-// as a distinct behavior. Verified by removing the XTEST calls: the test fails.
-// Verified by removing only the click: it still passes, via focus-follows-pointer.
-// Once FOCUS-02 wires click-to-focus, a later plan should split these.
+// (warp + press + release) drives the WM. It does NOT isolate the click from
+// the warp: under the default focus policy the WM activates on pointer entry,
+// so the warp alone is sufficient to activate and the press is not the thing
+// under test here. Verified by removing the XTEST calls: the test fails.
+// Verified by removing only the click: it still passes, via focus-follows-
+// pointer.
+//
+// This paragraph previously said the focus booleans were parsed but unwired and
+// that click-to-focus did not yet exist. FOCUS-02 has since implemented it, and
+// it has its own coverage in tests/test_wm_focus.cpp -- so what remains true
+// here is only the scope limitation above, not the claim that the behaviour is
+// missing.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("Synthesised XTEST input on a client's tab activates that window",

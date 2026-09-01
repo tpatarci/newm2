@@ -496,7 +496,20 @@ CaptureOutcome captureBundle(WmFixture& fixture,
 {
     CaptureOutcome out;
     out.dir = dir;
-    if (!mkdirp(dir)) return out;
+    if (!mkdirp(dir)) {
+        // The BUNDLE is declined; the ARM is still applied.
+        //
+        // These are two different obligations and only one of them depends on
+        // having a directory to write into. Returning here without applying the
+        // arm skipped the intervention for this trip entirely -- and because
+        // the arms alternate, a single skip does not merely lose one trip, it
+        // inverts the arm assignment of every trip after it, silently swapping
+        // the labels on the two groups being compared. A trip that cannot be
+        // recorded must still be a trip that was RUN, so the arm is applied
+        // exactly once here and its result discarded along with the bundle.
+        if (applyArm) applyArm();
+        return out;
+    }
 
     const long wmPid = static_cast<long>(fixture.wm().pid());
     const bool alive = fixture.wmAlive();
