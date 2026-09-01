@@ -1,5 +1,6 @@
 #include "Manager.h"
 #include "Client.h"
+#include "TimestampWait.h"
 #include <string>
 #include <cstring>
 #include <cstdio>
@@ -920,20 +921,21 @@ Time WindowManager::timestamp(bool reset)
 
     if (m_currentTime == CurrentTime) {
         XEvent event;
-        XChangeProperty(display(), m_root, Atoms::wm2_running,
-                        Atoms::wm2_running, 8, PropModeAppend,
-                        reinterpret_cast<unsigned char*>(const_cast<char*>("")), 0);
+
+        // 08.5-12 Task 1: the sentinel request, the predicate and the wait now
+        // live in include/TimestampWait.h, where a test binary can reach them.
+        // The extraction is BEHAVIOUR-PRESERVING and ALL THREE DEFECTS came
+        // with it: the request is still the zero-length append that yields
+        // BadMatch against a root property a foreign client has replaced, the
+        // predicate still accepts any property notification whatsoever, and
+        // the wait still ignores the deadline it is handed. Each defect is
+        // named at its own site in that header. Nothing here is fixed.
+        timestampSentinelRequest(display(), m_root, Atoms::wm2_running);
 
         // 08.5-06 attribution instrumentation. BEHAVIOUR-PRESERVING, and
         // deliberately so: no deadline, no predicate narrowing, no fallback.
-        // Those are the fix (08.5-07); installing any of them here would make
-        // the measurement this instrumentation exists to take unattributable.
-        //
-        // The check form is taken first only to make two cases separable. It
-        // removes a matching event that is already queued and returns without
-        // blocking when there is none -- semantically identical to what the
-        // blocking call below would have done with an already-queued event.
-        // The same idiom is already used at src/Events.cpp:539.
+        // Those are the fix; installing any of them here would make the
+        // measurement this instrumentation exists to take unattributable.
         //
         // SECURITY (threat T-8-TRACE-01): every line printed below is a fixed
         // ASCII state word plus an integer. No window id, atom name, window
@@ -941,7 +943,11 @@ Time WindowManager::timestamp(bool reset)
         // committed to a public repository.
         ++m_timestampColdEntries;
 
-        if (XCheckMaskEvent(display(), PropertyChangeMask, &event) == False) {
+        const TimestampWaitResult wait = timestampWaitFor(
+            display(), m_root, Atoms::wm2_running,
+            kTimestampWaitDeadlineMs, &event);
+
+        if (wait.blocked) {
             ++m_timestampBlockedWaits;
 
             if (m_timestampBlockedWaits == 1) {
@@ -955,22 +961,16 @@ Time WindowManager::timestamp(bool reset)
                 std::fflush(stderr);
             }
 
-            const auto waitStart = std::chrono::steady_clock::now();
-            XMaskEvent(display(), PropertyChangeMask, &event);
-            const long elapsedMs = static_cast<long>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - waitStart).count());
-
-            if (elapsedMs > m_timestampLongestWaitMs) {
-                m_timestampLongestWaitMs = elapsedMs;
+            if (wait.elapsedMs > m_timestampLongestWaitMs) {
+                m_timestampLongestWaitMs = wait.elapsedMs;
             }
-            if (elapsedMs > 100) {
+            if (wait.elapsedMs > 100) {
                 // A warning, per the project's error-handling convention.
                 // Never fatal(): a slow wait is a diagnosis, not a reason to
                 // take the user's session down.
                 std::fprintf(stderr,
                              "wm2: warning: timestamp: blocking property wait %ld ms\n",
-                             elapsedMs);
+                             wait.elapsedMs);
                 std::fflush(stderr);
             }
         }
@@ -981,8 +981,17 @@ Time WindowManager::timestamp(bool reset)
         // which is then consumed here and never reaches eventProperty(). That
         // the possibility exists is a fact about the event masks; whether it
         // actually happens is what this counter answers.
-        if (event.xproperty.window != m_root ||
-            event.xproperty.atom != Atoms::wm2_running) {
+        //
+        // 08.5-12 Task 1: the extracted predicate is asked FIRST and the two
+        // field comparisons are RETAINED beside it. At this commit the
+        // predicate is deliberately over-broad -- it answers true for any
+        // property notification -- so the retained comparisons are what keep
+        // this counter measuring exactly what it measured before the
+        // extraction. Dropping them here would have silenced the counter and
+        // made this a behaviour change rather than a refactor.
+        if (!(timestampIsSentinel(event, m_root, Atoms::wm2_running) &&
+              event.xproperty.window == m_root &&
+              event.xproperty.atom == Atoms::wm2_running)) {
             ++m_timestampForeignMatches;
             if (m_timestampForeignMatches == 1) {
                 std::fprintf(stderr,
