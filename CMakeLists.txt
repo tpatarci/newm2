@@ -230,6 +230,29 @@ if(BUILD_TESTS)
     )
     catch_discover_tests(test_autoraise ADD_TAGS_AS_LABELS)
 
+    # Menu paint-decision unit tests (08.5-13, TEST-08).
+    #
+    # Registered exactly like test_autoraise above and for the same reason: NO
+    # ENVIRONMENT, NO FIXTURES_REQUIRED and NO RESOURCE_LOCK, because it needs
+    # no display. Its inputs are synthetic histograms and integers, so it cannot
+    # flake -- and that inability is the whole point of splitting the menu
+    # open-paint-sample path into units. Binding a fixture or a display here
+    # would silently destroy it.
+    #
+    # PkgConfig::X11 is linked for the Xlib TYPE declarations include/MenuPaint.h
+    # needs (Window, None); no Xlib call is made from this binary.
+    add_executable(test_menupaint tests/test_menupaint.cpp)
+    target_link_libraries(test_menupaint PRIVATE
+        Catch2::Catch2WithMain
+        PkgConfig::X11
+    )
+    target_include_directories(test_menupaint PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/tests
+        ${XFT_INCLUDE_DIRS}
+    )
+    catch_discover_tests(test_menupaint ADD_TAGS_AS_LABELS)
+
     # Client lifecycle tests (need Xvfb display, TEST-03)
     if(XVFB_EXECUTABLE)
         add_executable(test_client tests/test_client.cpp)

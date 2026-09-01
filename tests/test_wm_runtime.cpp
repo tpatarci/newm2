@@ -61,6 +61,7 @@
 
 #include "support/WmFixture.h"
 #include "support/XTestDriver.h"
+#include "support/PixelVerdict.h"
 
 #include "x11wrap.h"
 #include <X11/Xlib.h>
@@ -553,7 +554,10 @@ WmFixtureOptions configuredFixture(const std::string& configContents,
 // never shaped, so what comes back is exactly what is on the screen.
 // ---------------------------------------------------------------------------
 
-using Histogram = std::map<unsigned long, long>;
+// An alias for the pure header's type rather than a second spelling of it, so
+// classify() takes what captureRoot() returns with no conversion and the two
+// cannot drift apart (08.5-13 Task 1).
+using Histogram = PixelHistogram;
 
 Histogram captureRoot(Display* d, const Rect& r)
 {
@@ -690,12 +694,25 @@ constexpr int kMenuPressY = 5;
 // flake in six runs of the 15-case gate, in which the New entry simply never
 // fired and the case reported a missing window with no other symptom.
 //
-// "Drawn" is observed from outside as "the menu rectangle is no longer one flat
-// colour". The server paints the background pixel when the window is mapped,
-// and the entry labels are the first thing drawn over it, so a second distinct
-// pixel value IS the Expose having been handled.
+// "Drawn" was observed from outside as "the menu rectangle is no longer one
+// flat colour" -- a count of distinct pixel values. That decision now lives in
+// tests/support/PixelVerdict.h, where a display-free test can reach it
+// (08.5-13 Task 1). The extraction is faithful: classify() still answers
+// exactly what `size() >= 2` answered, defect and all. See the header for why
+// that question is the wrong one.
+//
+// EACH STAGE NOW REPORTS ITSELF. The three stages -- mapped, geometry realised,
+// painted -- used to fail behind one shared `false`, so a red run could not say
+// which of them expired, and a flake in this helper could not be attributed to
+// anything narrower than "the menu did not work". Each expiry now names itself
+// and, for the paint stage, the verdict and pixels it last saw.
+
+// The shipped menu background (08.5-02). Callers that configure no colour of
+// their own are asking about this one.
+constexpr const char* kShippedMenuBackground = "#C8CACC";
+
 bool openRootMenu(Display* d, XTestDriver& driver, int x, int y,
-                  Window& menuOut, Rect& rectOut)
+                  Window& menuOut, Rect& rectOut, unsigned long expectedBg)
 {
     driver.moveTo(x, y);
     driver.press(Button1);
@@ -710,18 +727,46 @@ bool openRootMenu(Display* d, XTestDriver& driver, int x, int y,
             menuOut = findOpenMenu(d, x, y);
             return menuOut != None;
         }, kMenuStageMs)) {
+        UNSCOPED_INFO("openRootMenu: stage 1 (mapped) expired at "
+                      << kMenuStageMs << " ms -- no child of root contains the "
+                      "press point (" << x << "," << y << ")");
         return false;
     }
 
     if (!WmFixture::pollUntil([&] {
             return serverRect(d, menuOut, rectOut) && rectOut.w > 1 && rectOut.h > 1;
         }, kMenuStageMs)) {
+        UNSCOPED_INFO("openRootMenu: stage 2 (geometry) expired at "
+                      << kMenuStageMs << " ms -- menu " << menuOut
+                      << " rect " << describe(rectOut));
         return false;
     }
 
-    return WmFixture::pollUntil([&] {
-        return captureRoot(d, rectOut).size() >= 2;
+    PaintVerdict last = PaintVerdict::NoPixels;
+    Histogram lastSeen;
+    const bool painted = WmFixture::pollUntil([&] {
+        lastSeen = captureRoot(d, rectOut);
+        last = classify(lastSeen, expectedBg);
+        return last == PaintVerdict::Painted;
     }, kMenuStageMs);
+
+    if (!painted) {
+        UNSCOPED_INFO("openRootMenu: stage 3 (painted) expired at "
+                      << kMenuStageMs << " ms -- last verdict "
+                      << describeVerdict(last) << ", expected "
+                      << hex(expectedBg) << ", pixels "
+                      << describeTop(nullptr, lastSeen));
+    }
+    return painted;
+}
+
+// Same three stages, asking about the shipped colour. Every call site that
+// predates 08.5-13 goes through here, so none of them changed.
+bool openRootMenu(Display* d, XTestDriver& driver, int x, int y,
+                  Window& menuOut, Rect& rectOut)
+{
+    return openRootMenu(d, driver, x, y, menuOut, rectOut,
+                        namedPixel(d, kShippedMenuBackground));
 }
 
 // Release over the first menu row ("New"). The WM computes
@@ -1276,10 +1321,14 @@ TEST_CASE("Menu background colour reaches the menu opened by a real root click",
         driver.moveTo(kParkX, kParkY);
 
         // openRootMenu() returns only once the menu is mapped AND drawn, which
-        // is two separate server round trips.
+        // is two separate server round trips. The colour this run configured is
+        // handed to the paint stage: the whole subject of this case is whether
+        // THAT colour reached the menu, so it is the colour the completion
+        // verdict must be asked about.
         Window menu = None;
         Rect menuRect{};
-        REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect));
+        REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect,
+                             wanted));
 
         out = captureRoot(d, menuRect);
         dismissMenu(d, driver);
@@ -2986,13 +3035,14 @@ bool nudgeUntil(XTestDriver& driver, int cx, int cy,
 // for the same reason: no amount of extra waiting fixes an interaction that
 // never started.
 bool openRootMenuVerified(Display* d, XTestDriver& driver, int x, int y,
-                          Window& menuOut, Rect& rectOut, std::string& whyOut)
+                          Window& menuOut, Rect& rectOut, std::string& whyOut,
+                          unsigned long expectedBg)
 {
     // Five, not three: the only thing that fails these cases is deferred
     // item 17, whose rate this directly divides down.
     constexpr int kAttempts = 5;
     for (int attempt = 0; attempt < kAttempts; ++attempt) {
-        if (openRootMenu(d, driver, x, y, menuOut, rectOut) &&
+        if (openRootMenu(d, driver, x, y, menuOut, rectOut, expectedBg) &&
             menuOut != None && isViewable(d, menuOut) &&
             x >= rectOut.x && x < rectOut.x + rectOut.w &&
             y >= rectOut.y && y < rectOut.y + rectOut.h) {
@@ -3035,7 +3085,7 @@ TEST_CASE("Highlighting a root-menu row does not erase its label, and neither "
     std::string why;
     INFO("menu open diagnostics: " << why);
     REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
-                                 menu, menuRect, why));
+                                 menu, menuRect, why, namedPixel(d, "blue")));
 
     // --- A: nothing hovered. selecting is -1 until the first MotionNotify, so
     //     the initial Expose draws every label and highlights nothing.
@@ -3193,7 +3243,7 @@ TEST_CASE("Highlighting a category submenu row does not erase its label either",
     std::string why;
     INFO("menu open diagnostics: " << why);
     REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
-                                 menu, menuRect, why));
+                                 menu, menuRect, why, namedPixel(d, "blue")));
 
     // Row height is MEASURED, not computed: hover row 0 and read back the
     // height of the highlight fill. entryHeight depends on the menu font.
@@ -3385,7 +3435,7 @@ TEST_CASE("The root menu still opens and tracks the pointer after a submenu epis
     std::string why;
     INFO("first menu open: " << why);
     REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
-                                 menu, menuRect, why));
+                                 menu, menuRect, why, namedPixel(d, "blue")));
 
     REQUIRE(nudgeUntil(driver, menuRect.x + menuRect.w / 2, menuRect.y + 14, [&] {
         return countAll(captureRootBitmap(d, menuRect), hl) > 0;
@@ -3471,7 +3521,8 @@ TEST_CASE("The root menu still opens and tracks the pointer after a submenu epis
     Rect menuRect2;
     std::string why2;
     const bool reopened = openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
-                                               menu2, menuRect2, why2);
+                                               menu2, menuRect2, why2,
+                                               namedPixel(d, "blue"));
     INFO("second menu open: " << why2);
     INFO("WM stderr at second open:\n" << fixture.wmStderr());
     REQUIRE(reopened);
@@ -3565,7 +3616,7 @@ TEST_CASE("Moving from a submenu back to the outer menu re-highlights it and clo
     Rect menuRect;
     std::string why;
     REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
-                                 menu, menuRect, why));
+                                 menu, menuRect, why, namedPixel(d, "blue")));
     INFO("menu open: " << why);
 
     // Row 0, to learn the row height from the highlight band it produces.

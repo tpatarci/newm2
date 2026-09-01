@@ -1,5 +1,6 @@
 #include "Manager.h"
 #include "Client.h"
+#include "MenuPaint.h"
 #include <cstdio>
 #include <cstring>
 #include <sys/time.h>
@@ -539,12 +540,29 @@ void WindowManager::menu(XButtonEvent *e)
             break;
 
         case Expose:
-            if (event.xexpose.window == m_menuWindow) {
+            // The mapping lives in include/MenuPaint.h so a display-free test
+            // can reach it (08.5-13 Task 1). The extraction is faithful: the
+            // Foreign arm below does exactly what the previous inline
+            // if/else-if chain did by falling off its end -- nothing at all.
+            // The arms that paint nothing lead, so the discard the tests assert
+            // on is the first thing a reader meets rather than the last.
+            switch (menuPaintTargetFor(event.xexpose.window, m_menuWindow,
+                                       m_submenuWindow, openCat)) {
+            case MenuPaintTarget::NoTarget:
+            case MenuPaintTarget::Foreign:
+                // RECORDED DEFECT, ledger entry 9. The event is discarded
+                // rather than routed to eventExposure(), so a client uncovered
+                // while the menu is up stays blank. Preserved deliberately at
+                // this task; the fix needs a failing case first.
+                break;
+            case MenuPaintTarget::Outer:
                 outerDrawn = true;
                 paintOuter();
-            } else if (event.xexpose.window == m_submenuWindow && openCat >= 0) {
+                break;
+            case MenuPaintTarget::Submenu:
                 subDrawn = true;
                 paintSub();
+                break;
             }
             break;
 
