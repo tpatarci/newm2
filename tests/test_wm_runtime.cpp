@@ -79,6 +79,7 @@
 #include <cstring>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <map>
 #include <string>
 #include <vector>
@@ -584,6 +585,37 @@ Histogram captureRoot(Display* d, const Rect& r)
     return h;
 }
 
+// The SECOND, independent reading of the same instant: the window's own pixels,
+// read straight out of it rather than out of the framebuffer underneath it.
+//
+// captureRoot() above reads DefaultRootWindow() at SCREEN coordinates, so
+// compositing and stacking sit between the menu and the sample -- it observes
+// where the menu is EXPECTED to be, not the menu. The menu popup is created
+// InputOutput with override_redirect (src/Manager.cpp:646-657) and, unlike a
+// client frame or a tab, is NOT shaped, so XGetImage on it is well defined and
+// returns exactly the window's own contents.
+//
+// Two independent reads of one instant are what separate a compositing or
+// readback race from a genuine failure to paint. See the dual-capture comment
+// in the menu-background case for how their agreement is read.
+Histogram captureWindow(Display* d, Window w, const Rect& r)
+{
+    Histogram h;
+    if (r.w <= 0 || r.h <= 0) return h;
+
+    XImage* img = XGetImage(d, w, 0, 0, static_cast<unsigned>(r.w),
+                            static_cast<unsigned>(r.h), AllPlanes, ZPixmap);
+    if (!img) return h;
+
+    for (int iy = 0; iy < r.h; ++iy) {
+        for (int ix = 0; ix < r.w; ++ix) {
+            ++h[XGetPixel(img, ix, iy)];
+        }
+    }
+    XDestroyImage(img);
+    return h;
+}
+
 unsigned long dominantPixel(const Histogram& h)
 {
     unsigned long best = 0;
@@ -661,21 +693,44 @@ std::string describeTop(Display* d, const Histogram& h, size_t n = 4)
 // case then compared the wrong window's pixels. Whether a submenu opens at all
 // depends on how many applications the host has installed, which is exactly the
 // kind of hidden dependency a test should not carry.
+//
+// THE PRESS POINT IS THE ONLY TEST. 08.5-13 removed a silent fallback here --
+// "the first viewable child of root larger than 1x1", returned whenever nothing
+// contained the press point -- and that removal is this round's attributed fix,
+// established by single-variable bisect on 2026-09-01 rather than inferred.
+//
+// What the fallback did: when the menu was not yet mapped it returned SOME
+// OTHER WINDOW, and because that is non-None the enclosing pollUntil in
+// openRootMenu() was satisfied on its FIRST iteration and never retried. The
+// twenty-second stage budget was therefore never spent -- the wait looked
+// generous and was never used. The old `size() >= 2` completion rule then
+// passed trivially on the wrong window, and the case sampled a client frame.
+//
+// MEASURED under ASan: the shipped run and a `--menu-background=#00cc00` run
+// returned the byte-identical histogram
+//     {0xdcdee0 x3000, 0x000000 x1428, 0xc8cacc x512, 0x222222 x17}
+// -- the green run contained NO GREEN AT ALL. 0xDCDEE0 is frameBackground /
+// buttonBackground and 0xC8CACC is tabBackground (include/Config.h), so the
+// dominant pixels were a client FRAME and its sideways TAB. Two different
+// configurations cannot produce identical pixels unless neither was sampled.
+//
+// Returning None instead is what makes the poll a poll: it keeps looking until
+// the menu is genuinely mapped, and reports honestly if it never is. Note that
+// nothing here was made to wait LONGER -- the budget was never the constraint,
+// because it was never spent.
 Window findOpenMenu(Display* d, int pressX, int pressY)
 {
-    Window fallback = None;
     for (Window child : childrenOf(d, DefaultRootWindow(d))) {
         Rect r;
         if (!serverRect(d, child, r)) continue;
         if (r.w <= 1 || r.h <= 1) continue;
         if (!isViewable(d, child)) continue;
-        if (fallback == None) fallback = child;
         if (pressX >= r.x && pressX < r.x + r.w &&
             pressY >= r.y && pressY < r.y + r.h) {
             return child;
         }
     }
-    return fallback;
+    return None;
 }
 
 // Where every menu case presses. Chosen so WindowManager::menu() does NOT need
@@ -1304,10 +1359,40 @@ TEST_CASE("Tab foreground and background colours reach the rendered tab",
 TEST_CASE("Menu background colour reaches the menu opened by a real root click",
           "[wm_config_runtime]")
 {
-    // No client is mapped in this case on purpose: it makes the menu window the
-    // only viewable child of root larger than 1x1, which is what findOpenMenu()
-    // relies on.
+    // No client is mapped in this case on purpose, so that nothing else of any
+    // size is on the screen while the menu is up.
+    //
+    // THE DUAL CAPTURE, AND HOW TO READ IT (08.5-13).
+    //
+    // Two independent readings are taken at the same instant:
+    //
+    //   root   captureRoot()   -- XGetImage on DefaultRootWindow() at SCREEN
+    //                             coordinates. Compositing and stacking sit
+    //                             between the menu and this sample; it reads
+    //                             where the menu is EXPECTED to be.
+    //   direct captureWindow() -- XGetImage on the menu window itself. Nothing
+    //                             sits between it and the pixels.
+    //
+    // Their agreement partitions every failure into exactly one bucket, and
+    // there is no fourth:
+    //
+    //   they DISAGREE                 -> the READBACK PATH is at fault. The
+    //                                    defect is in the test instrument, and
+    //                                    `direct` is the correct instrument.
+    //   they AGREE, wrong colour      -> PRODUCTION did not paint. Check the
+    //                                    window manager's stderr for whether it
+    //                                    ever reached its Expose arm; the outer
+    //                                    menu is drawn ONLY from there
+    //                                    (src/Buttons.cpp:312/396/543) and
+    //                                    nothing retries.
+    //   they AGREE, right colour      -> the sample merely ran EARLY, and the
+    //                                    completion predicate was the defect.
+    //
+    // The assertions are made on `direct`. `root` is reported alongside through
+    // INFO so a disagreement is visible in the failure output rather than
+    // having to be reproduced.
     auto capture = [](const std::vector<std::string>& args, Histogram& out,
+                      Histogram& rootOut,
                       unsigned long& wanted, const char* colourName) {
         WmFixture fixture(cleanFixture(args));
         x11::DisplayPtr dp = fixture.openDisplay();
@@ -1330,25 +1415,62 @@ TEST_CASE("Menu background colour reaches the menu opened by a real root click",
         REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect,
                              wanted));
 
-        out = captureRoot(d, menuRect);
+        // Both readings, back to back, before anything is allowed to change.
+        rootOut = captureRoot(d, menuRect);
+        out     = captureWindow(d, menu, menuRect);
+
+        // The discriminator record. Printed unconditionally, on every run and
+        // whether the case passes or fails, because a partition built only from
+        // failures cannot say what the passing runs looked like. 08.5-13
+        // Task 4's thirty-run log is assembled from these lines.
+        std::cout << "MENUPAINT-DISCRIMINATOR"
+                  << " colour=" << colourName
+                  << " expected=" << hex(wanted)
+                  << " root=" << describeVerdict(classify(rootOut, wanted))
+                  << " direct=" << describeVerdict(classify(out, wanted))
+                  << " rootDom=" << hex(dominantPixel(rootOut))
+                  << " directDom=" << hex(dominantPixel(out))
+                  << " agree=" << (dominantPixel(rootOut) == dominantPixel(out)
+                                   ? "yes" : "no")
+                  << std::endl;
+
         dismissMenu(d, driver);
 
         INFO("menu rect " << describe(menuRect));
+        INFO("root readback verdict:   "
+             << describeVerdict(classify(rootOut, wanted))
+             << " " << describeTop(nullptr, rootOut));
+        INFO("direct readback verdict: "
+             << describeVerdict(classify(out, wanted))
+             << " " << describeTop(nullptr, out));
         INFO("wm stderr:\n" << fixture.wmStderr());
         CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
     };
 
     Histogram shipped, configured;
+    Histogram shippedRoot, configuredRoot;
     unsigned long shippedWanted = 0, configuredWanted = 0;
 
-    capture({}, shipped, shippedWanted, "#C8CACC");   // the shipped silver, 08.5-02
-    capture({"--menu-background=#00cc00"}, configured, configuredWanted, "#00cc00");
+    // the shipped silver, 08.5-02
+    capture({}, shipped, shippedRoot, shippedWanted, "#C8CACC");
+    capture({"--menu-background=#00cc00"}, configured, configuredRoot,
+            configuredWanted, "#00cc00");
 
     REQUIRE(configuredWanted != ~0UL);
 
-    INFO("shipped menu pixels:    " << describeTop(nullptr, shipped));
-    INFO("configured menu pixels: " << describeTop(nullptr, configured));
+    INFO("shipped menu pixels    (direct): " << describeTop(nullptr, shipped));
+    INFO("configured menu pixels (direct): " << describeTop(nullptr, configured));
+    INFO("shipped menu pixels    (root):   " << describeTop(nullptr, shippedRoot));
+    INFO("configured menu pixels (root):   " << describeTop(nullptr, configuredRoot));
 
+    // The positive criterion, on the reading with nothing between it and the
+    // pixels: the configured colour DOMINATES the menu, rather than merely
+    // appearing somewhere in it.
+    CHECK(classify(configured, configuredWanted) == PaintVerdict::Painted);
+    CHECK(classify(shipped, shippedWanted) == PaintVerdict::Painted);
+
+    // Every CHECK this case made before 08.5-13, unchanged. The case is made
+    // MORE specific by the verdict above, never less.
     CHECK(dominantPixel(configured) == configuredWanted);
     CHECK(dominantPixel(shipped) == shippedWanted);
     CHECK(dominantPixel(shipped) != dominantPixel(configured));
@@ -3025,11 +3147,16 @@ bool nudgeUntil(XTestDriver& driver, int cx, int cy,
 // id. It is a PRE-EXISTING defect -- see deferred item 17 -- and user-visible:
 // the root menu simply does not open.
 //
-// findOpenMenu() falls back to "the first viewable child" when nothing contains
-// the press point, so when the menu is missing the caller silently receives some
-// unrelated window and every later assertion measures the wrong pixels. This
-// wrapper closes that hole: it insists the window it returns is viewable AND
-// contains the press point, and retries the whole press/release cycle if not.
+// This wrapper insists the window it returns is viewable AND contains the press
+// point, and retries the whole press/release cycle if not.
+//
+// It was written to close a hole findOpenMenu() had: a silent fallback to "the
+// first viewable child", which handed the caller some unrelated window whenever
+// the menu was missing. 08.5-13 removed that fallback at its source, so the
+// hole is gone and these checks are now belt and braces rather than the only
+// defence. They stay: the retry is what answers deferred item 17, in which the
+// menu genuinely never opens, and that is a different failure from the one the
+// fallback caused.
 //
 // Retrying rather than waiting longer is 08-06's remedy for deferred item 10,
 // for the same reason: no amount of extra waiting fixes an interaction that

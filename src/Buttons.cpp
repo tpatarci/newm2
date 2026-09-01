@@ -541,19 +541,32 @@ void WindowManager::menu(XButtonEvent *e)
 
         case Expose:
             // The mapping lives in include/MenuPaint.h so a display-free test
-            // can reach it (08.5-13 Task 1). The extraction is faithful: the
-            // Foreign arm below does exactly what the previous inline
-            // if/else-if chain did by falling off its end -- nothing at all.
-            // The arms that paint nothing lead, so the discard the tests assert
+            // can reach it (08.5-13 Task 1). Naming the fallthrough is what
+            // made it possible to fix it: Task 3 gives Foreign a real arm
+            // instead of the silence it inherited.
+            //
+            // The arms that paint no popup lead, so the case the tests assert
             // on is the first thing a reader meets rather than the last.
             switch (menuPaintTargetFor(event.xexpose.window, m_menuWindow,
                                        m_submenuWindow, openCat)) {
-            case MenuPaintTarget::NoTarget:
             case MenuPaintTarget::Foreign:
-                // RECORDED DEFECT, ledger entry 9. The event is discarded
-                // rather than routed to eventExposure(), so a client uncovered
-                // while the menu is up stays blank. Preserved deliberately at
-                // this task; the fix needs a failing case first.
+                // Closes ledger entry 9. This Expose belongs to some window
+                // that is neither popup -- typically a managed client uncovered
+                // while the menu is up. The loop selects ExposureMask, so the
+                // event is genuinely delivered here; before 08.5-13 the chain
+                // simply fell off its end and dropped it, and the client's
+                // frame and tab label stayed blank until some later unrelated
+                // Expose repainted them.
+                //
+                // Routing it to the ordinary handler is safe from inside the
+                // grab: eventExposure() only looks the window up in the client
+                // list and asks that client to repaint itself. It touches
+                // neither the grab, the mask, nor this loop's termination.
+                eventExposure(&event.xexpose);
+                break;
+            case MenuPaintTarget::NoTarget:
+                // An Expose carrying no window at all. There is nothing to
+                // route it to and nothing to paint.
                 break;
             case MenuPaintTarget::Outer:
                 outerDrawn = true;

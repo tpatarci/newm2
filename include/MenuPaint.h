@@ -52,10 +52,16 @@ enum class MenuPaintTarget {
 // than routing it to WindowManager::eventExposure(); the client's frame and tab
 // label stay blank until some later unrelated Expose repaints them.
 //
-// 08.5-13 Task 1 PRESERVES that discard deliberately. The point of this task is
-// to make the fallthrough visible as a named value while changing nothing about
-// what the program does; the fix belongs to Task 3, after a case that fails
-// without it exists.
+// 08.5-13 Task 1 preserved that discard deliberately, so that the round had a
+// baseline; Task 3 CLOSED it. The modal loop's Foreign arm now routes the event
+// to WindowManager::eventExposure() instead of dropping it. Naming the
+// fallthrough is what made fixing it possible: an `else` that is not there
+// cannot be asserted on, and a named verdict can.
+//
+// This function itself is unchanged by that fix and deliberately so. It answers
+// WHICH window the event belongs to; what the loop then does about it is the
+// caller's decision, and keeping the two apart is what lets a display-free case
+// pin the mapping down without knowing anything about painting.
 //
 // `openCategory` is the loop's `openCat`: an index into m_appCategories, or -1
 // when no submenu is open. The submenu window keeps its X id after the flyout

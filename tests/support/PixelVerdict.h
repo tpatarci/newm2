@@ -11,8 +11,9 @@
 // defect identically on every run and every host, which is what makes its
 // result evidence rather than a sample.
 //
-// 08.5-13 Task 1 extracted this FAITHFULLY. See the note on classify() for what
-// "faithfully" costs here.
+// 08.5-13 Task 1 extracted this FAITHFULLY, defect and all; Task 3 replaced the
+// body once cases existed that failed without the replacement. See the note on
+// classify() for what the old rule was and why it was wrong.
 
 #include <map>
 
@@ -62,47 +63,88 @@ inline const char* describeVerdict(PaintVerdict v)
 }
 
 
-// THE DEFECT UNDER TEST, preserved deliberately at 08.5-13 Task 1.
+// WHAT THIS REPLACED, AND WHY IT WAS WRONG ON ITS OWN TERMS.
 //
-// The rule this replaces is, in full:
+// Until 08.5-13 Task 3 the rule was, in full:
 //
 //     captureRoot(d, rectOut).size() >= 2
 //
-// It asks one question -- does the sampled rectangle hold at least two distinct
-// pixel values -- and that question is wrong on its own terms, independent of
-// any flake:
+// It asked one question -- does the sampled rectangle hold at least two
+// distinct pixel values -- and that question is wrong independent of any flake:
 //
 //   * a HALF-DRAWN menu satisfies it;
 //   * root pixels BLEEDING THROUGH an unfilled window satisfy it;
 //   * a menu painted in ENTIRELY THE WRONG COLOUR satisfies it.
 //
-// It is a non-specific NEGATIVE standing where a positive criterion belongs,
-// and note what it never once looks at: `expectedPixel`. A predicate for "has
+// It was a non-specific NEGATIVE standing where a positive criterion belongs,
+// and note what it never once looked at: `expectedPixel`. A predicate for "has
 // the menu been painted in the configured colour" that does not read the
-// configured colour cannot answer that question at any rate of success.
+// configured colour cannot answer that question at any rate of success. The
+// three RED cases in tests/test_menupaint.cpp are three different wrong answers
+// it gave, each reproduced without a display.
 //
-// So this task keeps it. The rule has exactly TWO answers, and everything that
-// is not "two or more distinct values" collapses into a single bucket: an
-// unmapped window with no pixels at all and a server-filled background with its
-// rows not yet drawn come back identical. The richer vocabulary above is
-// declared but three of its five names are unreachable from here, which is not
-// an oversight -- it is the measurement of how much the old rule could not say.
+// THE RULE NOW: the expected value must DOMINATE, by a stated margin. That is a
+// positive criterion -- it says what the rectangle must be, not merely what it
+// must not be -- and every intermediate state on the way there has its own
+// name, so a caller reporting a failure can say which one it saw.
+
+
+// The share of the sample the expected value must hold before the rectangle is
+// called painted.
 //
-// Task 3 replaces the body with a positive criterion. Task 2's cases fail
-// against THIS body first, so that the replacement is falsifiable.
+// Chosen on this measurement's own terms. A drawn menu is a solid field of the
+// background colour with rows of text over it, a one-pixel border, and at most
+// one highlight band: glyph ink is sparse, so the background keeps the large
+// majority of the rectangle -- high, but nowhere near unity. A bleed-through
+// sample is the opposite shape, the expected value holding a small minority
+// while root still owns the rest. 0.55 sits in the wide gap between those two,
+// comfortably below the fraction a real menu leaves uncovered and far above
+// anything a partially filled window produces.
+//
+// It has NOTHING to do with the 8000 ms harness deadline and is not derived
+// from it; that constant is a duration and this one is a proportion.
+//
+// It is a compile-time constant and is deliberately NOT settable from the
+// environment. A completion criterion a test run can relax is not a criterion.
+constexpr double kDominanceFloor = 0.55;
+
+
 inline PaintVerdict classify(const PixelHistogram& h, unsigned long expectedPixel)
 {
-    (void)expectedPixel;  // never consulted -- see above
+    if (h.empty()) return PaintVerdict::NoPixels;
 
-    if (h.size() >= 2) return PaintVerdict::Painted;
-    return PaintVerdict::NoPixels;
-}
+    long total = 0;
+    unsigned long dominant = 0;
+    long dominantCount = -1;
+    for (const auto& kv : h) {
+        total += kv.second;
+        if (kv.second > dominantCount) {
+            dominantCount = kv.second;
+            dominant = kv.first;
+        }
+    }
+    if (total <= 0) return PaintVerdict::NoPixels;
 
+    // One flat sheet and nothing else. If it is the expected colour this is the
+    // server-filled, rows-not-yet-drawn state -- REAL and legitimate, because
+    // WindowManager sets the popup's background pixel (src/Manager.cpp:699) so
+    // the server fills the window on map, while paintOuter() draws the rows
+    // later and only from the Expose arm. Naming it is what lets a failure say
+    // "the window manager mapped and the server filled, but no rows were ever
+    // drawn" instead of "the menu did not appear".
+    if (h.size() == 1) {
+        return dominant == expectedPixel ? PaintVerdict::BackgroundOnly
+                                         : PaintVerdict::WrongFill;
+    }
 
-// The question openRootMenu()'s third stage actually asks. Kept separate from
-// classify() so the stage can wait on completeness while a failure report names
-// the verdict it last saw.
-inline bool paintComplete(const PixelHistogram& h, unsigned long expectedPixel)
-{
-    return classify(h, expectedPixel) == PaintVerdict::Painted;
+    const double share = static_cast<double>(dominantCount) /
+                         static_cast<double>(total);
+
+    // Nothing holds a decisive share: the rectangle has content but is not any
+    // one thing yet. A sample caught mid-fill lands here.
+    if (share < kDominanceFloor) return PaintVerdict::Mixed;
+
+    if (dominant != expectedPixel) return PaintVerdict::WrongFill;
+
+    return PaintVerdict::Painted;
 }
