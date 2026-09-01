@@ -1,0 +1,158 @@
+Internal ctest changing into directory: /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/build/debug
+Test project /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/build/debug
+      Start 323: start_xvfb
+ 1/15 Test #323: start_xvfb .........................................................................................................................................   Passed    0.01 sec
+      Start  24: timestamp-leaves-foreign-property-alone: a notification that is not the sentinel must be left in the queue for the ordinary dispatcher
+ 2/15 Test  #24: timestamp-leaves-foreign-property-alone: a notification that is not the sentinel must be left in the queue for the ordinary dispatcher .............***Failed    0.00 sec
+Filters: "timestamp-leaves-foreign-property-alone: a notification that is not the sentinel must be left in the queue for the ordinary dispatcher"
+Randomness seeded to: 4145957401
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_eventloop is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+timestamp-leaves-foreign-property-alone: a notification that is not the
+sentinel must be left in the queue for the ordinary dispatcher
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_eventloop.cpp:429
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_eventloop.cpp:511: FAILED:
+  REQUIRE( r.matched == false )
+with expansion:
+  true == false
+with message:
+  queued before the wait: 2; wait matched: 1; PropertyDelete survived: 0;
+  foreign notification survived: 1
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 3 | 2 passed | 1 failed
+
+
+      Start  25: timestamp-rejects-synthetic: a forged notification must not supply the timestamp
+ 3/15 Test  #25: timestamp-rejects-synthetic: a forged notification must not supply the timestamp ...................................................................***Failed    0.00 sec
+Filters: "timestamp-rejects-synthetic: a forged notification must not supply the timestamp"
+Randomness seeded to: 3807503921
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_eventloop is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+timestamp-rejects-synthetic: a forged notification must not supply the
+timestamp
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_eventloop.cpp:517
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_eventloop.cpp:568: FAILED:
+  REQUIRE_FALSE( tookForgedTime )
+with expansion:
+  !true
+with message:
+  wait matched: 1; send_event set on the collected event: 1; forged time
+  accepted: 1
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 3 | 2 passed | 1 failed
+
+
+      Start  26: timestamp-is-bounded: the wait must return within its deadline when the sentinel can never arrive
+ 4/15 Test  #26: timestamp-is-bounded: the wait must return within its deadline when the sentinel can never arrive ..................................................***Failed    3.04 sec
+Filters: "timestamp-is-bounded: the wait must return within its deadline when the sentinel can never arrive"
+Randomness seeded to: 1083280722
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_eventloop is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+timestamp-is-bounded: the wait must return within its deadline when the
+sentinel can never arrive
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_eventloop.cpp:572
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_eventloop.cpp:679: FAILED:
+  REQUIRE_FALSE( killed )
+with expansion:
+  !true
+with message:
+  child observed for 3000 ms; killed: 1; exited cleanly: 0; exit status: -1
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 3 | 2 passed | 1 failed
+
+
+      Start  27: FdGuard move transfers ownership
+ 5/15 Test  #27: FdGuard move transfers ownership ...................................................................................................................   Passed    0.00 sec
+      Start  28: FdGuard closes fd on destruction
+ 6/15 Test  #28: FdGuard closes fd on destruction ...................................................................................................................   Passed    0.00 sec
+      Start  29: FdGuard move assignment transfers ownership
+ 7/15 Test  #29: FdGuard move assignment transfers ownership ........................................................................................................   Passed    0.00 sec
+      Start  30: pump-reports-what-is-available: the pump must not report zero while an event is already in hand
+ 8/15 Test  #30: pump-reports-what-is-available: the pump must not report zero while an event is already in hand ....................................................   Passed    0.01 sec
+      Start  31: exit-flag-stops-the-loop: the decision must be to stop when the exit flag is set
+ 9/15 Test  #31: exit-flag-stops-the-loop: the decision must be to stop when the exit flag is set ...................................................................   Passed    0.00 sec
+      Start  32: Self-pipe can be created and used
+10/15 Test  #32: Self-pipe can be created and used ..................................................................................................................   Passed    0.00 sec
+      Start  33: timestamp-survives-poisoned-property: the sentinel request must not raise a protocol error against a root property a foreign client has replaced
+11/15 Test  #33: timestamp-survives-poisoned-property: the sentinel request must not raise a protocol error against a root property a foreign client has replaced ...***Failed    0.00 sec
+Filters: "timestamp-survives-poisoned-property: the sentinel request must not raise a protocol error against a root property a foreign client has replaced"
+Randomness seeded to: 23846663
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_eventloop is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+timestamp-survives-poisoned-property: the sentinel request must not raise a
+protocol error against a root property a foreign client has replaced
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_eventloop.cpp:376
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_eventloop.cpp:425: FAILED:
+  REQUIRE( errors == 0 )
+with expansion:
+  1 == 0
+with message:
+  protocol errors from the sentinel request: 1; last error code: 8 (BadMatch is
+  8)
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 3 | 2 passed | 1 failed
+
+
+      Start  34: pump-reports-zero-when-idle: a quiescent connection reports nothing pending
+12/15 Test  #34: pump-reports-zero-when-idle: a quiescent connection reports nothing pending ........................................................................   Passed    0.00 sec
+      Start  35: readable-is-not-deliverable: a readable descriptor carrying a protocol error must not mean deliver-an-event
+13/15 Test  #35: readable-is-not-deliverable: a readable descriptor carrying a protocol error must not mean deliver-an-event ........................................   Passed    0.01 sec
+      Start  36: FdGuard default constructed has fd -1
+14/15 Test  #36: FdGuard default constructed has fd -1 ..............................................................................................................   Passed    0.00 sec
+      Start 324: stop_xvfb
+15/15 Test #324: stop_xvfb ..........................................................................................................................................   Passed    0.00 sec
+
+73% tests passed, 4 tests failed out of 15
+
+Label Time Summary:
+eventloop    =   3.09 sec*proc (13 tests)
+pipe         =   0.00 sec*proc (1 test)
+pump         =   0.02 sec*proc (4 tests)
+raii         =   0.02 sec*proc (4 tests)
+timestamp    =   3.05 sec*proc (4 tests)
+
+Total Test time (real) =   3.11 sec
+
+The following tests FAILED:
+	 24 - timestamp-leaves-foreign-property-alone: a notification that is not the sentinel must be left in the queue for the ordinary dispatcher (Failed)
+	 25 - timestamp-rejects-synthetic: a forged notification must not supply the timestamp (Failed)
+	 26 - timestamp-is-bounded: the wait must return within its deadline when the sentinel can never arrive (Failed)
+	 33 - timestamp-survives-poisoned-property: the sentinel request must not raise a protocol error against a root property a foreign client has replaced (Failed)
+Errors while running CTest
+EXIT=8
