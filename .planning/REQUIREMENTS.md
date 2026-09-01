@@ -94,7 +94,7 @@
 - [x] **TEST-05**: Process-level integration tests launch the compiled `wm2-born-again` binary under Xvfb/Xephyr, drive real X11 clients, and verify root/client ICCCM + EWMH properties after create, map, unmap, remap, hide/unhide, fullscreen, maximize, and destroy
 - [x] **TEST-06**: Release signoff requires Debug, Release, and ASan/UBSan builds plus full `ctest --output-on-failure`; sanitizer findings block completion
 - [x] **TEST-07**: Environment preflight verifies pkg-config dependencies (`x11`, `xext`, `xft`, `fontconfig`), X11 tools, Xvfb/Xephyr availability, and fontconfig fallback resolution before behavioral claims are accepted
-- [ ] **TEST-08**: Runtime smoke evidence is captured for nested/headless X11 and supported remote desktop targets, including `xprop -root`, `xwininfo -root -tree`, interaction checklist results, and accepted deviations. **MET, with a declared gap in the interaction table.** Both components Phase 8 left short are closed: four of four remote targets now have transcripts (XDIS-05), and the interaction checklist exists as a per-item table with tester name and date at `08.5-v1.0-closeout/evidence/INTERACTION-CHECKLIST.md`. It distinguishes three outcomes rather than collapsing them — 9 rows walked step by step, 7 covered by the operator's general verdict, 11 **deferred by explicit operator decision**, 4 n/a with reasons. The eleven deferred rows are the honest gap and they cluster: nine are gestures with no automated coverage either, which is the same blind spot that produced all three defects the Phase 8 manual pass found. Carried as the v1.1 backlog line "Gesture and input coverage", for which this table is the evidence. The bundle also gained `STRESS-RESULTS.md` (400 windows churned, RSS flat after warm-up, LSan clean) and per-target `SCOPE.md` files stating what each transcript does not establish.
+- [x] **TEST-08**: Runtime smoke evidence is captured for nested/headless X11 and supported remote desktop targets, including `xprop -root`, `xwininfo -root -tree`, interaction checklist results, and accepted deviations. **MET, with a declared gap in the interaction table.** Both components Phase 8 left short are closed: four of four remote targets now have transcripts (XDIS-05), and the interaction checklist exists as a per-item table with tester name and date at `08.5-v1.0-closeout/evidence/INTERACTION-CHECKLIST.md`. It distinguishes three outcomes rather than collapsing them — 9 rows walked step by step, 7 covered by the operator's general verdict, 11 **deferred by explicit operator decision**, 4 n/a with reasons. The eleven deferred rows are the honest gap and they cluster: nine are gestures with no automated coverage either, which is the same blind spot that produced all three defects the Phase 8 manual pass found. Carried as the v1.1 backlog line "Gesture and input coverage", for which this table is the evidence. The bundle also gained `STRESS-RESULTS.md` (400 windows churned, RSS flat after warm-up, LSan clean) and per-target `SCOPE.md` files stating what each transcript does not establish.
 
 ## v2 Requirements
 
@@ -194,7 +194,7 @@
 | TEST-05 | Phase 8 | Complete |
 | TEST-06 | Phase 8 | Complete |
 | TEST-07 | Phase 8 | Complete |
-| TEST-08 | Phase 8.5 | Gaps Found |
+| TEST-08 | Phase 8.5 | Complete |
 
 **Coverage:**
 

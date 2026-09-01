@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 08.5
 current_phase_name: v1.0 Closeout
 status: executing
-stopped_at: 08.5-10 HALTED at Task 3 -- blocking-human operator ruling NOT taken; measurement complete, proposed outcome ATTRIBUTED
-last_updated: "2026-08-31T16:09:26.539Z"
+stopped_at: "Completed 08.5-13-PLAN.md -- discriminator ran 30/30 pass, bucket: all thirty passed"
+last_updated: "2026-09-01T07:39:45.305Z"
 last_activity: 2026-08-31
 last_activity_desc: Phase 08.5 execution started
-state_head: d226380911fe5599093ac5571251d38bdab2ca2c
+state_head: 5a418206824065ab01d647835a34c71e78cb1ecd
 progress:
   total_phases: 10
   completed_phases: 4
-  total_plans: 46
-  completed_plans: 43
+  total_plans: 49
+  completed_plans: 44
 milestone_name: milestone
 ---
 
@@ -33,7 +33,7 @@ Phase: 08.5 (v1.0 Closeout) — EXECUTING
   08.5-05 remain HELD under the `RE-PLAN` disposition — see the DO NOT START block
   below. Prior headline, still the verdict of record: 08.5-09 COMPLETE, VERDICT
   REFUTED, CHAIN GOES RE-PLAN.
-Plan: 1 of 10
+Plan: 2 of 10
   capture is HELD, not passed.
 **DO NOT START 08.5-07, 08.5-08 OR 08.5-05.** The operator's disposition is
   `RE-PLAN`, not `START AS WRITTEN`. Those three plans stay written and stay held;
@@ -41,7 +41,7 @@ Plan: 1 of 10
   this round's measurement refuted and which the precommitted terminal rule
   forbids. **The next action is RE-PLANNING the attribution around the actual
   failing path** — an add-only round, as 08.5-09 was.
-Status: Executing Phase 08.5
+Status: Ready to execute
   ruled at the Task 3 `checkpoint:decision` (`gate="blocking-human"`).
   **Verdict of record: `REFUTED`. `08.5-07` disposition: `RE-PLAN`. No
   sub-decision** (a sub-decision is carried only by an `inconclusive` ruling).
@@ -280,6 +280,7 @@ Progress: [████████░░] 81% (7/9 phases complete)
 | Phase 08.5 P06 | 1h 0m | 3 tasks | 18 files |
 | Phase 08.5 P09 | 1h 17m | 3 tasks | 51 files |
 | Phase 08.5 P10 | 1h 15m | 2 tasks | 291 files |
+| Phase 08.5-v1.0-closeout P13 | 65min | 4 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -382,6 +383,8 @@ Recent decisions affecting current work:
 - [Phase 08.5]: 08.5-10: the post-readiness reparent wedge is ATTRIBUTED BY INTERVENTION (proposed, not yet ruled) -- at a trip, one no-op root property change woke 65 of 65 stalled clients within 20-45 ms, while 0 of 64 paired do-nothing controls framed at all inside the 750 ms window and all 64 then missed the 8000 ms deadline. Exact one-sided p = 1/C(129,65) ~ 2.1e-38 over all trips, 1/C(40,20) ~ 7.3e-12 over the 40 bundled trips whose interventions are individually confirmed issued. Both arms took the identical debugger capture BEFORE diverging, so the ptrace attach is common rather than confounded. — The named failing path: the WM holds an undelivered map request that neither readiness check can see -- the Xlib queue-length read at src/Events.cpp:195 and the connection poll() at src/Events.cpp:205 -- and one no-op event on the connection releases it. XPending/XEventsQueued appear NOWHERE in src/ or include/, and libX11.so.6 links libxcb.so.1, so the transport holds a queue neither check counts. An intervention names a PATH and never a rate.
 - [Phase 08.5]: 08.5-10: prediction P2, registered BEFORE the run, held exactly -- the X_ReparentWindow BadWindow cascade rises by exactly one after each control trip and zero after each intervention (0,0,1,1,2,2,...,14,14 across trip-r-11..40 in one WM process). Round 3 recorded that cascade and refused to attribute it because it was 3 of 5 and not universal; predicting it in advance and observing it track the arm is what turns it from a story that fits into evidence. P3 (recvq=0 everywhere) and P4 (poll timeout -1 everywhere) also held. Corroboration only -- the outcome turns on the arm comparison alone.
 - [Phase 08.5]: 08.5-10: the arm floor is FOUR per arm, the derived minimum at which the pre-registered exact test can reach p<0.05 (1/C(8,4)=0.0143 clears; 1/C(6,3)=0.050 fails). An earlier draft set it at six on a false claim that six was that minimum -- a floor of six would have routed a clearing 5-vs-5 table (p~0.004) to NOT-ATTRIBUTED and ended the attribution effort under a terminal rule on a reading that had already answered the question. Recorded as a correction, not silently changed.
+- [Phase 08.5]: 08.5-13: the menu flake is attributed to findOpenMenu()'s silent first-viewable-child fallback, which satisfied its own pollUntil on the first iteration and spent none of the 20s budget; the fallback is deleted and no timing constant changed
+- [Phase 08.5]: 08.5-13: menu paint completion is now a POSITIVE criterion (dominant == expected AND share >= 0.55 named constant, not settable from the environment), replacing the distinct-value count that accepted bleed-through, wrong colour and half-painted rectangles
 
 ### Pending Todos
 
@@ -428,6 +431,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-31T16:08:50.937Z
-Stopped at: 08.5-10 HALTED at Task 3 -- blocking-human operator ruling NOT taken; measurement complete, proposed outcome ATTRIBUTED
+Last session: 2026-09-01T07:39:44.787Z
+Stopped at: Completed 08.5-13-PLAN.md -- discriminator ran 30/30 pass, bucket: all thirty passed
 Resume file: None

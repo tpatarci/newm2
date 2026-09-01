@@ -295,9 +295,13 @@ Plans:
   6. Both Phase 8 deviations are retired on evidence or restated with a reason that is true — neither survives as written
   7. The four hard blockers are re-run at the final commit, not inherited from Phase 8's snapshot
 
-**Plans**: 7/10 plans executed — 6 executed, 2 original and 8 gap-closure across four rounds. 08.5-04 stays **halted**. 08.5-09 (round 3, the targeted reproducer) is **COMPLETE and returned the verdict `REFUTED` with the `08.5-07` disposition `RE-PLAN`** (operator ruling, 2026-08-31). **08.5-07, 08.5-08 and 08.5-05 are NOT to be started** — they stay written and stay held. 08.5-10 (round 4) is **EXECUTED THROUGH TASK 2 and HALTED AT TASK 3**: its controlled two-arm intervention separated perfectly (65/65 woken against 0/64 controls, `p ≈ 2.1e-38`) and its record carries a **proposed** outcome of `ATTRIBUTED` — but the `blocking-human` operator ruling has **not** been taken, so no `**Attribution outcome:**` line and no `**Terminal disposition:**` line exist yet and the held chain has not moved. It **carries a precommitted terminal rule with no branch that schedules another attribution round** — either the failing path is named and a fix plan follows, or the attribution effort ends at one of three recorded terminal dispositions the operator chooses. v1.0 is unblocked by that ruling in either direction rather than staying blocked indefinitely
+**Plans**: 8/13 plans executed — 6 executed, 2 original and 8 gap-closure across four rounds. 08.5-04 stays **halted**. 08.5-09 (round 3, the targeted reproducer) is **COMPLETE and returned the verdict `REFUTED` with the `08.5-07` disposition `RE-PLAN`** (operator ruling, 2026-08-31). **08.5-07, 08.5-08 and 08.5-05 are NOT to be started** — they stay written and stay held. 08.5-10 (round 4) is **EXECUTED THROUGH TASK 2 and HALTED AT TASK 3**: its controlled two-arm intervention separated perfectly (65/65 woken against 0/64 controls, `p ≈ 2.1e-38`) and its record carries a **proposed** outcome of `ATTRIBUTED` — but the `blocking-human` operator ruling has **not** been taken, so no `**Attribution outcome:**` line and no `**Terminal disposition:**` line exist yet and the held chain has not moved. It **carries a precommitted terminal rule with no branch that schedules another attribution round** — either the failing path is named and a fix plan follows, or the attribution effort ends at one of three recorded terminal dispositions the operator chooses. v1.0 is unblocked by that ruling in either direction rather than staying blocked indefinitely
 
 Plans:
+
+- [ ] 08.5-11-PLAN.md
+- [ ] 08.5-12-PLAN.md
+- [x] 08.5-13-PLAN.md
 
 **Wave 1**
 
@@ -384,5 +388,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 
 | 6. EWMH Compliance | 0/3 | Planned | - |
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
 | 8. Xrandr + VNC + Focus/Rules | 14/14 | Verified with gaps | 2026-08-30 |
-| 8.5 v1.0 Closeout *(INSERTED)* | 7/10 | In Progress|  |
+| 8.5 v1.0 Closeout *(INSERTED)* | 8/13 | In Progress|  |
 | 9. Config GUI + IPC | 0/3 | Not started | - |
