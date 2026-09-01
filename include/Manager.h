@@ -234,6 +234,13 @@ private:
     unsigned long m_timestampForeignMatches;
     long m_timestampLongestWaitMs;
 
+    // 08.5-12: expiry of the bounded property wait, recorded SEPARATELY from
+    // having merely entered a wait. Added beside the four above and never in
+    // place of any of them -- their names and stderr spellings are read by two
+    // committed measurement records. Declared last so the constructor's
+    // initialiser list keeps declaration order and -Wreorder stays quiet.
+    unsigned long m_timestampWaitTimeouts;
+
     bool m_looping;
     int m_returnCode;
 

@@ -82,6 +82,7 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     , m_timestampBlockedWaits(0)
     , m_timestampForeignMatches(0)
     , m_timestampLongestWaitMs(0)
+    , m_timestampWaitTimeouts(0)
     , m_looping(false)
     , m_returnCode(0)
     , m_menuWindow(None)
@@ -922,20 +923,24 @@ Time WindowManager::timestamp(bool reset)
     if (m_currentTime == CurrentTime) {
         XEvent event;
 
-        // 08.5-12 Task 1: the sentinel request, the predicate and the wait now
-        // live in include/TimestampWait.h, where a test binary can reach them.
-        // The extraction is BEHAVIOUR-PRESERVING and ALL THREE DEFECTS came
-        // with it: the request is still the zero-length append that yields
-        // BadMatch against a root property a foreign client has replaced, the
-        // predicate still accepts any property notification whatsoever, and
-        // the wait still ignores the deadline it is handed. Each defect is
-        // named at its own site in that header. Nothing here is fixed.
+        // 08.5-12: the sentinel request, the predicate and the wait live in
+        // include/TimestampWait.h, where a test binary can reach them and where
+        // all three are now fixed -- the request cannot mismatch, the predicate
+        // tests four fields, and the wait is bounded. Each fix is justified at
+        // its own site in that header.
+        //
+        // This request is the one the constructor makes at :288, TWO LINES
+        // before m_initialising is cleared at :290. That ordering is why the
+        // request had to be made survivable rather than merely bounded: while
+        // that flag is set, errorHandler() calls std::exit(1) for any error at
+        // all (:416-419), so a BadMatch here did not make the window manager
+        // slow, it stopped it starting.
         timestampSentinelRequest(display(), m_root, Atoms::wm2_running);
 
-        // 08.5-06 attribution instrumentation. BEHAVIOUR-PRESERVING, and
-        // deliberately so: no deadline, no predicate narrowing, no fallback.
-        // Those are the fix; installing any of them here would make the
-        // measurement this instrumentation exists to take unattributable.
+        // 08.5-06 attribution instrumentation. The counter names and the stderr
+        // spellings below are UNCHANGED -- two committed measurement records
+        // read those tokens and must stay comparable -- and the timeout record
+        // added further down is a new line beside them, not an edit to them.
         //
         // SECURITY (threat T-8-TRACE-01): every line printed below is a fixed
         // ASCII state word plus an integer. No window id, atom name, window
@@ -975,23 +980,39 @@ Time WindowManager::timestamp(bool reset)
             }
         }
 
-        // Classification, on both paths. PropertyChangeMask is selected on the
-        // root (initialiseScreen) AND on every managed client (Client.cpp),
-        // so the wait can be satisfied by a client's own PropertyNotify --
-        // which is then consumed here and never reaches eventProperty(). That
-        // the possibility exists is a fact about the event masks; whether it
-        // actually happens is what this counter answers.
+        // 08.5-12: the deadline expired without the sentinel arriving. A
+        // DEFINED OUTCOME, not an error -- report CurrentTime and leave the
+        // cache COLD, so the very next call retries instead of caching a value
+        // that was never a server timestamp. Returning here is what makes the
+        // bound safe: nothing downstream is handed a fabricated time.
         //
-        // 08.5-12 Task 1: the extracted predicate is asked FIRST and the two
-        // field comparisons are RETAINED beside it. At this commit the
-        // predicate is deliberately over-broad -- it answers true for any
-        // property notification -- so the retained comparisons are what keep
-        // this counter measuring exactly what it measured before the
-        // extraction. Dropping them here would have silenced the counter and
-        // made this a behaviour change rather than a refactor.
-        if (!(timestampIsSentinel(event, m_root, Atoms::wm2_running) &&
-              event.xproperty.window == m_root &&
-              event.xproperty.atom == Atoms::wm2_running)) {
+        // Recorded on its own line, distinctly from merely having entered a
+        // wait, and ADDED BESIDE the existing instrumentation rather than
+        // folded into it: the loop() summary at src/Events.cpp:174 is read
+        // token-by-token by two committed measurement records and its spelling
+        // is not this plan's to change.
+        if (!wait.matched) {
+            ++m_timestampWaitTimeouts;
+            if (m_timestampWaitTimeouts == 1) {
+                std::fprintf(stderr,
+                             "wm2: warning: timestamp: property wait timed out\n");
+                std::fflush(stderr);
+            }
+            return CurrentTime;
+        }
+
+        // Classification, retained. It answered whether the wait had been
+        // satisfied by some other client's PropertyNotify -- a real hazard
+        // while the selector matched on event type alone.
+        //
+        // 08.5-12 has made it unreachable BY CONSTRUCTION rather than by
+        // deletion: the wait now returns only events the four-field predicate
+        // accepts, so a foreign match is no longer possible. The counter and
+        // its stderr spelling stay exactly as they are, still read by the two
+        // committed measurement records, and a run that prints foreign=0 now
+        // says so because the defect is gone rather than because it did not
+        // happen to fire.
+        if (!timestampIsSentinel(event, m_root, Atoms::wm2_running)) {
             ++m_timestampForeignMatches;
             if (m_timestampForeignMatches == 1) {
                 std::fprintf(stderr,
