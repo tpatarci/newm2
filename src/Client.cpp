@@ -577,6 +577,18 @@ void Client::setMaximized(bool vert, bool horz)
         m_preMaximizedH = m_h;
     }
 
+    // The PRE-UPDATE flags, captured before the assignment below overwrites
+    // them. The per-axis restore further down asks "was this axis maximized
+    // before this call?", and after the assignment that question can no longer
+    // be asked of the members: m_isMaximizedHorz has become newHorz, so
+    // `newHorz ? maxW : (m_isMaximizedHorz ? m_preMaximizedW : m_w)` can only
+    // ever reach m_preMaximizedW when newHorz is BOTH false and true. The
+    // m_preMaximized* arms were dead code, and dropping one axis of a
+    // both-axes maximize restored that axis to its MAXIMIZED size instead of
+    // the size it had before maximizing.
+    const bool wasVert = m_isMaximizedVert;
+    const bool wasHorz = m_isMaximizedHorz;
+
     m_isMaximizedVert = newVert;
     m_isMaximizedHorz = newHorz;
 
@@ -652,10 +664,12 @@ void Client::setMaximized(bool vert, bool horz)
             if (maxW < 1) maxW = 1;
             if (maxH < 1) maxH = 1;
 
-            int newX = newHorz ? maxX : (m_isMaximizedHorz ? m_preMaximizedX : m_x);
-            int newY = newVert ? maxY : (m_isMaximizedVert ? m_preMaximizedY : m_y);
-            int newW = newHorz ? maxW : (m_isMaximizedHorz ? m_preMaximizedW : m_w);
-            int newH = newVert ? maxH : (m_isMaximizedVert ? m_preMaximizedH : m_h);
+            // wasHorz/wasVert, not the members: the members were overwritten
+            // above, which made these restore arms unreachable.
+            int newX = newHorz ? maxX : (wasHorz ? m_preMaximizedX : m_x);
+            int newY = newVert ? maxY : (wasVert ? m_preMaximizedY : m_y);
+            int newW = newHorz ? maxW : (wasHorz ? m_preMaximizedW : m_w);
+            int newH = newVert ? maxH : (wasVert ? m_preMaximizedH : m_h);
 
             m_border->configure(newX, newY, newW, newH, CWX | CWY | CWWidth | CWHeight, Above);
             // At (0, 0) the client is drawn UNDERNEATH the sideways tab and the

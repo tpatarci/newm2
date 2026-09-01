@@ -1931,7 +1931,21 @@ TEST_CASE("Negative and out-of-range struts never invert or empty the workarea",
         // And the simple form declared under the wrong TYPE, so the fallback
         // branch gets its own malformed input rather than inheriting a clean
         // one from the partial branch's rejection.
-        writeProp(d, bad, "_NET_WM_STRUT", XA_ATOM, 32, bytes, 4);
+        //
+        // The BUFFER is separate from the format-8 one above, and it is an
+        // array of long rather than of unsigned char, because the two calls
+        // disagree about what one element is. Xlib's format argument describes
+        // the wire encoding, not the caller's storage: for format 32 it reads
+        // nItems * sizeof(long) bytes from this pointer -- 32 bytes here on a
+        // 64-bit host, not 4 * 4. Passing the 12-byte array above therefore
+        // overran it by twenty bytes on every run of this case.
+        //
+        // Only the buffer changed. The TYPE stays deliberately wrong -- XA_ATOM
+        // on a property the spec defines as XA_CARDINAL -- because that wrong
+        // type IS the malformed input this branch exists to feed the fallback
+        // reader.
+        const long strutWrongType[4] = {-1L, -1L, -1L, -1L};
+        writeProp(d, bad, "_NET_WM_STRUT", XA_ATOM, 32, strutWrongType, 4);
 
         XMapWindow(d, bad);
         XSync(d, False);

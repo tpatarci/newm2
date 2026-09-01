@@ -322,6 +322,17 @@ std::optional<AppEntry> parseFile(const std::string& path) {
 std::vector<AppEntry> scanAll() {
     std::vector<AppEntry> result;
 
+    // The desktop file IDs already provided by an EARLIER directory.
+    //
+    // xdgApplicationsDirs() returns the search path in precedence order, and
+    // the Desktop Entry Spec says the first directory to provide a given ID
+    // wins outright -- that is the whole mechanism by which a user's
+    // ~/.local/share/applications/firefox.desktop overrides the system copy in
+    // /usr/share/applications. Without this set both were parsed and both were
+    // pushed, so the override did not override anything: it merely added a
+    // second Firefox to the menu.
+    std::vector<std::string> seenIds;
+
     for (const auto& dir : xdgApplicationsDirs()) {
         DIR* d = opendir(dir.c_str());
         if (!d) continue;  // Missing directory is not an error.
@@ -334,6 +345,19 @@ std::vector<AppEntry> scanAll() {
                 name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) {
                 continue;
             }
+
+            // Claimed by the first directory that HAS the ID, not by the first
+            // that parses it successfully. The distinction matters: a
+            // higher-priority entry carrying Hidden=true is the spec's way of
+            // deleting an application from the menu, and parseFile() correctly
+            // returns nothing for it. Recording the ID only on success would
+            // let the system copy resurface underneath the very entry written
+            // to suppress it.
+            if (std::find(seenIds.begin(), seenIds.end(), name) != seenIds.end()) {
+                continue;
+            }
+            seenIds.push_back(name);
+
             auto parsed = parseFile(dir + "/" + name);
             if (parsed.has_value()) {
                 result.push_back(parsed.value());
