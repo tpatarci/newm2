@@ -1,0 +1,116 @@
+RED before the fix -- 08.5-13 Task 2
+round base : e835737b2251ec2d7c145d74a153b5181da5f144
+task 1 tip : 99f6f72b1cdd0d788a4b263efe3fa5ed0bbc6bca
+host       : Linux 6.8.0-124-generic x86_64 / tomislav-HP-Z440-Workstation
+captured   : 2026-09-01T07:03:29Z
+command    : ctest --test-dir build/debug -L '^menupaint$' --output-on-failure --no-tests=error --timeout 60
+----------------------------------------------------------------------
+Internal ctest changing into directory: /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3e6f4a5ee7e27928/build/debug
+Test project /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3e6f4a5ee7e27928/build/debug
+    Start 39: verdict-target-vocabulary is reachable without a display
+1/5 Test #39: verdict-target-vocabulary is reachable without a display ...   Passed    0.00 sec
+    Start 40: verdict-rejects-bleed-through
+2/5 Test #40: verdict-rejects-bleed-through ..............................***Failed    0.00 sec
+Filters: "verdict-rejects-bleed-through"
+Randomness seeded to: 2055814592
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_menupaint is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+verdict-rejects-bleed-through
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3e6f4a5ee7e27928/tests/test_menupaint.cpp:55
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3e6f4a5ee7e27928/tests/test_menupaint.cpp:70: FAILED:
+  CHECK( classify(h, kConfigured) != PaintVerdict::Painted )
+with expansion:
+  4 != 4
+with message:
+  verdict was Painted
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 1 | 1 failed
+
+
+    Start 41: verdict-names-background-only
+3/5 Test #41: verdict-names-background-only ..............................***Failed    0.00 sec
+Filters: "verdict-names-background-only"
+Randomness seeded to: 865143388
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_menupaint is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+verdict-names-background-only
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3e6f4a5ee7e27928/tests/test_menupaint.cpp:90
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3e6f4a5ee7e27928/tests/test_menupaint.cpp:108: FAILED:
+  CHECK( v == PaintVerdict::BackgroundOnly )
+with expansion:
+  0 == 1
+with message:
+  verdict was NoPixels
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3e6f4a5ee7e27928/tests/test_menupaint.cpp:110: FAILED:
+  CHECK( v != PaintVerdict::NoPixels )
+with expansion:
+  0 != 0
+with message:
+  verdict was NoPixels
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 3 | 1 passed | 2 failed
+
+
+    Start 42: verdict-rejects-wrong-colour
+4/5 Test #42: verdict-rejects-wrong-colour ...............................***Failed    0.00 sec
+Filters: "verdict-rejects-wrong-colour"
+Randomness seeded to: 1998815152
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_menupaint is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+verdict-rejects-wrong-colour
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3e6f4a5ee7e27928/tests/test_menupaint.cpp:74
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3e6f4a5ee7e27928/tests/test_menupaint.cpp:86: FAILED:
+  CHECK( classify(h, kConfigured) != PaintVerdict::Painted )
+with expansion:
+  4 != 4
+with message:
+  verdict was Painted
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 1 | 1 failed
+
+
+    Start 43: foreign-expose-is-named
+5/5 Test #43: foreign-expose-is-named ....................................   Passed    0.00 sec
+
+40% tests passed, 3 tests failed out of 5
+
+Label Time Summary:
+menupaint    =   0.02 sec*proc (5 tests)
+
+Total Test time (real) =   0.04 sec
+
+The following tests FAILED:
+	 40 - verdict-rejects-bleed-through (Failed)
+	 41 - verdict-names-background-only (Failed)
+	 42 - verdict-rejects-wrong-colour (Failed)
+Errors while running CTest
+----------------------------------------------------------------------
+ctest exit status: 8
