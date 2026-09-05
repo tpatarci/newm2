@@ -1,8 +1,9 @@
 # Earlier capture attempts — NOT the gate bundle
 
-**This directory is not the criterion-7 gate bundle.** It records the two
-08.5-08 captures that ran before the one at the top level of `evidence/gates/`,
-each stopped by something its own logs surfaced. The plan says a red log stays
+**This directory is not the criterion-7 gate bundle.** It records the three
+08.5-08 captures that ran before the one at the top level of `evidence/gates/`:
+two stopped by something their own logs surfaced, one all-green bundle
+superseded when the branch reviews changed the source. The plan says a red log stays
 in the bundle under a distinguishable name and a finding is fixed rather than
 retried away; this is where those logs and the fixes they led to are kept.
 Nothing here is cited by a checklist row.
@@ -93,8 +94,8 @@ the final commit.
 ## Why the other files from each attempt are not kept
 
 A bundle is bound to one commit. The build-all, compiler, preflight, ldd,
-DOC-GUARDS, runtime-smoke and PROVENANCE files from `8e29d6d` and `2a94cbb`
-were produced by real runs, but keeping them beside the final capture would
-leave three bundles interleaved in one directory, which the plan's coexistence
-rule forbids. What each attempt found is kept; what it merely repeated is
+DOC-GUARDS, runtime-smoke and PROVENANCE files from `8e29d6d`, `2a94cbb` and
+`d08b6e5` were produced by real runs, but keeping them beside the final capture
+would leave four bundles interleaved in one directory, which the plan's
+coexistence rule forbids. What each attempt found is kept; what it merely repeated is
 superseded by the same commands run again at the fixed commit.

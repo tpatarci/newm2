@@ -132,3 +132,16 @@ Two P2 findings, both confirmed by reading, both fixed.
 | Frameless maximize kept the decorated frame's one-pixel outer-border allowance (`ww - xi - 1`), so a no-decorate window maximized one pixel short of the workarea on each axis | Yes | `edge = m_frameless ? 0 : 1` | New `[wm_rules]` case "A no-decorate window maximizes to the workarea exactly": `red-frameless-maximize-one-pixel-short.log` fails `1023 == 1024`; `green-frameless-maximize-one-pixel-short.log` passes 12 assertions |
 
 The source changed again after the gate bundle at `d08b6e5`, so the bundle is re-captured at the commit carrying these fixes and the CodeRabbit ones above; the test surface moves to 334 source cases / 336 registered and the checklist's test-surface row is recomputed at that commit.
+
+## CodeRabbit CLI over the delta since the first pass (`--base-commit 7f67bc6`), 2026-09-05
+
+Six findings, all documentation. Five fixed by wording; one declined with the computation.
+
+| Finding | Disposition |
+|---|---|
+| `evidence/README.md` called nine declined rows "gestures" | Reworded: the nine rows with no automated coverage are named by number (#4, #5, #7–#10, #20–#22); the two with partial coverage (#6, #19) named too |
+| `evidence/README.md` fix-measurement entry names two series | Updated with the third series once its ledger closed (see the fix-measurement commit) |
+| `capture-attempts/README.md` counted two attempts in its opening and closing | Now three, `d08b6e5` named in both |
+| `08.5-05-SUMMARY.md` "336 registered" | Reworded: 336 ctest tests = 333 registered Catch2 cases + 3 fixture tests |
+| `INTERACTION-CHECKLIST.md` preamble said no human had ever exercised the nine rows; row #8 was exercised in Phase 8's manual passes | Reworded to this session, with #8's Phase 8 exercise named |
+| **major** `COMPILED_CODE_BEHAVIOR_CHECKLIST.md` per-file table "missing 16 cases and one file" against its totals | **Declined.** Recomputed from the table text: 23 `test_*.cpp` rows summing to 334, equal to the stated 334 cases / 23 files (`grep -oE '\`test_[a-z_]+\.cpp\` \| [0-9]+'` over the table, summed). The plan's own per-file staleness loop also prints nothing. The table is a two-column layout, which is the likely misreading |

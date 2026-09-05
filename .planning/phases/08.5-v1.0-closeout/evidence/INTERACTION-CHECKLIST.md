@@ -22,8 +22,10 @@ the second produced a general verdict; this is the per-item form.
 The three values are kept apart on purpose. Collapsing "walked" into "verdict"
 is exactly the blurring that left TEST-08 short after Phase 8, and nine of the
 eleven DEFERRED rows — **#4, #5, #7, #8, #9, #10, #20, #21, #22** — are the
-ones where **no automated test exists either** — so for those, nothing has
-ever exercised them but a human, and no human has. The other two DEFERRED rows
+ones where **no automated test exists either** — so for those, nothing but a
+human can have exercised them, and no human did in this session (row #8's
+several-client circulation was exercised in the Phase 8 manual passes, which
+produced a general verdict rather than a per-item result). The other two DEFERRED rows
 carry some automated coverage in their own Notes even though the row itself
 was declined: **#6** (zero-client circulation is covered by `[wm_circulate]`)
 and **#19** (the resulting maximize state is covered by `[wm_fsmax]`, even

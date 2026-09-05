@@ -143,11 +143,13 @@ it finds none, by a flat RSS trend and LeakSanitizer's own verdict.
   screenshot taken; whether the RENDER-less core-X11 glyph path *looks*
   acceptable is unanswered by `tightvnc/`.
 - **The eleven declined interaction rows.** `INTERACTION-CHECKLIST.md` records
-  eleven rows the operator explicitly deferred, nine of them gestures
-  (circulation permutations, middle-click maximize, the circular fullscreen
-  gesture, grab release) plus the menu's exit and hidden-client rows — rows
-  with no automated coverage either. The v1.1 "Gesture and input coverage"
-  backlog line exists for exactly this.
+  eleven rows the operator explicitly deferred. Nine of them have no automated
+  coverage of any kind: the hidden-client menu row (#4), the menu exit row
+  (#5), four circulation permutations (#7–#10), the circular fullscreen gesture
+  and its noisy-input negative (#20, #21), and grab release as a property
+  (#22). The other two carry partial automated coverage (#6 zero-client
+  circulation, #19 the maximize state behind the middle-click). The v1.1
+  "Gesture and input coverage" backlog line exists for exactly this.
 - **Behaviour over measured latency.** No capture in this bundle measures
   latency; the closest evidence is the manual passes recorded outside this
   phase, over real XRDP and TigerVNC sessions.
