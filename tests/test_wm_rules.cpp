@@ -323,6 +323,121 @@ TEST_CASE("A window matching a no-decorate rule is managed without a frame", "[w
 }
 
 
+namespace {
+
+// Root _NET_ACTIVE_WINDOW, or None when unset.
+Window activeWindowOf(Display* d)
+{
+    const Atom prop = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+    Atom actualType = None; int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0; unsigned char* raw = nullptr;
+    Window out = None;
+    if (XGetWindowProperty(d, DefaultRootWindow(d), prop, 0, 1, False, XA_WINDOW,
+                           &actualType, &actualFormat, &nItems, &bytesAfter,
+                           &raw) == Success && raw) {
+        if (actualType == XA_WINDOW && actualFormat == 32 && nItems >= 1)
+            out = *reinterpret_cast<Window*>(raw);
+        XFree(raw);
+    }
+    return out;
+}
+
+// A pager-sourced _NET_ACTIVE_WINDOW request, which the WM grants
+// unconditionally (source 2 -- see src/Events.cpp, the arbitration comment).
+void requestActivation(Display* d, Window w)
+{
+    XEvent ev{};
+    ev.xclient.type         = ClientMessage;
+    ev.xclient.window       = w;
+    ev.xclient.message_type = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+    ev.xclient.format       = 32;
+    ev.xclient.data.l[0]    = 2;
+    ev.xclient.data.l[1]    = CurrentTime;
+    XSendEvent(d, DefaultRootWindow(d), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &ev);
+    XSync(d, False);
+}
+
+} // namespace
+
+// Issue #3 (github) / CodeRabbit + Codex P1: a rule-no-decorate window took the
+// dock/notification early return in manage(), which left m_managed false and
+// the border's parent at root, so activate() refused it with
+// "wm2: warning: bad parent in Client::activate". The feature promised a
+// managed window without decoration; this pins the "managed" half.
+TEST_CASE("A no-decorate window can take focus and is published as the active window",
+          "[wm_rules]")
+{
+    WmFixture fx(rulesFixture(
+        "rule-match-class=WmRulesNoDecorate\n"
+        "rule-no-decorate=true\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+    const Window root = DefaultRootWindow(d);
+
+    // A framed sibling first, so the no-decorate window is NOT the one focused
+    // on map and activation has to be requested for it explicitly.
+    Window other = createClient(d, 40, 40, 200, 150, "wmrulesother", "WmRulesOther");
+    REQUIRE(mapAndAwait(d, other));
+    Window win = createClient(d, 300, 300, 260, 200, "wmrulesnodecorate", "WmRulesNoDecorate");
+    REQUIRE(mapAndAwait(d, win));
+    REQUIRE(parentOf(d, win) == root);              // still frameless
+
+    requestActivation(d, win);
+    const bool active = WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return activeWindowOf(d) == win;
+    }, 8000);
+    const std::string err = fx.wmStderr();
+    INFO("wm stderr:\n" << err);
+    INFO("_NET_ACTIVE_WINDOW is " << activeWindowOf(d) << ", wanted " << win);
+    REQUIRE(active);
+    REQUIRE(err.find("bad parent") == std::string::npos);
+
+    // And back to the framed one, so the frameless client's deactivate() path
+    // -- which used to print the same warning -- runs too.
+    requestActivation(d, other);
+    REQUIRE(WmFixture::pollUntil([&] { pumpWm(d); return activeWindowOf(d) == other; }, 8000));
+    INFO("wm stderr:\n" << fx.wmStderr());
+    REQUIRE(fx.wmStderr().find("bad parent") == std::string::npos);
+}
+
+
+// Codex P2: an explicit rule-skip-taskbar=false resolved to Off, and Off was
+// not published, so states the client had set itself before mapping survived.
+TEST_CASE("An explicit skip-taskbar=false rule removes a client's own skip states",
+          "[wm_rules]")
+{
+    WmFixture fx(rulesFixture(
+        "rule-match-class=WmRulesUnskip\n"
+        "rule-skip-taskbar=false\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    Window win = createClient(d, 120, 120, 260, 200, "wmrulesunskip", "WmRulesUnskip");
+    // The client asks for both skip states BEFORE mapping, as a client that
+    // wants to hide from the panel does.
+    {
+        const Atom state = XInternAtom(d, "_NET_WM_STATE", False);
+        Atom vals[2] = { XInternAtom(d, "_NET_WM_STATE_SKIP_TASKBAR", False),
+                         XInternAtom(d, "_NET_WM_STATE_SKIP_PAGER", False) };
+        XChangeProperty(d, win, state, XA_ATOM, 32, PropModeReplace,
+                        reinterpret_cast<unsigned char*>(vals), 2);
+        XSync(d, False);
+    }
+    REQUIRE(mapAndAwait(d, win));
+    INFO("wm stderr:\n" << fx.wmStderr());
+
+    // The rule said no, explicitly. Neither state may survive the fold.
+    REQUIRE_FALSE(hasState(d, win, "_NET_WM_STATE_SKIP_TASKBAR"));
+    REQUIRE_FALSE(hasState(d, win, "_NET_WM_STATE_SKIP_PAGER"));
+}
+
+
 // ===========================================================================
 // Behaviour 2: position and size
 // ===========================================================================

@@ -321,6 +321,7 @@ void WindowManager::menu(XButtonEvent *e)
 
     int  openCat    = -1;        // index into m_appCategories, -1 = no submenu
     int  subX = 0, subY = 0, subW = 0, subH = 0, n2 = 0;
+    int  subFirst = 0, subRows = 0;   // first visible entry, visible row count
     int  subSel     = -1;
     bool subDrawn   = false;
     const std::vector<AppEntry>* subEntries = nullptr;
@@ -361,9 +362,11 @@ void WindowManager::menu(XButtonEvent *e)
 
     auto drawSubRowLabel = [&](int i) {
         if (!subEntries || i < 0 || i >= n2) return;
+        const int r = i - subFirst;                    // row on the popup
+        if (r < 0 || r >= subRows) return;             // scrolled out of view
         const char* label = (*subEntries)[i].name.c_str();
         const int len = static_cast<int>(std::strlen(label));
-        const int dy = i * entryHeight + m_menuFont->ascent + 10;
+        const int dy = r * entryHeight + m_menuFont->ascent + 10;
         XftDrawStringUtf8(m_submenuDraw.get(), m_menuFgColor.get(),
             m_menuFont, 8, dy, reinterpret_cast<const FcChar8*>(label), len);
     };
@@ -392,7 +395,8 @@ void WindowManager::menu(XButtonEvent *e)
     };
     auto paintSub = [&]() {
         if (openCat < 0) return;
-        paintPopup(m_submenuDraw.get(), subW, subH, n2, subSel, drawSubRowLabel);
+        paintPopup(m_submenuDraw.get(), subW, subH, subRows, subSel - subFirst,
+                   [&](int r) { drawSubRowLabel(r + subFirst); });
     };
 
     // Invariant 3: the model always moves; only the drawing is conditional on
@@ -419,14 +423,15 @@ void WindowManager::menu(XButtonEvent *e)
         const int prev = subSel;
         subSel = next;
         if (!subDrawn || openCat < 0) return;
-        if (prev >= 0 && prev < n2) {
+        const int pr = prev - subFirst, sr = subSel - subFirst;   // popup rows
+        if (pr >= 0 && pr < subRows) {
             XftDrawRect(m_submenuDraw.get(), m_menuBgColor.get(),
-                        4, prev * entryHeight + 9, subW - 8, entryHeight);
+                        4, pr * entryHeight + 9, subW - 8, entryHeight);
             drawSubRowLabel(prev);
         }
-        if (subSel >= 0 && subSel < n2) {
+        if (sr >= 0 && sr < subRows) {
             XftDrawRect(m_submenuDraw.get(), m_menuHlColor.get(),
-                        4, subSel * entryHeight + 9, subW - 8, entryHeight);
+                        4, sr * entryHeight + 9, subW - 8, entryHeight);
             drawSubRowLabel(subSel);
         }
     };
@@ -452,7 +457,16 @@ void WindowManager::menu(XButtonEvent *e)
             return (*subEntries)[i].name.c_str();
         };
         subW = measureWidth(subLabel, n2);
-        subH = entryHeight * n2 + 13;
+        // Codex P1: never taller than the screen. The binary scanner puts
+        // hundreds of programs in one category, and a popup laid out at its
+        // full height with only its y clamped left every row below the screen
+        // edge unreachable. Rows beyond subRows are reached by hovering the
+        // popup's last (or first) row, which scrolls the list one entry per
+        // motion event -- see pointerAt().
+        const int fitRows = std::max(1, (my - 13) / entryHeight);
+        subRows  = std::min(n2, fitRows);
+        subFirst = 0;
+        subH = entryHeight * subRows + 13;
 
         // Anchored to the right of the outer menu at the hovered row's top
         // edge, flipping to the left if it would cross the right screen edge --
@@ -491,7 +505,18 @@ void WindowManager::menu(XButtonEvent *e)
         if (inSub) {
             // Inside the submenu the OUTER selection deliberately stays put, so
             // the category row you came from remains highlighted.
-            setSubSel(rowAt(ry - subY, n2, subSel));
+            const int vis = rowAt(ry - subY, subRows, subSel - subFirst);
+            if (vis < 0) { setSubSel(-1); return; }
+            int shift = 0;                            // edge rows scroll
+            if (vis == subRows - 1 && subFirst + subRows < n2) shift = 1;
+            else if (vis == 0 && subFirst > 0)                shift = -1;
+            if (shift != 0) {
+                subFirst += shift;
+                subSel = vis + subFirst;              // what is under the pointer now
+                if (subDrawn) paintSub();
+                return;
+            }
+            setSubSel(vis + subFirst);
             return;
         }
 

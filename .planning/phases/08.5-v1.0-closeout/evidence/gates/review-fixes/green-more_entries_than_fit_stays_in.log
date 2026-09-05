@@ -1,0 +1,14 @@
+Internal ctest changing into directory: /home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/build/debug
+Test project /home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/build/debug
+    Start 332: preflight
+1/2 Test #332: preflight ...............................................................   Passed    0.18 sec
+    Start 211: A category submenu with more entries than fit stays inside the screen
+2/2 Test #211: A category submenu with more entries than fit stays inside the screen ...   Passed    0.60 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Label Time Summary:
+preflight       =   0.18 sec*proc (1 test)
+wm_menulabel    =   0.60 sec*proc (1 test)
+
+Total Test time (real) =   0.79 sec

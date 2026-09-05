@@ -1,0 +1,14 @@
+Internal ctest changing into directory: /home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/build/debug
+Test project /home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/build/debug
+    Start 332: preflight
+1/2 Test #332: preflight ..............................................................................   Passed    0.19 sec
+    Start 212: SIGTERM while the root menu is held open is honoured without waiting for the release
+2/2 Test #212: SIGTERM while the root menu is held open is honoured without waiting for the release ...   Passed    0.27 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Label Time Summary:
+preflight     =   0.19 sec*proc (1 test)
+wm_process    =   0.27 sec*proc (1 test)
+
+Total Test time (real) =   0.47 sec

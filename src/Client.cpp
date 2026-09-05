@@ -197,6 +197,14 @@ void Client::manage(bool mapped)
                               static_cast<unsigned>(m_w), static_cast<unsigned>(m_h));
         }
 
+        // Managed, frameless (issue #3 / Codex P1). Before this the early
+        // return left m_managed false and the border's parent at root, so
+        // activate() refused the window with a "bad parent" warning and a
+        // rule-no-decorate window could never be focused.
+        m_frameless = true;
+        XAddToSaveSet(d, m_window);
+        m_managed = true;
+
         XMapWindow(display(), m_window);
         setState(ClientState::Normal);
         windowManager()->updateClientList();
@@ -206,6 +214,17 @@ void Client::manage(bool mapped)
         // other window's usable area as a side effect of removing one border.
         if (isDock()) {
             windowManager()->updateWorkarea();
+        }
+
+        // The same focus policy the framed path applies below; docks and
+        // notifications fall out of it inside activate()/deactivate().
+        if (isFocusableFrameless()) {
+            if (shouldFocusOnMap()) {
+                activate();
+            } else {
+                deactivate();
+                demandAttention();
+            }
         }
         return;
     }
@@ -286,9 +305,19 @@ void Client::manage(bool mapped)
 }
 
 
+bool Client::isFocusableFrameless() const
+{
+    return m_frameless &&
+           m_windowType != WindowType::Dock &&
+           m_windowType != WindowType::Notification;
+}
+
+
 void Client::activate()
 {
-    if (parent() == root()) {
+    if (m_frameless) {
+        if (!isFocusableFrameless()) return;   // docks, notifications: never
+    } else if (parent() == root()) {
         std::fprintf(stderr, "wm2: warning: bad parent in Client::activate\n");
         return;
     }
@@ -310,7 +339,7 @@ void Client::activate()
         activeClient()->deactivate();
     }
 
-    XUngrabButton(display(), AnyButton, AnyModifier, parent());
+    XUngrabButton(display(), AnyButton, AnyModifier, m_frameless ? m_window : parent());
 
     XSetInputFocus(display(), m_window, RevertToPointerRoot,
                    windowManager()->timestamp(false));
@@ -332,6 +361,15 @@ void Client::activate()
 
 void Client::deactivate()
 {
+    if (m_frameless) {
+        if (!isFocusableFrameless()) return;
+        // The frame's grab, on the client window itself. Pointer-SYNCHRONOUS,
+        // unlike the frame's, because eventButton() must activate and then
+        // replay the press to the client: a click both focuses and lands.
+        XGrabButton(display(), AnyButton, AnyModifier, m_window, false,
+                    ButtonPressMask, GrabModeSync, GrabModeAsync, None, None);
+        return;
+    }
     if (parent() == root()) {
         std::fprintf(stderr, "wm2: warning: bad parent in Client::deactivate\n");
         return;
@@ -519,8 +557,8 @@ void Client::setFullscreen(bool fullscreen)
         m_isFullscreen = true;
 
         // Per D-05: strip border, cover full screen geometry INCLUDING dock areas
-        markReparenting();               // deferred item 8 -- see above
-        m_border->stripForFullscreen();
+        if (!m_frameless) markReparenting();   // deferred item 8 -- see above; nothing is reparented frameless
+        if (!m_frameless) m_border->stripForFullscreen();
         int sw = windowManager()->screenWidth();
         int sh = windowManager()->screenHeight();
         XMoveResizeWindow(display(), m_window, 0, 0, sw, sh);
@@ -533,9 +571,15 @@ void Client::setFullscreen(bool fullscreen)
         m_isFullscreen = false;
 
         // Restore border and saved geometry
-        markReparenting();               // deferred item 8 -- see above
-        m_border->restoreFromFullscreen(m_preFullscreenX, m_preFullscreenY,
-                                         m_preFullscreenW, m_preFullscreenH);
+        if (!m_frameless) markReparenting();   // deferred item 8 -- see above; nothing is reparented frameless
+        if (m_frameless) {
+            XMoveResizeWindow(display(), m_window, m_preFullscreenX, m_preFullscreenY,
+                              static_cast<unsigned>(m_preFullscreenW),
+                              static_cast<unsigned>(m_preFullscreenH));
+        } else {
+            m_border->restoreFromFullscreen(m_preFullscreenX, m_preFullscreenY,
+                                             m_preFullscreenW, m_preFullscreenH);
+        }
         m_x = m_preFullscreenX;
         m_y = m_preFullscreenY;
         m_w = m_preFullscreenW;
@@ -604,8 +648,8 @@ void Client::setMaximized(bool vert, bool horz)
     // at (-25,-8 1050x737) -- the entire sideways tab and the top border off
     // the screen, on the one operation whose whole point is to make a window
     // fully visible.
-    const int xi = m_border->xIndent();
-    const int yi = m_border->yIndent();
+    const int xi = m_frameless ? 0 : m_border->xIndent();
+    const int yi = m_frameless ? 0 : m_border->yIndent();
 
     if (newVert || newHorz) {
         // Per D-07: expand to fill workarea, keep tab+border
@@ -671,20 +715,21 @@ void Client::setMaximized(bool vert, bool horz)
             int newW = newHorz ? maxW : (wasHorz ? m_preMaximizedW : m_w);
             int newH = newVert ? maxH : (wasVert ? m_preMaximizedH : m_h);
 
-            m_border->configure(newX, newY, newW, newH, CWX | CWY | CWWidth | CWHeight, Above);
+            if (!m_frameless) m_border->configure(newX, newY, newW, newH, CWX | CWY | CWWidth | CWHeight, Above);
             // At (0, 0) the client is drawn UNDERNEATH the sideways tab and the
             // frame border. Every other geometry path in this window manager --
             // Border::reparent(), Client::resize() -- places it at the content
             // offset, and this one is the odd one out rather than the exception.
-            XMoveResizeWindow(display(), m_window, xi, yi, newW, newH);
+            XMoveResizeWindow(display(), m_window, m_frameless ? newX : xi, m_frameless ? newY : yi, newW, newH);
             m_x = newX; m_y = newY; m_w = newW; m_h = newH;
         }
     } else {
         // Restore from maximized
-        m_border->configure(m_preMaximizedX, m_preMaximizedY,
-                            m_preMaximizedW, m_preMaximizedH,
-                            CWX | CWY | CWWidth | CWHeight, Above);
-        XMoveResizeWindow(display(), m_window, xi, yi,
+        if (!m_frameless) m_border->configure(m_preMaximizedX, m_preMaximizedY,
+                                              m_preMaximizedW, m_preMaximizedH,
+                                              CWX | CWY | CWWidth | CWHeight, Above);
+        XMoveResizeWindow(display(), m_window,
+                          m_frameless ? m_preMaximizedX : xi, m_frameless ? m_preMaximizedY : yi,
                           m_preMaximizedW, m_preMaximizedH);
         m_x = m_preMaximizedX; m_y = m_preMaximizedY;
         m_w = m_preMaximizedW; m_h = m_preMaximizedH;
@@ -1142,7 +1187,10 @@ void Client::applyWindowRules()
     // property is written here because nothing else in the map path writes it
     // for an ordinary window, so without this call the rule would set a flag
     // that no panel ever sees.
-    if (m_skipTaskbar) updateNetWmState();
+    // Codex P2: an explicit Off is an outcome too. A client that mapped with
+    // _NET_WM_STATE_SKIP_TASKBAR / _SKIP_PAGER already set keeps them unless
+    // the rewrite happens, so publish whenever the rule SAID something.
+    if (m_ruleOutcome.skipTaskbar != RuleTriState::Unset) updateNetWmState();
 }
 
 
@@ -1401,12 +1449,14 @@ void Client::unreparent()
 
 void Client::withdraw(bool changeState)
 {
-    m_border->unmap();
+    if (!m_frameless) {
+        m_border->unmap();
 
-    gravitate(true);
-    XReparentWindow(display(), m_window, root(), m_x, m_y);
+        gravitate(true);
+        XReparentWindow(display(), m_window, root(), m_x, m_y);
 
-    gravitate(false);
+        gravitate(false);
+    }
 
     if (changeState) {
         XRemoveFromSaveSet(display(), m_window);
@@ -1426,7 +1476,7 @@ void Client::hide()
         return;
     }
 
-    m_border->unmap();
+    if (!m_frameless) m_border->unmap();
     XUnmapWindow(display(), m_window);
 
     if (isActive()) windowManager()->clearFocus();
@@ -1457,6 +1507,7 @@ void Client::unhide(bool map)
 
 void Client::rename()
 {
+    if (m_frameless) return;                 // no tab to relabel
     m_border->configure(0, 0, m_w, m_h, CWWidth | CWHeight, Above);
 }
 
@@ -1482,6 +1533,12 @@ void Client::mapRaised()
         return;
     }
 
+    if (m_frameless) {
+        XMapRaised(display(), m_window);
+        windowManager()->raiseTransients(this);
+        return;
+    }
+
     m_border->mapRaised();
     windowManager()->raiseTransients(this);
 }
@@ -1499,6 +1556,7 @@ void Client::kill()
 
 void Client::lower()
 {
+    if (m_frameless) { XLowerWindow(display(), m_window); return; }
     m_border->lower();
 }
 
@@ -1518,12 +1576,18 @@ void Client::ensureVisible()
     if (m_x < 0) m_x = 0;
     if (m_y < 0) m_y = 0;
 
-    if (m_x != px || m_y != py) m_border->moveTo(m_x, m_y);
+    if (m_x != px || m_y != py) {
+        // Codex P1: a frameless client's border parent IS root, so moveTo()
+        // would configure the root window. Move the client itself.
+        if (m_frameless) XMoveWindow(display(), m_window, m_x, m_y);
+        else             m_border->moveTo(m_x, m_y);
+    }
 }
 
 
 void Client::decorate(bool active)
 {
+    if (m_frameless) return;
     m_border->decorate(active, m_w, m_h);
 }
 
@@ -2000,7 +2064,7 @@ void Client::eventConfigureRequest(XConfigureRequestEvent *e)
         sendConfigureNotify();
     }
 
-    if (m_managed) {
+    if (m_managed && !m_frameless) {
         wc.x = m_border->xIndent();
         wc.y = m_border->yIndent();
     } else {
@@ -2205,6 +2269,15 @@ void Client::eventExposure(XExposeEvent *e)
 void Client::eventButton(XButtonEvent *e)
 {
     if (e->type != ButtonPress) return;
+
+    if (m_frameless) {
+        // Reached only through deactivate()'s synchronous grab on the client
+        // window. Focus, then let the press through to the client.
+        mapRaised();
+        if (isNormal() && !isActive() && !e->send_event) activate();
+        XAllowEvents(display(), ReplayPointer, e->time);
+        return;
+    }
 
     mapRaised();
 
