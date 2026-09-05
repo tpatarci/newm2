@@ -180,6 +180,8 @@ private:
     // Only rule-no-decorate NORMAL windows take focus; docks and
     // notifications never do (a product decision recorded in issue #3).
     bool isFocusableFrameless() const;
+    // Remove exactly two states from _NET_WM_STATE, keeping the rest (see .cpp).
+    void stripNetWmStates(Atom a, Atom b);
     bool m_reparenting;
 
     // EWMH state

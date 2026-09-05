@@ -44,3 +44,13 @@ the full debug suite at `-j2`, concurrent with a ten-run measurement in a
 sibling worktree, failed two cases (`readable-is-not-deliverable`,
 `Destroying a mapped focused client ...`) that then passed 2/2 each alone; the
 gate runs serially and its serial result is what counts.
+
+## Re-review of the fix commit (Codex, `--commit`), 2026-09-05
+
+Three findings, all confirmed by reading and fixed in the follow-up commit:
+
+| Finding | Fix | Evidence |
+| --- | --- | --- |
+| P1 the `ButtonRelease` re-ran `pointerAt()` and scrolled once more, so an edge-row release launched the entry BELOW the one shown | `pointerAt(rx, ry, allowScroll)`: only `MotionNotify` may scroll; the release commits the displayed entry | by reading (the release path is one call) |
+| P2 `m_frameless` survived a withdraw/re-manage whose rule outcome changed | reset to `false` at the top of `manage()`, set on the frameless path only | by reading |
+| P2 the Off rule called `updateNetWmState()`, which rebuilds the whole property and erased client-set states the WM never imported | `stripNetWmStates(SKIP_TASKBAR, SKIP_PAGER)` removes exactly the two the rule overrides | the Off case now also sets `_NET_WM_STATE_DEMANDS_ATTENTION` before mapping and requires it to survive: `green2-skip-taskbar_off_keeps_unrelated_state.log` |

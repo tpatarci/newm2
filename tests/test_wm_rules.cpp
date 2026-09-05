@@ -423,10 +423,13 @@ TEST_CASE("An explicit skip-taskbar=false rule removes a client's own skip state
     // wants to hide from the panel does.
     {
         const Atom state = XInternAtom(d, "_NET_WM_STATE", False);
-        Atom vals[2] = { XInternAtom(d, "_NET_WM_STATE_SKIP_TASKBAR", False),
-                         XInternAtom(d, "_NET_WM_STATE_SKIP_PAGER", False) };
+        // Plus one UNRELATED state, which the rule has no business touching
+        // (Codex re-review: the first fix rewrote the whole property).
+        Atom vals[3] = { XInternAtom(d, "_NET_WM_STATE_SKIP_TASKBAR", False),
+                         XInternAtom(d, "_NET_WM_STATE_SKIP_PAGER", False),
+                         XInternAtom(d, "_NET_WM_STATE_DEMANDS_ATTENTION", False) };
         XChangeProperty(d, win, state, XA_ATOM, 32, PropModeReplace,
-                        reinterpret_cast<unsigned char*>(vals), 2);
+                        reinterpret_cast<unsigned char*>(vals), 3);
         XSync(d, False);
     }
     REQUIRE(mapAndAwait(d, win));
@@ -435,6 +438,8 @@ TEST_CASE("An explicit skip-taskbar=false rule removes a client's own skip state
     // The rule said no, explicitly. Neither state may survive the fold.
     REQUIRE_FALSE(hasState(d, win, "_NET_WM_STATE_SKIP_TASKBAR"));
     REQUIRE_FALSE(hasState(d, win, "_NET_WM_STATE_SKIP_PAGER"));
+    // And the state the rule did not name is still there.
+    REQUIRE(hasState(d, win, "_NET_WM_STATE_DEMANDS_ATTENTION"));
 }
 
 

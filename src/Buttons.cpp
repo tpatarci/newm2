@@ -497,7 +497,10 @@ void WindowManager::menu(XButtonEvent *e)
     };
 
     // The whole pointer policy, in one place, driven by root coordinates.
-    auto pointerAt = [&](int rx, int ry) {
+    // allowScroll: only a MotionNotify may scroll an overflowing submenu. The
+    // ButtonRelease re-runs this at the same coordinates and must commit the
+    // entry the user is looking at, not the one a further scroll would show.
+    auto pointerAt = [&](int rx, int ry, bool allowScroll) {
         const bool inSub = (openCat >= 0) &&
                            rx >= subX && rx < subX + subW &&
                            ry >= subY && ry < subY + subH;
@@ -510,7 +513,7 @@ void WindowManager::menu(XButtonEvent *e)
             int shift = 0;                            // edge rows scroll
             if (vis == subRows - 1 && subFirst + subRows < n2) shift = 1;
             else if (vis == 0 && subFirst > 0)                shift = -1;
-            if (shift != 0) {
+            if (allowScroll && shift != 0) {
                 subFirst += shift;
                 subSel = vis + subFirst;              // what is under the pointer now
                 if (subDrawn) paintSub();
@@ -622,7 +625,7 @@ void WindowManager::menu(XButtonEvent *e)
             break;
 
         case MotionNotify:
-            pointerAt(event.xmotion.x_root, event.xmotion.y_root);
+            pointerAt(event.xmotion.x_root, event.xmotion.y_root, true);
             break;
 
         case ButtonRelease:
@@ -630,7 +633,7 @@ void WindowManager::menu(XButtonEvent *e)
 
             // Settle the selection against the release position before acting
             // on it: the release may carry a position no motion event reported.
-            pointerAt(event.xbutton.x_root, event.xbutton.y_root);
+            pointerAt(event.xbutton.x_root, event.xbutton.y_root, false);
 
             if (nobuttons(&event.xbutton)) {
                 if (openCat >= 0 && subSel >= 0 && subEntries) {

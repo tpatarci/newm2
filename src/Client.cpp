@@ -97,6 +97,11 @@ Window Client::root()
 
 void Client::manage(bool mapped)
 {
+    // Recomputed on EVERY management cycle: a client that withdrew, changed
+    // the class or type the no-decorate decision rested on, and remapped must
+    // not inherit the previous cycle's frameless flag (Codex re-review P2).
+    m_frameless = false;
+
     bool shouldHide, reshape;
     Display *d = display();
     long mSize;
@@ -749,6 +754,41 @@ void Client::toggleMaximized()
 }
 
 
+// Remove named states from the client's _NET_WM_STATE, leaving every other
+// atom the property carries -- including ones the WM never imported. Used only
+// where a rule overrides a specific state on a window the WM has not yet
+// rewritten; every other write goes through updateNetWmState().
+void Client::stripNetWmStates(Atom a, Atom b)
+{
+    Atom actualType = None; int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0; unsigned char* raw = nullptr;
+    if (XGetWindowProperty(display(), m_window, Atoms::net_wmState, 0L, 64L, false,
+                           XA_ATOM, &actualType, &actualFormat, &nItems, &bytesAfter,
+                           &raw) != Success || !raw) {
+        if (raw) XFree(raw);
+        return;
+    }
+    std::vector<Atom> kept;
+    if (actualType == XA_ATOM && actualFormat == 32) {
+        const Atom* atoms = reinterpret_cast<const Atom*>(raw);
+        for (unsigned long i = 0; i < nItems; ++i) {
+            if (atoms[i] != a && atoms[i] != b) kept.push_back(atoms[i]);
+        }
+    }
+    XFree(raw);
+    if (kept.size() == nItems) return;          // nothing to strip
+    if (kept.empty()) {
+        XChangeProperty(display(), m_window, Atoms::net_wmState,
+                        XA_ATOM, 32, PropModeReplace, nullptr, 0);
+    } else {
+        XChangeProperty(display(), m_window, Atoms::net_wmState,
+                        XA_ATOM, 32, PropModeReplace,
+                        reinterpret_cast<unsigned char*>(kept.data()),
+                        static_cast<int>(kept.size()));
+    }
+}
+
+
 void Client::updateNetWmState()
 {
     std::vector<Atom> states;
@@ -1187,10 +1227,17 @@ void Client::applyWindowRules()
     // property is written here because nothing else in the map path writes it
     // for an ordinary window, so without this call the rule would set a flag
     // that no panel ever sees.
-    // Codex P2: an explicit Off is an outcome too. A client that mapped with
-    // _NET_WM_STATE_SKIP_TASKBAR / _SKIP_PAGER already set keeps them unless
-    // the rewrite happens, so publish whenever the rule SAID something.
-    if (m_ruleOutcome.skipTaskbar != RuleTriState::Unset) updateNetWmState();
+    // Codex P2: an explicit Off is an outcome too -- a client that mapped with
+    // _NET_WM_STATE_SKIP_TASKBAR / _SKIP_PAGER already set must lose them.
+    // But NOT through updateNetWmState(): that rebuilds the property from the
+    // WM's own booleans and would erase every other state the client set
+    // before mapping (the WM does not import those at manage time), which is
+    // what an Unset rule leaves alone. Off removes exactly the two it overrides.
+    if (m_ruleOutcome.skipTaskbar == RuleTriState::On) {
+        updateNetWmState();
+    } else if (m_ruleOutcome.skipTaskbar == RuleTriState::Off) {
+        stripNetWmStates(Atoms::net_wmStateSkipTaskbar, Atoms::net_wmStateSkipPager);
+    }
 }
 
 
