@@ -31,7 +31,7 @@ Linux 6.8.0-124-generic. Not a VPS; the 512 MiB VPS budget is measured elsewhere
 ## Ten runs at the pre-capture tree — commit `70fbd8f`
 
 This was written as "the final source tree" and then the first 08.5-08 capture
-found two things in it (`../capture-8e29d6d/README.md`): five cppcheck
+found two things in it (`../capture-attempts/README.md`): five cppcheck
 findings in the modal loops (dead stores, one shadowed local) and the window
 manager's own name published one byte short. Commit `2a94cbb` fixed both, so
 the tree under test here differs from the final capture tree by that commit

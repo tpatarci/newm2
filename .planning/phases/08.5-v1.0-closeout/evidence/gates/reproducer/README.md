@@ -1,5 +1,12 @@
 # Targeted reproducer measurement — NOT the gate bundle
 
+> *Historical note, added 2026-09-05 by the phase verification:* the paragraphs below were
+> written while plan 08.5-04's capture was held and say the criterion-7 bundle was not
+> produced. That was true when written. The bundle now exists at the top level of
+> `evidence/gates/` (plan 08.5-08, `PROVENANCE.txt`); this directory's own content is
+> unchanged and is still not a gate result.
+
+
 **This directory is not the success-criterion-7 gate bundle. That bundle was not
 produced. Its capture is still held.**
 

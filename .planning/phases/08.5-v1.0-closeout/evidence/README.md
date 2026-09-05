@@ -122,7 +122,7 @@ and does not establish.
 
 The per-item manual walkthrough. **Tester** tpatarci (operator). **Date**
 2026-08-30. **Target** TigerVNC `:11`, 1280x1024x24, loopback only. **Commit**
-`0244c06`. 31 rows, four-value split: 9 PASS, 7 PASS (verdict), 11 DEFERRED, 4
+`0244c06`. 31 rows, four-value split: 10 PASS, 6 PASS (verdict), 11 DEFERRED, 4
 n/a.
 
 ### `STRESS-RESULTS.md`

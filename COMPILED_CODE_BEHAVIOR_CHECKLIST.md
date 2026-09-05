@@ -752,7 +752,7 @@ For each release or handoff, attach:
       DONE: `evidence/INTERACTION-CHECKLIST.md`. **Tester** tpatarci
       (operator). **Date** 2026-08-30. **Target** TigerVNC `:11`,
       1280x1024x24, loopback only. **Commit** `0244c06`. Per-item results for
-      all 31 rows: **9 PASS** (walked step by step), **7 PASS (verdict)**
+      all 31 rows: **10 PASS** (walked step by step), **6 PASS (verdict)**
       (covered by the operator's own statement, not walked row by row),
       **11 DEFERRED** (explicitly declined by the operator), **4 n/a** (not
       applicable in this session, reason given) — total **31**. This closes
