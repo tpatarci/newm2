@@ -1,0 +1,40 @@
+=== phase: .planning/phases/08.5-v1.0-closeout/  (this bundle belongs to Phase 8.5, v1.0 Closeout) ===
+=== commit: d08b6e5d3824822b823c0aea4971223ca51b0692  short: d08b6e5  branch: worktree-agent-a0ef668e51c39c8dd ===
+=== date: 2026-09-05T16:42:29+02:00 ===
+debug exit=0
+release exit=0
+asan exit=0
+static-analysis exit=0
+preflight exit=0
+runtime-smoke exit=0
+tree state at capture: dirty:
+  ?? .planning/phases/08.5-v1.0-closeout/evidence/gates/DOC-GUARDS.txt
+  ?? .planning/phases/08.5-v1.0-closeout/evidence/gates/build-all-asan.log
+  ?? .planning/phases/08.5-v1.0-closeout/evidence/gates/build-all-debug.log
+  ?? .planning/phases/08.5-v1.0-closeout/evidence/gates/build-all-release.log
+  ?? .planning/phases/08.5-v1.0-closeout/evidence/gates/compiler-asan.log
+  ?? .planning/phases/08.5-v1.0-closeout/evidence/gates/compiler-debug.log
+  ?? .planning/phases/08.5-v1.0-closeout/evidence/gates/compiler-release.log
+  ?? .planning/phases/08.5-v1.0-closeout/evidence/gates/ldd-release.txt
+  ?? .planning/phases/08.5-v1.0-closeout/evidence/gates/preflight-versions.log
+  ?? .planning/phases/08.5-v1.0-closeout/evidence/gates/runtime-smoke/
+  ?? .planning/phases/08.5-v1.0-closeout/evidence/gates/sanitizer-reports/
+  ?? .planning/phases/08.5-v1.0-closeout/evidence/gates/static-analysis.log
+test totals (quoted from the logs):
+  debug:   100% tests passed, 0 tests failed out of 335
+  release: 100% tests passed, 0 tests failed out of 335
+  asan:    100% tests passed, 0 tests failed out of 335
+sanitizer reports: build/asan/sanitizer-reports/ produced 6 file(s), copied to sanitizer-reports/
+documentation guards: DOC-GUARDS.txt was written at this same commit (gap-1 guards A/B, rule-key parity).
+no-drift statement: 'git diff --name-only d08b6e5d3824822b823c0aea4971223ca51b0692..HEAD -- src include tests scripts CMakeLists.txt' prints nothing -> TRUE at the time of writing
+  A reader re-runs that command with HEAD at the phase's final commit; empty output means every gate
+  above ran against the tree that ships.
+beside this bundle, evidence/gates/ also holds measurement records, not gate results:
+  flake-measurement/ (the before rate, 08.5-04), attribution/ (rounds 2-3, 08.5-06/09), wakeup/ (round 4,
+  08.5-10), reproducer/ (08.5-09), eventloop/ (08.5-11), timestamp/ (08.5-12), menupaint/ (08.5-13),
+  modal/ (ledger 8), review-fixes/ (the Codex re-review series), fix-measurement/ (the ten consecutive
+  debug runs), and capture-attempts/ (the two earlier captures, at 8e29d6d and 2a94cbb, each stopped
+  on a finding its own logs surfaced; their red logs and the fixes they led to). Each README opens by
+  saying what it is not.
+runtime smoke: Xvfb :135 started for this run with -nolisten tcp and no access-control flag; release
+  binary plus one xmessage client titled wm2-smoke-d08b6e5; all three stopped by PID.

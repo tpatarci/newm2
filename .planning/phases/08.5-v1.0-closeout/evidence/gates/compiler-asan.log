@@ -1,0 +1,55 @@
+Consolidate compiler generated dependencies of target wm2-born-again
+[  0%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Events.cpp.o
+[  1%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Manager.cpp.o
+Consolidate compiler generated dependencies of target Catch2
+[ 62%] Built target Catch2
+Consolidate compiler generated dependencies of target Catch2WithMain
+[ 63%] Built target Catch2WithMain
+Consolidate compiler generated dependencies of target test_eventloop
+Consolidate compiler generated dependencies of target test_smoke
+Consolidate compiler generated dependencies of target test_autoraise
+Consolidate compiler generated dependencies of target test_raii
+Consolidate compiler generated dependencies of target test_xft_poc
+Consolidate compiler generated dependencies of target test_menupaint
+Consolidate compiler generated dependencies of target test_client
+Consolidate compiler generated dependencies of target test_ewmh
+Consolidate compiler generated dependencies of target test_binaryscanner
+Consolidate compiler generated dependencies of target test_desktopentry
+Consolidate compiler generated dependencies of target test_rules
+Consolidate compiler generated dependencies of target test_config
+[ 64%] Built target test_smoke
+[ 65%] Built target test_autoraise
+Consolidate compiler generated dependencies of target test_appcache
+[ 66%] Built target test_eventloop
+[ 67%] Built target test_raii
+[ 68%] Built target test_ewmh
+[ 69%] Built target test_xft_poc
+[ 71%] Built target test_client
+[ 72%] Built target test_rules
+[ 74%] Built target test_menupaint
+[ 76%] Built target test_binaryscanner
+[ 78%] Built target test_config
+[ 79%] Built target test_desktopentry
+[ 82%] Built target test_appcache
+[ 83%] Linking CXX executable wm2-born-again
+[ 88%] Built target wm2-born-again
+Consolidate compiler generated dependencies of target test_wm_focus
+Consolidate compiler generated dependencies of target test_wm_fallbacks
+Consolidate compiler generated dependencies of target test_wm_lifecycle
+Consolidate compiler generated dependencies of target test_wm_rules
+Consolidate compiler generated dependencies of target test_wm_geometry
+Consolidate compiler generated dependencies of target test_wm_process
+Consolidate compiler generated dependencies of target test_wm_state
+Consolidate compiler generated dependencies of target test_wm_runtime
+Consolidate compiler generated dependencies of target test_wm_resource
+Consolidate compiler generated dependencies of target test_wm_repro
+[ 89%] Built target test_wm_focus
+[ 90%] Built target test_wm_lifecycle
+[ 91%] Built target test_wm_rules
+[ 92%] Built target test_wm_process
+[ 93%] Built target test_wm_fallbacks
+[ 95%] Built target test_wm_geometry
+[ 98%] Built target test_wm_repro
+[ 98%] Built target test_wm_runtime
+[ 99%] Built target test_wm_state
+[100%] Built target test_wm_resource
