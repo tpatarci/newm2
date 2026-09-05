@@ -192,3 +192,11 @@ change works." One finding, P2, on the documentation carried in the same commit:
 | 1 | `evidence/README.md:3` at `39de548` names the snapshot `2781664`, which predates the warning fix in that commit and whose release log carried the four warnings; the index therefore "falsely certifies zero warning lines" at that commit. | True of the commit in isolation: `git show 39de548:...evidence/README.md` line 3 says `2781664`. Also already resolved: the sixth capture was taken at `39de548` (`25aaf5d`, `PROVENANCE.txt` line 2) and every record was repointed at it (`32c25d0`); at HEAD `compiler-release.log` has zero warning lines and `evidence/README.md:3` names `39de548`. | Already addressed by `25aaf5d` and `32c25d0`. The chronology (fix commit first, capture second) is the rule "commit nothing during a capture" applied; the interval in which the index named the superseded snapshot is the two commits between them and is recorded in `capture-attempts/README.md` attempt 5. |
 
 No source, test, script or CMake change results; the no-drift check at HEAD still prints nothing.
+
+## CodeRabbit CLI over the delta since its third pass (`--base-commit 162a832`), 2026-09-05
+
+Sixteen files reviewed (the third ten-run series, its ledger and logs, and the records above). One
+minor finding, fixed: `STATE.md`'s `last_activity_desc` said "final tree" where the documentation
+commits after `39de548` make "final source tree" the accurate phrase; the same line's "four captures
+(three findings)" was brought to six and five while it was open. This is the last review pass before
+PR #6; every finding from Codex and CodeRabbit on this branch is fixed or declined with its reason above.

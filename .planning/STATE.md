@@ -7,7 +7,7 @@ status: executing
 stopped_at: "08.5 all plans complete (08.5-08 bundle at 39de548, 08.5-05 repointed); phase verification and closeout PR #6 pending"
 last_updated: "2026-09-05T17:55:00Z"
 last_activity: 2026-09-05
-last_activity_desc: 08.5-08 complete after four captures (three findings fixed at source); 08.5-05 complete; CodeRabbit CLI and Codex branch reviews fixed; ten-run series at the final tree 39de548 10/10 green
+last_activity_desc: 08.5-08 complete after six captures (five findings fixed at source); 08.5-05 complete; CodeRabbit CLI and Codex branch reviews fixed; ten-run series at the final source tree 39de548 10/10 green
 state_head: 5a418206824065ab01d647835a34c71e78cb1ecd
 progress:
   total_phases: 10
