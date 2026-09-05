@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -284,9 +285,11 @@ TEST_CASE("Config load precedence: user config overrides system config", "[confi
     std::string userDir = "/tmp/wm2-test-user-" + std::to_string(std::rand());
     std::string userSubdir = userDir + "/wm2-born-again";
 
-    // Create directories
-    std::system(("mkdir -p " + sysSubdir).c_str());
-    std::system(("mkdir -p " + userSubdir).c_str());
+    // Create directories. Not a shell-out: std::system()'s result is
+    // warn_unused_result under -O2, and the four calls here were the release
+    // gate's only warning lines once it compiled every unit (08.5-08, capture 5).
+    std::filesystem::create_directories(sysSubdir);
+    std::filesystem::create_directories(userSubdir);
 
     // Write system config
     {
@@ -322,8 +325,8 @@ TEST_CASE("Config load precedence: user config overrides system config", "[confi
     REQUIRE(cfg.tabBackground == "#C8CACC");
 
     // Clean up
-    std::system(("rm -rf " + sysDir).c_str());
-    std::system(("rm -rf " + userDir).c_str());
+    std::filesystem::remove_all(sysDir);
+    std::filesystem::remove_all(userDir);
 
     // Restore
     if (origDirsStr.empty()) unsetenv("XDG_CONFIG_DIRS");

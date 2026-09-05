@@ -1,8 +1,8 @@
 # Earlier capture attempts — NOT the gate bundle
 
-**This directory is not the criterion-7 gate bundle.** It records the four
+**This directory is not the criterion-7 gate bundle.** It records the five
 08.5-08 captures that ran before the one at the top level of `evidence/gates/`:
-two stopped by something their own logs surfaced, two all-green bundles
+three stopped by something their own logs surfaced, two all-green bundles
 superseded when the branch reviews changed the source. The plan says a red log stays
 in the bundle under a distinguishable name and a finding is fixed rather than
 retried away; this is where those logs and the fixes they led to are kept.
@@ -84,6 +84,25 @@ unit compiles and the "zero warning lines" gate is not vacuous for a tree that h
 (attempt 4's debug log had no `Building CXX` line at all); and `PROVENANCE.txt` records the compiled-unit
 count per tree.
 
+## Attempt 5 — commit `2781664`: the first full compile; four pre-existing release warnings
+
+The first capture whose three trees were built from empty build directories (149 translation units
+each, recorded in `PROVENANCE.txt`). Every gate green — and `compiler-release.log`
+(`2781664-compiler-release.log`, kept in full) carries **four** warning lines, all in
+`tests/test_config.cpp` (lines 288, 289, 325, 326): `ignoring return value of 'int system(const char*)'
+declared with attribute 'warn_unused_result'`. They are not from this round; they are as old as that
+test's `mkdir -p` / `rm -rf` shell-outs, visible only under `-O2` and only when the unit compiles.
+
+**Why no earlier capture saw them.** Every previous release gate — Phase 8's bundle included — was an
+incremental build. Phase 8's `compiler-release.log` has **zero** `Building CXX` lines, so its "0 warning
+lines" reading compiled nothing and was vacuous; attempts 1–4 recompiled only the files that had just
+changed. The checklist's "no new compiler or linker warnings" row therefore rested on a gate that had
+never actually run in full. The phase verification's reading of attempt 4's debug log (no `Building CXX`
+line at all) is what led to the empty-directory rule for this capture, and this is what the rule found.
+
+Fixed by replacing the four shell-outs with `std::filesystem::create_directories` and `remove_all`
+(no return value to ignore, no shell). The `[config]` cases that own those lines still pass.
+
 ## Unchanged across the attempts, carried into the final bundle
 
 - Six sanitizer report files per ASan run, byte-identical to each other, each
@@ -106,7 +125,7 @@ count per tree.
 
 A bundle is bound to one commit. The build-all, compiler, preflight, ldd,
 DOC-GUARDS, runtime-smoke and PROVENANCE files from `8e29d6d`, `2a94cbb`,
-`d08b6e5` and `f54de6e` were produced by real runs, but keeping them beside the
-final capture would leave five bundles interleaved in one directory, which the
-plan's coexistence rule forbids. What each attempt found is kept; what it merely repeated is
+`d08b6e5`, `f54de6e` and `2781664` were produced by real runs, but keeping them
+beside the final capture would leave six bundles interleaved in one directory,
+which the plan's coexistence rule forbids. What each attempt found is kept; what it merely repeated is
 superseded by the same commands run again at the fixed commit.

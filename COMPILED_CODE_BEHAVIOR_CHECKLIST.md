@@ -133,7 +133,7 @@ fc-match "Noto Sans,DejaVu Sans,Sans:bold:size=12"
 - [x] Configure a clean Debug build with tests enabled:
       DONE. `scripts/gates/build-all.sh debug`; log at
       `08.5-v1.0-closeout/evidence/gates/build-all-debug.log`, exit 0 (confirmed
-      in `08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt` at `f54de6e`).
+      in `08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt` at `2781664`).
 
 ```bash
 cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
@@ -154,8 +154,8 @@ cmake --build build/debug --parallel
 ```
 
 - [x] Run the full CTest suite:
-      DONE. **336/336 (100% tests passed, 0 tests failed) in all three trees**
-      at `f54de6e` (`08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt`); full
+      DONE. **337/337 (100% tests passed, 0 tests failed) in all three trees**
+      at `2781664` (`08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt`); full
       logs in `08.5-v1.0-closeout/evidence/gates/build-all-debug.log`,
       `08.5-v1.0-closeout/evidence/gates/build-all-release.log` and
       `08.5-v1.0-closeout/evidence/gates/build-all-asan.log`.
@@ -165,11 +165,11 @@ ctest --test-dir build/debug --output-on-failure
 ```
 
 - [x] Confirm the expected discovered test surface is present. The tree contains
-      **334 Catch2 test cases** across 23 files, of which **333 are registered
-      with ctest** (`Total Tests: 336` including the `preflight`, `start_xvfb`
-      and `stop_xvfb` fixture tests). RECOMPUTED at `f54de6e`, not transcribed.
-      The arithmetic: 334 source cases − 1 hidden case = 333 registered Catch2
-      cases, + 3 fixture tests = 336 `Total Tests`. The one case not registered
+      **335 Catch2 test cases** across 23 files, of which **334 are registered
+      with ctest** (`Total Tests: 337` including the `preflight`, `start_xvfb`
+      and `stop_xvfb` fixture tests). RECOMPUTED at `2781664`, not transcribed.
+      The arithmetic: 335 source cases − 1 hidden case = 334 registered Catch2
+      cases, + 3 fixture tests = 337 `Total Tests`. The one case not registered
       is the hidden `[.][wm_resource_calibration]` case in
       `tests/test_wm_resource.cpp`, which is hidden on purpose so the judged
       resource budget cannot have been produced by a run that was itself being
@@ -190,7 +190,7 @@ grep -c '^TEST_CASE' tests/*.cpp
 ctest --test-dir build/debug -N | tail -1
 ```
 
-      Per file, at the time of writing (plan 08.5-05, commit `f54de6e`):
+      Per file, at the time of writing (plan 08.5-05, commit `2781664`):
 
       | File | Cases | | File | Cases |
       |---|---|---|---|---|
@@ -203,16 +203,16 @@ ctest --test-dir build/debug -N | tail -1
       | `test_wm_geometry.cpp` | 17 | | `test_wm_process.cpp` | 6 |
       | `test_ewmh.cpp` | 16 | | `test_xft_poc.cpp` | 6 |
       | `test_raii.cpp` | 16 | | `test_menupaint.cpp` | 5 |
-      | `test_wm_rules.cpp` | 17 | | `test_wm_resource.cpp` | 4 |
+      | `test_wm_rules.cpp` | 18 | | `test_wm_resource.cpp` | 4 |
       | `test_wm_fallbacks.cpp` | 13 | | `test_wm_repro.cpp` | 2 |
       | `test_eventloop.cpp` | 13 | | | |
 
       Moved since the 08-14 table (293 cases, 21 files): `test_rules.cpp` 17 ->
       25 (the title criterion and match-key rename, plan 08.5-01, "8 new
-      `[rules]` cases, 17 -> 25"); `test_wm_rules.cpp` 8 -> 17 (+5 from plan
+      `[rules]` cases, 17 -> 25"); `test_wm_rules.cpp` 8 -> 18 (+5 from plan
       08.5-01's fold wiring, "9 -> 14" per its own summary — which does not
       square with the 08-14 table's 8, itself a sign of how easily this figure
-      drifts — plus 4 further cases from the Codex review-fixes rounds — three on PR #5's findings, one from the branch review before PR #6 —
+      drifts — plus 5 further cases from the Codex review-fixes rounds — three on PR #5's findings, two from the branch reviews before PR #6 —
       `08.5-v1.0-closeout/evidence/gates/review-fixes/README.md`, a dated round rather than a
       numbered plan); `test_wm_runtime.cpp` 23 -> 32 (+9: at least 2 are named in
       the same review-fixes round — the no-decorate click case and the submenu
@@ -229,7 +229,7 @@ ctest --test-dir build/debug -N | tail -1
       changed and why.
 - [x] Run a Release build and tests:
       DONE. `08.5-v1.0-closeout/evidence/gates/build-all-release.log`, exit 0,
-      100% tests passed, 0 tests failed out of 336. The release gate also runs
+      100% tests passed, 0 tests failed out of 337. The release gate also runs
       the link audit below (24 entries, all in the intended runtime set).
 
 ```bash
@@ -241,7 +241,7 @@ ctest --test-dir build/release --output-on-failure
 - [x] Run an AddressSanitizer/UBSan build. Treat use-after-free, invalid enum
       use, double-free, and out-of-bounds reports as blockers:
       DONE. `08.5-v1.0-closeout/evidence/gates/build-all-asan.log`, exit 0, 100%
-      tests passed, 0 tests failed out of 336, "no sanitizer findings". The six
+      tests passed, 0 tests failed out of 337, "no sanitizer findings". The six
       files in `08.5-v1.0-closeout/evidence/gates/sanitizer-reports/` are LSan
       **suppression-accounting** logs (2 allocations, 288 bytes, libfontconfig),
       not findings — their full contents are in the bundle so the distinction can
@@ -631,7 +631,7 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
 
 - [x] No ASan/UBSan reports in full automated and runtime smoke tests.
       DONE: `08.5-v1.0-closeout/evidence/gates/build-all-asan.log`: 100% tests
-      passed, 0 tests failed out of 336, "no sanitizer findings". The six files
+      passed, 0 tests failed out of 337, "no sanitizer findings". The six files
       under `08.5-v1.0-closeout/evidence/gates/sanitizer-reports/` are LSan
       suppression-ACCOUNTING logs (2 allocations, 288 bytes, libfontconfig),
       copied in full so the distinction can be checked.
@@ -717,7 +717,7 @@ For each release or handoff, attach:
 
 - [x] Commit hash and branch.
       DONE: `08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt` — commit
-      `f54de6efec4057ec9259d0200f70b93fae5cc4f4` (`f54de6e`), branch
+      `2781664b0c9bbc135f6d478341b9cdda8675de45` (`2781664`), branch
       `worktree-agent-a0ef668e51c39c8dd`.
 - [x] Dependency/package list and tool versions.
       DONE: `08.5-v1.0-closeout/evidence/gates/preflight-versions.log`.
@@ -730,7 +730,7 @@ For each release or handoff, attach:
       `08.5-v1.0-closeout/evidence/gates/compiler-asan.log`.
 - [x] Full `ctest --output-on-failure` logs.
       DONE: in the three build-all logs above; 100% tests passed, 0 tests
-      failed out of 336 in every tree.
+      failed out of 337 in every tree.
 - [x] Runtime smoke transcript with `xprop -root` and `xwininfo -root -tree`
       output.
       DONE, two things, not one: `08-xrandr-vnc-compatibility-focus-rules/evidence/local-xephyr/`
@@ -739,7 +739,7 @@ For each release or handoff, attach:
       own capture is separate and taken at the gate commit:
       `08.5-v1.0-closeout/evidence/gates/runtime-smoke/` (`capabilities.txt`,
       `root-properties.txt`, `window-tree.txt`) — Xvfb `:135`, release binary
-      plus one `xmessage` client titled `wm2-smoke-f54de6e`, all three stopped
+      plus one `xmessage` client titled `wm2-smoke-2781664`, all three stopped
       by PID.
 - [x] Screenshots from shaped and rectangular/no-Shape runs if supported.
       DONE: `08-xrandr-vnc-compatibility-focus-rules/evidence/screenshots/`,
