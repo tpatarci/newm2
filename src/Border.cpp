@@ -1455,8 +1455,10 @@ void Border::eventButton(XButtonEvent *e)
 // than nothing happening.
 void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
 {
-    int menuGrabMask = ButtonPressMask | ButtonReleaseMask |
-                       ButtonMotionMask | StructureNotifyMask;
+    // Pointer events only: the GrabPointer request carries its mask as a
+    // CARD16, so StructureNotifyMask (bit 17) was silently truncated out of
+    // this mask and never took effect (WINDOWS.md ledger 11).
+    int menuGrabMask = ButtonPressMask | ButtonReleaseMask | ButtonMotionMask;
     if (windowManager()->attemptGrab(m_button, None, menuGrabMask, e->time)
         != GrabSuccess) {
         return;
@@ -1465,7 +1467,6 @@ void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
     XEvent event;
     bool found;
     bool done = false;
-    struct timeval sleepval;
     unsigned long tdiff = 0L;
     int x = startX;
     int y = startY;
@@ -1500,11 +1501,21 @@ void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
         }
 
         if (!found) {
-            sleepval.tv_sec = 0;
-            sleepval.tv_usec = 50000;
-            select(0, nullptr, nullptr, nullptr, &sleepval);
-            tdiff += 50;
-            continue;
+            // Ledger 8: the 50 ms sleep is now a wait that also watches the
+            // exit flag and the self-pipe. Interrupted: no action is taken.
+            const WindowManager::ModalWait wait = windowManager()->modalWait(
+                ButtonPressMask | ButtonReleaseMask | ButtonMotionMask | ExposureMask,
+                &event, 50);
+            if (wait == WindowManager::ModalWait::Interrupted) {
+                // "No action is taken" has to be made true here: action starts
+                // at 1 (hide) and a long in-bounds hold turns it into 2 (kill),
+                // and the code after the loop acts on whichever is set. Left
+                // alone, a signal during a press would hide -- or close -- the
+                // client on the way out (CodeRabbit pre-flight, 2026-09-05).
+                action = 0;
+                break;
+            }
+            if (wait == WindowManager::ModalWait::Timeout) { tdiff += 50; continue; }
         }
 
         switch (event.type) {

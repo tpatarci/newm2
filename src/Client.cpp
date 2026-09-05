@@ -97,6 +97,14 @@ Window Client::root()
 
 void Client::manage(bool mapped)
 {
+    // Recomputed on EVERY management cycle: a client that withdrew, changed
+    // the class or type the no-decorate decision rested on, and remapped must
+    // not inherit the previous cycle's frameless flag (Codex re-review P2) --
+    // nor its passive button grab, which deactivate() put on the CLIENT window
+    // and which a framed cycle would never remove (Codex re-review 2, P1).
+    if (m_frameless) XUngrabButton(display(), AnyButton, AnyModifier, m_window);
+    m_frameless = false;
+
     bool shouldHide, reshape;
     Display *d = display();
     long mSize;
@@ -197,6 +205,20 @@ void Client::manage(bool mapped)
                               static_cast<unsigned>(m_w), static_cast<unsigned>(m_h));
         }
 
+        // Managed, frameless (issue #3 / Codex P1). Before this the early
+        // return left m_managed false and the border's parent at root, so
+        // activate() refused the window with a "bad parent" warning and a
+        // rule-no-decorate window could never be focused.
+        m_frameless = true;
+        // Same strip as the framed path below and as every ConfigureRequest:
+        // a managed client has no X border. Without this a client created
+        // with a border kept it here alone, and maximize -- which sizes the
+        // client itself to the workarea -- overshot by twice its width
+        // (Codex, second pass on the maximize fix, 2026-09-05).
+        XSetWindowBorderWidth(d, m_window, 0);
+        XAddToSaveSet(d, m_window);
+        m_managed = true;
+
         XMapWindow(display(), m_window);
         setState(ClientState::Normal);
         windowManager()->updateClientList();
@@ -206,6 +228,17 @@ void Client::manage(bool mapped)
         // other window's usable area as a side effect of removing one border.
         if (isDock()) {
             windowManager()->updateWorkarea();
+        }
+
+        // The same focus policy the framed path applies below; docks and
+        // notifications fall out of it inside activate()/deactivate().
+        if (isFocusableFrameless()) {
+            if (shouldFocusOnMap()) {
+                activate();
+            } else {
+                deactivate();
+                demandAttention();
+            }
         }
         return;
     }
@@ -286,9 +319,19 @@ void Client::manage(bool mapped)
 }
 
 
+bool Client::isFocusableFrameless() const
+{
+    return m_frameless &&
+           m_windowType != WindowType::Dock &&
+           m_windowType != WindowType::Notification;
+}
+
+
 void Client::activate()
 {
-    if (parent() == root()) {
+    if (m_frameless) {
+        if (!isFocusableFrameless()) return;   // docks, notifications: never
+    } else if (parent() == root()) {
         std::fprintf(stderr, "wm2: warning: bad parent in Client::activate\n");
         return;
     }
@@ -310,7 +353,7 @@ void Client::activate()
         activeClient()->deactivate();
     }
 
-    XUngrabButton(display(), AnyButton, AnyModifier, parent());
+    XUngrabButton(display(), AnyButton, AnyModifier, m_frameless ? m_window : parent());
 
     XSetInputFocus(display(), m_window, RevertToPointerRoot,
                    windowManager()->timestamp(false));
@@ -332,6 +375,15 @@ void Client::activate()
 
 void Client::deactivate()
 {
+    if (m_frameless) {
+        if (!isFocusableFrameless()) return;
+        // The frame's grab, on the client window itself. Pointer-SYNCHRONOUS,
+        // unlike the frame's, because eventButton() must activate and then
+        // replay the press to the client: a click both focuses and lands.
+        XGrabButton(display(), AnyButton, AnyModifier, m_window, false,
+                    ButtonPressMask, GrabModeSync, GrabModeAsync, None, None);
+        return;
+    }
     if (parent() == root()) {
         std::fprintf(stderr, "wm2: warning: bad parent in Client::deactivate\n");
         return;
@@ -519,8 +571,8 @@ void Client::setFullscreen(bool fullscreen)
         m_isFullscreen = true;
 
         // Per D-05: strip border, cover full screen geometry INCLUDING dock areas
-        markReparenting();               // deferred item 8 -- see above
-        m_border->stripForFullscreen();
+        if (!m_frameless) markReparenting();   // deferred item 8 -- see above; nothing is reparented frameless
+        if (!m_frameless) m_border->stripForFullscreen();
         int sw = windowManager()->screenWidth();
         int sh = windowManager()->screenHeight();
         XMoveResizeWindow(display(), m_window, 0, 0, sw, sh);
@@ -533,9 +585,15 @@ void Client::setFullscreen(bool fullscreen)
         m_isFullscreen = false;
 
         // Restore border and saved geometry
-        markReparenting();               // deferred item 8 -- see above
-        m_border->restoreFromFullscreen(m_preFullscreenX, m_preFullscreenY,
-                                         m_preFullscreenW, m_preFullscreenH);
+        if (!m_frameless) markReparenting();   // deferred item 8 -- see above; nothing is reparented frameless
+        if (m_frameless) {
+            XMoveResizeWindow(display(), m_window, m_preFullscreenX, m_preFullscreenY,
+                              static_cast<unsigned>(m_preFullscreenW),
+                              static_cast<unsigned>(m_preFullscreenH));
+        } else {
+            m_border->restoreFromFullscreen(m_preFullscreenX, m_preFullscreenY,
+                                             m_preFullscreenW, m_preFullscreenH);
+        }
         m_x = m_preFullscreenX;
         m_y = m_preFullscreenY;
         m_w = m_preFullscreenW;
@@ -604,8 +662,8 @@ void Client::setMaximized(bool vert, bool horz)
     // at (-25,-8 1050x737) -- the entire sideways tab and the top border off
     // the screen, on the one operation whose whole point is to make a window
     // fully visible.
-    const int xi = m_border->xIndent();
-    const int yi = m_border->yIndent();
+    const int xi = m_frameless ? 0 : m_border->xIndent();
+    const int yi = m_frameless ? 0 : m_border->yIndent();
 
     if (newVert || newHorz) {
         // Per D-07: expand to fill workarea, keep tab+border
@@ -659,8 +717,16 @@ void Client::setMaximized(bool vert, bool horz)
             // window in plan 08-11.
             int maxX = wx + xi;
             int maxY = wy + yi;
-            int maxW = ww - xi - 1;
-            int maxH = wh - yi - 1;
+            // The trailing pixel is the decorated frame's outer border; a
+            // frameless client has none and fills the workarea exactly
+            // (Codex branch review, 2026-09-05).
+            const int edge = m_frameless ? 0 : 1;
+            // No border term: a managed client has no X border on any path --
+            // the framed path and every ConfigureRequest strip it, and since
+            // Codex's second pass (2026-09-05) so does the frameless path in
+            // manage(); m_bw is the ORIGINAL width, kept for gravity only.
+            int maxW = ww - xi - edge;
+            int maxH = wh - yi - edge;
             if (maxW < 1) maxW = 1;
             if (maxH < 1) maxH = 1;
 
@@ -671,20 +737,21 @@ void Client::setMaximized(bool vert, bool horz)
             int newW = newHorz ? maxW : (wasHorz ? m_preMaximizedW : m_w);
             int newH = newVert ? maxH : (wasVert ? m_preMaximizedH : m_h);
 
-            m_border->configure(newX, newY, newW, newH, CWX | CWY | CWWidth | CWHeight, Above);
+            if (!m_frameless) m_border->configure(newX, newY, newW, newH, CWX | CWY | CWWidth | CWHeight, Above);
             // At (0, 0) the client is drawn UNDERNEATH the sideways tab and the
             // frame border. Every other geometry path in this window manager --
             // Border::reparent(), Client::resize() -- places it at the content
             // offset, and this one is the odd one out rather than the exception.
-            XMoveResizeWindow(display(), m_window, xi, yi, newW, newH);
+            XMoveResizeWindow(display(), m_window, m_frameless ? newX : xi, m_frameless ? newY : yi, newW, newH);
             m_x = newX; m_y = newY; m_w = newW; m_h = newH;
         }
     } else {
         // Restore from maximized
-        m_border->configure(m_preMaximizedX, m_preMaximizedY,
-                            m_preMaximizedW, m_preMaximizedH,
-                            CWX | CWY | CWWidth | CWHeight, Above);
-        XMoveResizeWindow(display(), m_window, xi, yi,
+        if (!m_frameless) m_border->configure(m_preMaximizedX, m_preMaximizedY,
+                                              m_preMaximizedW, m_preMaximizedH,
+                                              CWX | CWY | CWWidth | CWHeight, Above);
+        XMoveResizeWindow(display(), m_window,
+                          m_frameless ? m_preMaximizedX : xi, m_frameless ? m_preMaximizedY : yi,
                           m_preMaximizedW, m_preMaximizedH);
         m_x = m_preMaximizedX; m_y = m_preMaximizedY;
         m_w = m_preMaximizedW; m_h = m_preMaximizedH;
@@ -700,6 +767,68 @@ void Client::toggleMaximized()
         setMaximized(false, false);
     } else {
         setMaximized(true, true);
+    }
+}
+
+
+// Remove named states from the client's _NET_WM_STATE, leaving every other
+// atom the property carries -- including ones the WM never imported. Used only
+// where a rule overrides a specific state on a window the WM has not yet
+// rewritten; every other write goes through updateNetWmState().
+void Client::stripNetWmStates(Atom a, Atom b)
+{
+    Atom actualType = None; int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0; unsigned char* raw = nullptr;
+    // Whole property, BOUNDED: a first read that leaves bytesAfter is repeated
+    // once with a length covering the remainder, so a skip atom past the first
+    // chunk is still found and nothing after it is dropped (Codex re-review 2,
+    // P2). The property is client-controlled, so the retry is one and the size
+    // is capped; past either bound the property is left exactly as it was
+    // rather than read into an allocation the client chose (re-review 3, P1).
+    constexpr long kMaxStateAtoms = 256L;   // the EWMH defines a dozen
+    long length = 64L;
+    for (int attempt = 0; ; ++attempt) {
+        if (XGetWindowProperty(display(), m_window, Atoms::net_wmState, 0L, length, false,
+                               XA_ATOM, &actualType, &actualFormat, &nItems, &bytesAfter,
+                               &raw) != Success || !raw) {
+            if (raw) XFree(raw);
+            return;
+        }
+        if (bytesAfter == 0) break;
+        XFree(raw); raw = nullptr;
+        // The cap applies to what the property HOLDS; the eight atoms of slack
+        // only widen the re-read against a client appending between the two
+        // requests (re-review 4, P2: comparing count+slack left a property of
+        // 249..256 atoms, inside the documented cap, untouched).
+        const unsigned long present = nItems + bytesAfter / 4;
+        if (attempt >= 1 || present > static_cast<unsigned long>(kMaxStateAtoms)) return;
+        length = static_cast<long>(present + 8);
+    }
+    // The widened re-read can return up to eight atoms more than were present
+    // at the first read if the client appended in between; the cap is on what
+    // is processed, so it is checked once more on what actually arrived
+    // (re-review 5, P2).
+    if (nItems > static_cast<unsigned long>(kMaxStateAtoms)) {
+        XFree(raw);
+        return;
+    }
+    std::vector<Atom> kept;
+    if (actualType == XA_ATOM && actualFormat == 32) {
+        const Atom* atoms = reinterpret_cast<const Atom*>(raw);
+        for (unsigned long i = 0; i < nItems; ++i) {
+            if (atoms[i] != a && atoms[i] != b) kept.push_back(atoms[i]);
+        }
+    }
+    XFree(raw);
+    if (kept.size() == nItems) return;          // nothing to strip
+    if (kept.empty()) {
+        XChangeProperty(display(), m_window, Atoms::net_wmState,
+                        XA_ATOM, 32, PropModeReplace, nullptr, 0);
+    } else {
+        XChangeProperty(display(), m_window, Atoms::net_wmState,
+                        XA_ATOM, 32, PropModeReplace,
+                        reinterpret_cast<unsigned char*>(kept.data()),
+                        static_cast<int>(kept.size()));
     }
 }
 
@@ -1142,7 +1271,17 @@ void Client::applyWindowRules()
     // property is written here because nothing else in the map path writes it
     // for an ordinary window, so without this call the rule would set a flag
     // that no panel ever sees.
-    if (m_skipTaskbar) updateNetWmState();
+    // Codex P2: an explicit Off is an outcome too -- a client that mapped with
+    // _NET_WM_STATE_SKIP_TASKBAR / _SKIP_PAGER already set must lose them.
+    // But NOT through updateNetWmState(): that rebuilds the property from the
+    // WM's own booleans and would erase every other state the client set
+    // before mapping (the WM does not import those at manage time), which is
+    // what an Unset rule leaves alone. Off removes exactly the two it overrides.
+    if (m_ruleOutcome.skipTaskbar == RuleTriState::On) {
+        updateNetWmState();
+    } else if (m_ruleOutcome.skipTaskbar == RuleTriState::Off) {
+        stripNetWmStates(Atoms::net_wmStateSkipTaskbar, Atoms::net_wmStateSkipPager);
+    }
 }
 
 
@@ -1401,12 +1540,18 @@ void Client::unreparent()
 
 void Client::withdraw(bool changeState)
 {
-    m_border->unmap();
+    if (m_frameless) {
+        // The passive grab deactivate() left on the client window must not
+        // outlive this management cycle (Codex re-review 2, P1).
+        XUngrabButton(display(), AnyButton, AnyModifier, m_window);
+    } else {
+        m_border->unmap();
 
-    gravitate(true);
-    XReparentWindow(display(), m_window, root(), m_x, m_y);
+        gravitate(true);
+        XReparentWindow(display(), m_window, root(), m_x, m_y);
 
-    gravitate(false);
+        gravitate(false);
+    }
 
     if (changeState) {
         XRemoveFromSaveSet(display(), m_window);
@@ -1426,7 +1571,7 @@ void Client::hide()
         return;
     }
 
-    m_border->unmap();
+    if (!m_frameless) m_border->unmap();
     XUnmapWindow(display(), m_window);
 
     if (isActive()) windowManager()->clearFocus();
@@ -1457,6 +1602,7 @@ void Client::unhide(bool map)
 
 void Client::rename()
 {
+    if (m_frameless) return;                 // no tab to relabel
     m_border->configure(0, 0, m_w, m_h, CWWidth | CWHeight, Above);
 }
 
@@ -1482,6 +1628,12 @@ void Client::mapRaised()
         return;
     }
 
+    if (m_frameless) {
+        XMapRaised(display(), m_window);
+        windowManager()->raiseTransients(this);
+        return;
+    }
+
     m_border->mapRaised();
     windowManager()->raiseTransients(this);
 }
@@ -1499,6 +1651,7 @@ void Client::kill()
 
 void Client::lower()
 {
+    if (m_frameless) { XLowerWindow(display(), m_window); return; }
     m_border->lower();
 }
 
@@ -1518,12 +1671,18 @@ void Client::ensureVisible()
     if (m_x < 0) m_x = 0;
     if (m_y < 0) m_y = 0;
 
-    if (m_x != px || m_y != py) m_border->moveTo(m_x, m_y);
+    if (m_x != px || m_y != py) {
+        // Codex P1: a frameless client's border parent IS root, so moveTo()
+        // would configure the root window. Move the client itself.
+        if (m_frameless) XMoveWindow(display(), m_window, m_x, m_y);
+        else             m_border->moveTo(m_x, m_y);
+    }
 }
 
 
 void Client::decorate(bool active)
 {
+    if (m_frameless) return;
     m_border->decorate(active, m_w, m_h);
 }
 
@@ -1611,8 +1770,16 @@ void Client::move(XButtonEvent *e)
         }
 
         if (!found) {
-            poll(nullptr, 0, 50);
-            continue;
+            // Ledger 8: the 50 ms sleep is now a wait that also watches the
+            // exit flag and the self-pipe. Interrupted: abandon the drag with
+            // nothing committed (doSomething stays false).
+            const WindowManager::ModalWait wait = windowManager()->modalWait(
+                ButtonPressMask | ButtonReleaseMask | ButtonMotionMask | ExposureMask,
+                &event, 50);
+            if (wait == WindowManager::ModalWait::Interrupted) break;
+            if (wait == WindowManager::ModalWait::Timeout) continue;
+            // Event: it was taken off the queue, so it is handled below like
+            // any event the sweep found.
         }
 
         switch (event.type) {
@@ -1722,8 +1889,11 @@ void Client::resize(XButtonEvent *e, bool horizontal, bool vertical)
         }
 
         if (!found) {
-            poll(nullptr, 0, 50);
-            continue;
+            // Ledger 8: see the move loop above.
+            const WindowManager::ModalWait wait = windowManager()->modalWait(
+                dragMask | ExposureMask, &event, 50);
+            if (wait == WindowManager::ModalWait::Interrupted) break;
+            if (wait == WindowManager::ModalWait::Timeout) continue;
         }
 
         switch (event.type) {
@@ -1989,7 +2159,7 @@ void Client::eventConfigureRequest(XConfigureRequestEvent *e)
         sendConfigureNotify();
     }
 
-    if (m_managed) {
+    if (m_managed && !m_frameless) {
         wc.x = m_border->xIndent();
         wc.y = m_border->yIndent();
     } else {
@@ -2195,6 +2365,15 @@ void Client::eventButton(XButtonEvent *e)
 {
     if (e->type != ButtonPress) return;
 
+    if (m_frameless) {
+        // Reached only through deactivate()'s synchronous grab on the client
+        // window. Focus, then let the press through to the client.
+        mapRaised();
+        if (isNormal() && !isActive() && !e->send_event) activate();
+        XAllowEvents(display(), ReplayPointer, e->time);
+        return;
+    }
+
     mapRaised();
 
     if (e->button == Button1) {
@@ -2235,12 +2414,18 @@ void Client::detectFullscreenGesture(XButtonEvent *e)
     std::vector<Point> points;
     points.push_back({e->x_root, e->y_root});
 
-    XEvent event;
+    XEvent event{};
     bool done = false;
+    bool interrupted = false;
 
     while (!done) {
-        XMaskEvent(display(), ButtonPressMask | ButtonReleaseMask |
-                   ButtonMotionMask, &event);
+        // Ledger 8: interruptible. An interrupted gesture is no gesture.
+        if (windowManager()->modalWait(ButtonPressMask | ButtonReleaseMask |
+                                       ButtonMotionMask, &event, -1)
+            != WindowManager::ModalWait::Event) {
+            interrupted = true;
+            break;
+        }
 
         switch (event.type) {
         case MotionNotify:
@@ -2259,6 +2444,15 @@ void Client::detectFullscreenGesture(XButtonEvent *e)
             done = true;
             break;
         }
+    }
+
+    if (interrupted) {
+        // No event was delivered, so `event` carries nothing readable. Release
+        // the grab with the press's own timestamp -- the one defined time this
+        // path has -- and evaluate no gesture (Codex branch review, 2026-09-05:
+        // the previous code read event.xbutton.time and event.type here).
+        XUngrabPointer(display(), e->time);
+        return;
     }
 
     // For releaseGrab, we need a XButtonEvent pointer

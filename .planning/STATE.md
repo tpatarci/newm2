@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 08.5
 current_phase_name: v1.0 Closeout
 status: executing
-stopped_at: "Completed 08.5-13-PLAN.md -- discriminator ran 30/30 pass, bucket: all thirty passed"
-last_updated: "2026-09-01T07:39:45.305Z"
-last_activity: 2026-08-31
-last_activity_desc: Phase 08.5 execution started
+stopped_at: "08.5 all plans complete (08.5-08 bundle at 39de548, 08.5-05 repointed); phase verification and closeout PR #6 pending"
+last_updated: "2026-09-05T17:55:00Z"
+last_activity: 2026-09-05
+last_activity_desc: 08.5-08 complete after six captures (five findings fixed at source); 08.5-05 complete; CodeRabbit CLI and Codex branch reviews fixed; ten-run series at the final source tree 39de548 10/10 green
 state_head: 5a418206824065ab01d647835a34c71e78cb1ecd
 progress:
   total_phases: 10
   completed_phases: 4
   total_plans: 49
-  completed_plans: 44
+  completed_plans: 48
 milestone_name: milestone
 ---
 
@@ -27,6 +27,62 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 **Current focus:** Phase 08.5 — v1.0 Closeout
 
 ## Current Position
+
+Phase: 08.5 (v1.0 Closeout) — EXECUTING, all plans complete; phase verification and the closeout PR remain
+
+**Position as of 2026-09-05 (evening).** On 2026-09-05 the operator instructed the
+delegated project lead to finish everything planned without stopping for
+per-item confirmation; every decision below was taken under that standing
+instruction and is recorded in those terms so it can be reversed as a recorded
+decision.
+
+1. **08.5-10 Task 3 checkpoint RULED**: Attribution outcome `ATTRIBUTED`,
+   terminal disposition `FIX-PLAN`, recorded in `evidence/gates/wakeup/README.md`
+   and appended to `evidence/gates/attribution/README.md` (commit `e05f07f`).
+   The FIX-PLAN is 08.5-11 (already executed).
+2. **08.5-11: complete** (summary `3f098a6`). **08.5-12: complete** (fix
+   `57d5581`, record `a9ae0cd`, summary `fb33506`; Task 5 Decision A — 08.5-07
+   SUPERSEDED, 08.5-08 and 08.5-05 RELEASED; Decision B — the ruling in item 1).
+   **08.5-13: complete.**
+3. **WINDOWS.md ledger closed**: `open_count` 0 (6 fixed, 8 waived with reasons).
+4. **PR #5 MERGED** — `main` = `8c060fd`, 2026-09-05 11:59Z, on the local
+   CodeRabbit CLI gate; the CodeRabbit GitHub App is not installed on this
+   repository. This is the single current state of PR #5. Codex's four findings
+   on it were fixed in this worktree (frameless managed path, issue #3;
+   submenu overflow; frameless reflow; skip-taskbar=false) and re-reviewed
+   through six Codex passes ending clean (`evidence/gates/review-fixes/README.md`).
+5. **Ten-run measurement**: ten consecutive green `build-all.sh debug` runs at
+   `5ffee20` (330 tests), at `70fbd8f` (335 tests) and at the final capture commit
+   `39de548` (337 tests, 10 of 10 green, 17:09-17:49Z), `evidence/gates/fix-measurement/`.
+6. **08.5-08: complete** (`08.5-08-SUMMARY.md`). Six captures: `8e29d6d`
+   (static analysis red on five cppcheck findings in the modal loops; the smoke
+   transcript showed the window manager's own name one byte short), `2a94cbb`
+   (one new release warning, the signal handler's ignored `write()` result),
+   `d08b6e5` and `f54de6e` (all green, each superseded when a review pass changed
+   `src/` or `tests/`), `2781664` (the first full compile; four pre-existing
+   release warnings in a test's shell-outs), and the final bundle at `39de548`. Each stopped capture and what it
+   found: `evidence/gates/capture-attempts/README.md`.
+7. **Branch reviews before the PR**: CodeRabbit CLI (8 findings: one real
+   defect — a hide-or-kill of the client on a signal during a tab-button press —
+   two test-helper hardenings, five documentation corrections) and Codex over
+   the whole diff (2 findings: an uninitialised event read on gesture
+   interruption; frameless maximize one pixel short) and a second Codex pass on
+   that fix (a managed client has no X border on the frameless path either). All
+   fixed; `evidence/gates/review-fixes/README.md`.
+8. **08.5-05: complete** (`08.5-05-SUMMARY.md`, executed by a subagent, every
+   verify command re-run by the lead): gate rows repointed at this phase's
+   bundle, test-surface row recomputed by its own commands, interaction rows
+   cite the table row by row (13 open boxes file-wide, 7 in User Interaction, 0
+   in Release Evidence), `evidence/README.md` written.
+9. **Next**: phase verification (`08.5-VERIFICATION.md` re-run), push this
+   worktree's branch onto `modernize/wm2-born-again`, open **PR #6** → `main`,
+   CodeRabbit CLI + Codex on the final delta, merge, `/gsd-ship`.
+
+### History (superseded 2026-09-05)
+
+The RE-PLAN hold on 08.5-05/07/08 described in this history section was lifted
+2026-09-05 by 08.5-12 Task 5 Decision A — 08.5-07 superseded, 08.5-08 and
+08.5-05 released — per item 3 above.
 
 Phase: 08.5 (v1.0 Closeout) — EXECUTING
   "Ready to execute" here means **08.5-10 and nothing else**. 08.5-07, 08.5-08 and

@@ -1,0 +1,80 @@
+Internal ctest changing into directory: /home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/build/debug
+Test project /home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/build/debug
+    Start 332: preflight
+1/2 Test #332: preflight ...............................................................   Passed    0.19 sec
+    Start 211: A category submenu with more entries than fit stays inside the screen
+2/2 Test #211: A category submenu with more entries than fit stays inside the screen ...***Failed    0.60 sec
+Filters: "A category submenu with more entries than fit stays inside the screen"
+Randomness seeded to: 913490641
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_wm_runtime is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+A category submenu with more entries than fit stays inside the screen
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/tests/test_wm_runtime.cpp:4405
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/tests/test_wm_runtime.cpp:4464: FAILED:
+  CHECK( sub.h <= screenH )
+with expansion:
+  1453 (0x5ad) <= 768 (0x300)
+with messages:
+  menu open diagnostics: 
+  wm stderr:
+  
+wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: X_UnmapWindow (0x600026): BadWindow (invalid Window parameter)
+  submenu (367,1 136x1453) on a 768 px tall screen, 60 entries of 24 px
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/tests/test_wm_runtime.cpp:4465: FAILED:
+  CHECK( sub.y + sub.h <= screenH )
+with expansion:
+  1454 (0x5ae) <= 768 (0x300)
+with messages:
+  menu open diagnostics: 
+  wm stderr:
+  
+wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: X_UnmapWindow (0x600026): BadWindow (invalid Window parameter)
+  submenu (367,1 136x1453) on a 768 px tall screen, 60 entries of 24 px
+
+===============================================================================
+test cases:  1 |  0 passed | 1 failed
+assertions: 12 | 10 passed | 2 failed
+
+
+
+50% tests passed, 1 tests failed out of 2
+
+Label Time Summary:
+preflight       =   0.19 sec*proc (1 test)
+wm_menulabel    =   0.60 sec*proc (1 test)
+
+Total Test time (real) =   0.81 sec
+
+The following tests FAILED:
+	211 - A category submenu with more entries than fit stays inside the screen (Failed)
+Errors while running CTest

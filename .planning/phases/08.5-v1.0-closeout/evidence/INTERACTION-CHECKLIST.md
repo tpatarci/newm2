@@ -20,9 +20,16 @@ the second produced a general verdict; this is the per-item form.
 | **n/a** | Not applicable in this session, with the reason given |
 
 The three values are kept apart on purpose. Collapsing "walked" into "verdict"
-is exactly the blurring that left TEST-08 short after Phase 8, and the seven
-DEFERRED rows are the ones where **no automated test exists either** — so for
-those, nothing has ever exercised them but a human, and no human has.
+is exactly the blurring that left TEST-08 short after Phase 8, and nine of the
+eleven DEFERRED rows — **#4, #5, #7, #8, #9, #10, #20, #21, #22** — are the
+ones where **no automated test exists either** — so for those, nothing but a
+human can have exercised them, and no human did in this session (row #8's
+several-client circulation was exercised in the Phase 8 manual passes, which
+produced a general verdict rather than a per-item result). The other two DEFERRED rows
+carry some automated coverage in their own Notes even though the row itself
+was declined: **#6** (zero-client circulation is covered by `[wm_circulate]`)
+and **#19** (the resulting maximize state is covered by `[wm_fsmax]`, even
+though the middle-click gesture that would trigger it is not).
 
 ---
 
@@ -103,11 +110,15 @@ code comment is the kind of thing that outlives everyone who could correct it.
 
 | | Count |
 |---|---|
-| Walked step by step (**PASS**) | 9 |
-| Operator verdict (**PASS (verdict)**) | 7 |
+| Walked step by step (**PASS**) | 10 |
+| Operator verdict (**PASS (verdict)**) | 6 |
 | **DEFERRED** by operator decision | 11 |
 | **n/a** with reason | 4 |
 | **Total** | **31** |
+
+*Recounted 2026-09-05 from the Result column by the phase verification: row 23 ("The
+sideways tab looks right") is recorded **PASS**, so the split is 10 / 6, not the 9 / 7 the
+summary carried since `ec84a44`. No Result value was changed; only this summary.*
 
 **The eleven deferred rows are the honest gap in this release**, and they are not
 randomly distributed: nine of them are *gestures* — circulation permutations,

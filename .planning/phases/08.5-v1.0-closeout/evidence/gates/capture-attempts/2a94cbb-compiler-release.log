@@ -1,0 +1,62 @@
+Consolidate compiler generated dependencies of target wm2-born-again
+[  1%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Manager.cpp.o
+[  1%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Client.cpp.o
+[  2%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Border.cpp.o
+Consolidate compiler generated dependencies of target Catch2
+[ 63%] Built target Catch2
+Consolidate compiler generated dependencies of target Catch2WithMain
+[ 64%] Built target Catch2WithMain
+Consolidate compiler generated dependencies of target test_raii
+Consolidate compiler generated dependencies of target test_eventloop
+Consolidate compiler generated dependencies of target test_menupaint
+Consolidate compiler generated dependencies of target test_ewmh
+Consolidate compiler generated dependencies of target test_xft_poc
+Consolidate compiler generated dependencies of target test_autoraise
+Consolidate compiler generated dependencies of target test_config
+Consolidate compiler generated dependencies of target test_binaryscanner
+Consolidate compiler generated dependencies of target test_smoke
+Consolidate compiler generated dependencies of target test_desktopentry
+Consolidate compiler generated dependencies of target test_rules
+Consolidate compiler generated dependencies of target test_client
+Consolidate compiler generated dependencies of target test_appcache
+[ 65%] Built target test_raii
+[ 67%] Built target test_menupaint
+[ 68%] Built target test_autoraise
+[ 69%] Built target test_config
+[ 71%] Built target test_eventloop
+[ 72%] Built target test_xft_poc
+[ 74%] Built target test_desktopentry
+[ 76%] Built target test_binaryscanner
+[ 77%] Built target test_ewmh
+[ 77%] Built target test_smoke
+[ 80%] Built target test_appcache
+[ 83%] Built target test_rules
+[ 83%] Built target test_client
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/src/Manager.cpp: In static member function ‘static void WindowManager::sigHandler(int)’:
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/src/Manager.cpp:434:20: warning: ignoring return value of ‘ssize_t write(int, const void*, size_t)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  434 |         (void)write(s_pipeWriteFd, &c, 1);
+      |               ~~~~~^~~~~~~~~~~~~~~~~~~~~~
+[ 84%] Linking CXX executable wm2-born-again
+[ 88%] Built target wm2-born-again
+Consolidate compiler generated dependencies of target test_wm_geometry
+Consolidate compiler generated dependencies of target test_wm_fallbacks
+Consolidate compiler generated dependencies of target test_wm_focus
+Consolidate compiler generated dependencies of target test_wm_process
+Consolidate compiler generated dependencies of target test_wm_lifecycle
+Consolidate compiler generated dependencies of target test_wm_rules
+Consolidate compiler generated dependencies of target test_wm_state
+Consolidate compiler generated dependencies of target test_wm_runtime
+Consolidate compiler generated dependencies of target test_wm_resource
+[ 88%] Building CXX object CMakeFiles/test_wm_process.dir/tests/test_wm_process.cpp.o
+[ 90%] Built target test_wm_geometry
+Consolidate compiler generated dependencies of target test_wm_repro
+[ 91%] Built target test_wm_focus
+[ 92%] Built target test_wm_fallbacks
+[ 93%] Built target test_wm_lifecycle
+[ 94%] Built target test_wm_runtime
+[ 97%] Built target test_wm_state
+[ 97%] Built target test_wm_rules
+[ 98%] Built target test_wm_resource
+[ 99%] Built target test_wm_repro
+[100%] Linking CXX executable test_wm_process
+[100%] Built target test_wm_process

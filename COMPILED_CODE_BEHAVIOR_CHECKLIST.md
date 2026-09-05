@@ -75,8 +75,9 @@ no test behind it is a finding that will be rediscovered.
 
 - [x] Document distro, compiler, CMake, and pkg-config versions for every signoff.
       DONE (plan 08-14). `scripts/preflight.sh` records them and its output is
-      committed at `evidence/gates/preflight-versions.log`. It runs as the
-      `preflight` ctest fixture, so a signoff cannot be produced without it.
+      committed at `08.5-v1.0-closeout/evidence/gates/preflight-versions.log`. It
+      runs as the `preflight` ctest fixture, so a signoff cannot be produced
+      without it.
 - [x] Confirm native dependencies are present:
       DONE. Asserted by `scripts/preflight.sh` (six pkg-config modules, not the
       four below — libxrandr and libxrender are hard build deps too).
@@ -89,7 +90,7 @@ c++ --version
 
 - [x] Confirm headless and interactive X11 tools are available:
       DONE. Asserted by `scripts/preflight.sh`; transcript in
-      `evidence/gates/preflight-versions.log`.
+      `08.5-v1.0-closeout/evidence/gates/preflight-versions.log`.
 
 ```bash
 command -v Xvfb
@@ -131,36 +132,48 @@ fc-match "Noto Sans,DejaVu Sans,Sans:bold:size=12"
 
 - [x] Configure a clean Debug build with tests enabled:
       DONE. `scripts/gates/build-all.sh debug`; log at
-      `evidence/gates/build-all-debug.log`, exit 0.
+      `08.5-v1.0-closeout/evidence/gates/build-all-debug.log`, exit 0 (confirmed
+      in `08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt` at `39de548`).
 
 ```bash
 cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
 ```
 
 - [x] Build without compiler or linker warnings that are new for the change:
-      DONE. Zero warning lines recorded; see `evidence/gates/compiler-debug.log`
-      and `compiler-release.log`, and the "0 compiler/linker warning line(s)"
-      line in each build-all log.
+      DONE. Zero warning lines recorded in all three trees; see
+      `08.5-v1.0-closeout/evidence/gates/compiler-debug.log`,
+      `08.5-v1.0-closeout/evidence/gates/compiler-release.log`, and
+      `08.5-v1.0-closeout/evidence/gates/compiler-asan.log`, and the
+      "0 compiler/linker warning line(s)" line in each of
+      `08.5-v1.0-closeout/evidence/gates/build-all-debug.log`,
+      `08.5-v1.0-closeout/evidence/gates/build-all-release.log` and
+      `08.5-v1.0-closeout/evidence/gates/build-all-asan.log`.
 
 ```bash
 cmake --build build/debug --parallel
 ```
 
 - [x] Run the full CTest suite:
-      DONE. **295/295 in all three trees** at `c61cb4b`; full logs in
-      `evidence/gates/build-all-{debug,release,asan}.log`.
+      DONE. **337/337 (100% tests passed, 0 tests failed) in all three trees**
+      at `39de548` (`08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt`); full
+      logs in `08.5-v1.0-closeout/evidence/gates/build-all-debug.log`,
+      `08.5-v1.0-closeout/evidence/gates/build-all-release.log` and
+      `08.5-v1.0-closeout/evidence/gates/build-all-asan.log`.
 
 ```bash
 ctest --test-dir build/debug --output-on-failure
 ```
 
 - [x] Confirm the expected discovered test surface is present. The tree contains
-      **293 Catch2 test cases** across 21 files, of which **292 are registered
-      with ctest** (`Total Tests: 295` including the `preflight`, `start_xvfb`
-      and `stop_xvfb` fixture tests). RECOMPUTED at `c61cb4b`, not transcribed. The one case not registered is the hidden
-      `[.][wm_resource_calibration]` case in `tests/test_wm_resource.cpp`, which
-      is hidden on purpose so the judged resource budget cannot have been
-      produced by a run that was itself being judged.
+      **335 Catch2 test cases** across 23 files, of which **334 are registered
+      with ctest** (`Total Tests: 337` including the `preflight`, `start_xvfb`
+      and `stop_xvfb` fixture tests). RECOMPUTED at `39de548`, not transcribed.
+      The arithmetic: 335 source cases − 1 hidden case = 334 registered Catch2
+      cases, + 3 fixture tests = 337 `Total Tests`. The one case not registered
+      is the hidden `[.][wm_resource_calibration]` case in
+      `tests/test_wm_resource.cpp`, which is hidden on purpose so the judged
+      resource budget cannot have been produced by a run that was itself being
+      judged.
 
       **RECOMPUTE, DO NOT TRANSCRIBE.** This line rotted once already — the
       figure it carried was 102, taken two phases before it was last read, which
@@ -177,32 +190,47 @@ grep -c '^TEST_CASE' tests/*.cpp
 ctest --test-dir build/debug -N | tail -1
 ```
 
-      Per file, at the time of writing (plan 08-14):
+      Per file, at the time of writing (plan 08.5-05, commit `39de548`):
 
       | File | Cases | | File | Cases |
       |---|---|---|---|---|
-      | `test_config.cpp` | 48 | | `test_wm_fallbacks.cpp` | 13 |
-      | `test_wm_state.cpp` | 24 | | `test_desktopentry.cpp` | 12 |
-      | `test_wm_runtime.cpp` | 23 | | `test_client.cpp` | 11 |
-      | `test_wm_focus.cpp` | 21 | | `test_appcache.cpp` | 8 |
-      | `test_rules.cpp` | 17 | | `test_binaryscanner.cpp` | 8 |
-      | `test_wm_lifecycle.cpp` | 17 | | `test_wm_rules.cpp` | 8 |
-      | `test_wm_geometry.cpp` | 17 | | `test_smoke.cpp` | 7 |
-      | `test_ewmh.cpp` | 16 | | `test_wm_process.cpp` | 6 |
-      | `test_raii.cpp` | 16 | | `test_xft_poc.cpp` | 6 |
-      | `test_autoraise.cpp` | 6 | | `test_eventloop.cpp` | 5 |
-      | `test_wm_resource.cpp` | 4 | | | |
+      | `test_config.cpp` | 48 | | `test_desktopentry.cpp` | 12 |
+      | `test_wm_runtime.cpp` | 32 | | `test_client.cpp` | 11 |
+      | `test_rules.cpp` | 25 | | `test_appcache.cpp` | 8 |
+      | `test_wm_state.cpp` | 24 | | `test_binaryscanner.cpp` | 8 |
+      | `test_wm_focus.cpp` | 21 | | `test_smoke.cpp` | 7 |
+      | `test_wm_lifecycle.cpp` | 17 | | `test_autoraise.cpp` | 6 |
+      | `test_wm_geometry.cpp` | 17 | | `test_wm_process.cpp` | 6 |
+      | `test_ewmh.cpp` | 16 | | `test_xft_poc.cpp` | 6 |
+      | `test_raii.cpp` | 16 | | `test_menupaint.cpp` | 5 |
+      | `test_wm_rules.cpp` | 18 | | `test_wm_resource.cpp` | 4 |
+      | `test_wm_fallbacks.cpp` | 13 | | `test_wm_repro.cpp` | 2 |
+      | `test_eventloop.cpp` | 13 | | | |
 
-      Moved since the 284 figure: `test_wm_runtime.cpp` 16 -> 23 (the menu rework
-      and the button-target case) and `test_wm_geometry.cpp` 15 -> 17 (the drag
-      clamp and the frame-configure guard). Both are plan 08-14.
+      Moved since the 08-14 table (293 cases, 21 files): `test_rules.cpp` 17 ->
+      25 (the title criterion and match-key rename, plan 08.5-01, "8 new
+      `[rules]` cases, 17 -> 25"); `test_wm_rules.cpp` 8 -> 18 (+5 from plan
+      08.5-01's fold wiring, "9 -> 14" per its own summary — which does not
+      square with the 08-14 table's 8, itself a sign of how easily this figure
+      drifts — plus 5 further cases from the Codex review-fixes rounds — three on PR #5's findings, two from the branch reviews before PR #6 —
+      `08.5-v1.0-closeout/evidence/gates/review-fixes/README.md`, a dated round rather than a
+      numbered plan); `test_wm_runtime.cpp` 23 -> 32 (+9: at least 2 are named in
+      the same review-fixes round — the no-decorate click case and the submenu
+      overflow case — the remainder spans plans 08.5-06/08.5-11/08.5-12/08.5-13's
+      menu and runtime work and is not separable file-count-by-file-count from
+      the SUMMARY files; closeout round, plan not determined for that
+      remainder); `test_eventloop.cpp` 5 -> 13 (+8: four cases each from plan
+      08.5-11 and plan 08.5-12); and two new files, `test_wm_repro.cpp` (2 cases,
+      plan 08.5-09) and `test_menupaint.cpp` (5 cases, plan 08.5-13). Every
+      other file's count is unchanged from the 08-14 table.
 
       A count that has drifted is not automatically a defect — a plan that adds
       cases moves it legitimately. It is a prompt to find out *which* file
       changed and why.
 - [x] Run a Release build and tests:
-      DONE. `evidence/gates/build-all-release.log`, exit 0, 295/295. The release
-      gate also runs the link audit below.
+      DONE. `08.5-v1.0-closeout/evidence/gates/build-all-release.log`, exit 0,
+      100% tests passed, 0 tests failed out of 337. The release gate also runs
+      the link audit below (24 entries, all in the intended runtime set).
 
 ```bash
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
@@ -212,8 +240,9 @@ ctest --test-dir build/release --output-on-failure
 
 - [x] Run an AddressSanitizer/UBSan build. Treat use-after-free, invalid enum
       use, double-free, and out-of-bounds reports as blockers:
-      DONE. `evidence/gates/build-all-asan.log`, exit 0, 295/295, "no sanitizer
-      findings". The six files in `evidence/gates/sanitizer-reports/` are LSan
+      DONE. `08.5-v1.0-closeout/evidence/gates/build-all-asan.log`, exit 0, 100%
+      tests passed, 0 tests failed out of 337, "no sanitizer findings". The six
+      files in `08.5-v1.0-closeout/evidence/gates/sanitizer-reports/` are LSan
       **suppression-accounting** logs (2 allocations, 288 bytes, libfontconfig),
       not findings — their full contents are in the bundle so the distinction can
       be checked rather than taken on trust.
@@ -228,9 +257,10 @@ ctest --test-dir build/asan --output-on-failure
 
 - [x] Run static analysis when tools are available:
       DONE. `scripts/analysis/run-static-analysis.sh`, exit 0; log at
-      `evidence/gates/static-analysis.log`. cppcheck 2.7: 15 findings, all
-      accounted for in the content-hash baseline. clang-tidy 14: no enforced
-      check fired.
+      `08.5-v1.0-closeout/evidence/gates/static-analysis.log`. cppcheck 2.7:
+      15 finding(s), all accounted for in the baseline (keyed on
+      `(id, fileName)`, since cppcheck 2.7 never computes the hash element).
+      clang-tidy 14.0.0: no enforced check fired.
 
 ```bash
 cppcheck --enable=all --std=c++17 -Iinclude src include
@@ -238,9 +268,9 @@ clang-tidy -p build/debug src/*.cpp
 ```
 
 - [x] Verify the final executable links only to intended runtime libraries:
-      DONE. `evidence/gates/ldd-release.txt`. **libXtst does not appear** — XTEST
-      is linked into test targets only, which is the constraint that keeps the
-      shipped binary within the 512MB VPS budget.
+      DONE. `08.5-v1.0-closeout/evidence/gates/ldd-release.txt`. **libXtst does
+      not appear** — XTEST is linked into test targets only, which is the
+      constraint that keeps the shipped binary within the 512MB VPS budget.
 
 ```bash
 ldd build/release/wm2-born-again
@@ -413,7 +443,9 @@ DISPLAY=:2 xwininfo -root -tree
       DONE (plans 08-13, 08-14): `[wm_menulabel]`, `[wm_menureopen]`,
       `[wm_menuback]`, and the operator's two manual passes. The menu was rebuilt
       in `12f6de8`/`fa33f2e` to one grab and one loop after the operator found the
-      outer menu went dead following a submenu episode.
+      outer menu went dead following a submenu episode. Confirmed per-item:
+      `evidence/INTERACTION-CHECKLIST.md` row 1 — **PASS**, "Including the
+      bottom-right edge case" (tpatarci, 2026-08-30).
       **Known limitation, not covered by this tick:** a category with very many
       entries produces a submenu taller than the screen with no scrolling and no
       cap — 202 of this host's 319 cached apps land in `Other`. The ROOT menu is
@@ -424,6 +456,10 @@ DISPLAY=:2 xwininfo -root -tree
       runs a command with an argument and a shell metacharacter through
       `exec-using-shell` in BOTH settings, with a filesystem witness proving
       nothing is shell-evaluated when the flag is off (threat T-8-SHELL).
+      Confirmed per-item: `evidence/INTERACTION-CHECKLIST.md` row 2 — **PASS**,
+      "xclock appeared, framed"; row 3 — **n/a**, plain exec is walked, shell
+      mode needs a WM restart and is covered automatically instead (tpatarci,
+      2026-08-30).
 
 ```bash
 DISPLAY=:2 build/debug/wm2-born-again --new-window-command=xclock
@@ -433,48 +469,87 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
 - [ ] Root menu hidden-client entries restore hidden clients.
       **NOT COVERED.** `Client::hide()`/`unhide()` are tested directly
       (`[wm_lifecycle]`), but nothing drives the restore through the MENU ROW,
-      which is the path a user takes. Remains open.
+      which is the path a user takes. `evidence/INTERACTION-CHECKLIST.md` row
+      4 records the disposition: **DEFERRED**, "no automated coverage either" —
+      declined by the operator (tpatarci, 2026-08-30): *"We are not running the
+      seven. It is deferred."* This is a recorded decision, not an unrecorded
+      gap; the follow-up is the v1.1 "Gesture and input coverage" backlog line,
+      not a re-run of this checklist. Remains open.
 - [ ] Root menu exit item appears only at the lower-right screen edge and exits.
-      **NOT COVERED.** No automated case, and the operator's second pass gave a
-      general verdict rather than a per-item result for this one. Remains open.
+      **NOT COVERED.** No automated case. `evidence/INTERACTION-CHECKLIST.md`
+      row 5 records the disposition: **DEFERRED**, "no automated coverage
+      either" — declined by the operator (tpatarci, 2026-08-30), not merely a
+      general verdict standing in for a per-item result as this row previously
+      said; a per-item table now exists and this is its recorded answer for
+      this item. Remains open.
 - [ ] Right-click root/window circulation works with zero clients, one client,
       hidden clients, transient clients, and multiple normal clients.
       **PARTIAL —** the zero-client case is automated
       (`tests/test_wm_process.cpp` `[wm_circulate]`, which found and fixed a
-      100%-CPU spin), and the multi-client case was exercised in the manual
-      passes. The hidden-client and transient-client permutations have no
-      automated case; see the gap list in `08-14-SUMMARY.md`.
+      100%-CPU spin). `evidence/INTERACTION-CHECKLIST.md` rows 6-10 record the
+      five permutations: row 6 (zero clients) — **DEFERRED**, but automated by
+      `[wm_circulate]`; row 7 (one client) — **DEFERRED**; row 8 (several
+      normal clients) — **DEFERRED**, exercised in the Phase 8 manual passes
+      but not automated; rows 9-10 (hidden client, transient/dialog) —
+      **DEFERRED**, "no automated coverage either". All five declined by the
+      operator (tpatarci, 2026-08-30) in the same sitting. Remains open.
 - [x] Clicking a tab/frame raises and focuses according to the selected focus
       policy.
       DONE (plan 08-07): `tests/test_wm_focus.cpp` `[wm_focus]`, six cases
       driving the real binary with real pointer events, covering click-to-focus,
       auto-raise and raise-on-focus in BOTH directions. All three were dead
-      settings before that plan — they parsed and reached nothing.
+      settings before that plan — they parsed and reached nothing. Confirmed
+      per-item: `evidence/INTERACTION-CHECKLIST.md` row 11 — **PASS (verdict)**,
+      not walked individually but covered by the operator's own statement and
+      by `[wm_focus]` (tpatarci, 2026-08-30).
 - [ ] Dragging a tab moves a window and sends a correct synthetic
       `ConfigureNotify`.
       **PARTIAL — the move is covered, the ConfigureNotify is not.** Plan 08-14
       added a drag case (`[wm_geometry]`) after the operator lost a window off
       the top-left; it asserts the resulting geometry but nothing asserts the
-      synthetic `ConfigureNotify` that `Client::move()` sends. Remains open.
+      synthetic `ConfigureNotify` that `Client::move()` sends.
+      `evidence/INTERACTION-CHECKLIST.md` rows 12-13 confirm the move half by
+      walking it: row 12 — **PASS**, "name tab always remains available"; row
+      13 — **PASS**, the `a5a105c` off-screen-drag clamp — **the operator's own
+      Phase 8 defect report, confirmed fixed by the person who filed it**
+      (tpatarci, 2026-08-30). The ConfigureNotify half has no table row and no
+      automated case either, which is why this row stays open on that half
+      alone.
 - [x] Dragging resize handles resizes normally and respects constrained
       horizontal/vertical resize paths.
       DONE (plan 08-11): `[wm_sizehints]`, 7 cases over
       `fixResizeDimensions()`, which found a client-triggerable divide-by-zero.
+      Confirmed per-item: `evidence/INTERACTION-CHECKLIST.md` row 14 —
+      **PASS**; row 15 — **PASS**, constrained horizontal-only and
+      vertical-only both walked (tpatarci, 2026-08-30).
 - [x] Tab button short press hides; long press after `destroy-window-delay` sends
       delete/kill behavior and restores the cursor.
       DONE (plan 08-13): `[wm_config_runtime]` asserts both halves — a
       hide-always build and a delete-always build each fail one of them. Plan
       08-14 added `[wm_button]`, which widened the button's target from 8x8 to
       the tab's whole top square after the operator reported it as too demanding
-      to hit.
+      to hit. Confirmed per-item: `evidence/INTERACTION-CHECKLIST.md` row 16 —
+      **PASS**; row 17 — **PASS** ("Produced a finding — see below" in that
+      table, the `destroy-window-delay` finding recorded there); row 18 —
+      **PASS**, "feel is just right" — the `43fb24b` widening from 8x8 to the
+      tab's whole top square, **the operator's own Phase 8 defect report,
+      confirmed fixed by the person who filed it** (tpatarci, 2026-08-30).
 - [ ] Middle-click tab toggles maximize.
       **NOT COVERED at the gesture.** The maximize STATE is covered thoroughly
       (`[wm_fsmax]`, `[ewmh][state]`), but via EWMH client messages; no case
-      middle-clicks a tab. Remains open.
+      middle-clicks a tab. `evidence/INTERACTION-CHECKLIST.md` row 19 records
+      the disposition: **DEFERRED**, "Gesture has no automated coverage; the
+      *state* is covered by `[wm_fsmax]`" — declined at the gesture by the
+      operator (tpatarci, 2026-08-30); the state it would produce is automated,
+      the gesture that triggers it is not. Remains open.
 - [ ] Right-button circular gesture toggles fullscreen and ignores short/noisy
       gestures.
       **NOT COVERED.** `detectFullscreenGesture()` has no automated case at all,
-      including the "ignores short/noisy gestures" half. Remains open.
+      including the "ignores short/noisy gestures" half.
+      `evidence/INTERACTION-CHECKLIST.md` rows 20-21 record the disposition:
+      **DEFERRED**, "`detectFullscreenGesture()` has zero coverage of any
+      kind" — declined by the operator (tpatarci, 2026-08-30); the function has
+      no coverage of any kind, automated or manual. Remains open.
 - [ ] Pointer grabs are always released after cancel, extra button press, escape
       paths, or client destroy during interaction.
       **NOT COVERED as a property.** The `[servergrab]` cases are about
@@ -482,7 +557,10 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
       substantially — `attemptGrab()` took `int` for a 32-bit unsigned timestamp,
       so every grab silently failed past ~24.8 days of server uptime, and the
       menu's two-grab structure was collapsed to one — but no test asserts the
-      release property across cancel and destroy paths. Remains open.
+      release property across cancel and destroy paths.
+      `evidence/INTERACTION-CHECKLIST.md` row 22 records the disposition:
+      **DEFERRED**, "No automated coverage as a property" — declined by the
+      operator (tpatarci, 2026-08-30). Remains open.
 
 ## ICCCM And EWMH Checklist
 
@@ -552,7 +630,11 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
 ## Robustness And Security Checklist
 
 - [x] No ASan/UBSan reports in full automated and runtime smoke tests.
-      DONE: `evidence/gates/build-all-asan.log`: 295/295, "no sanitizer findings". The six files under `evidence/gates/sanitizer-reports/` are LSan suppression-ACCOUNTING logs (2 allocations, 288 bytes, libfontconfig), copied in full so the distinction can be checked.
+      DONE: `08.5-v1.0-closeout/evidence/gates/build-all-asan.log`: 100% tests
+      passed, 0 tests failed out of 337, "no sanitizer findings". The six files
+      under `08.5-v1.0-closeout/evidence/gates/sanitizer-reports/` are LSan
+      suppression-ACCOUNTING logs (2 allocations, 288 bytes, libfontconfig),
+      copied in full so the distinction can be checked.
 - [x] No steady CPU spin while idle, while waiting for auto-raise timers, or while
       menus/grabs are active.
       DONE: `[wm_resource_budget]` measures idle CPU at 0 ticks over 30s; `[wm_focus]` covers the auto-raise-off case; `[wm_circulate]` was added after plan 08-07 found `circulate()` spinning at 100% CPU.
@@ -590,7 +672,7 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
 
 - [x] Verify on the target baseline distro, especially Ubuntu 22.04+.
       DONE: Ubuntu 22.04+ host; versions recorded in
-      `evidence/gates/preflight-versions.log`.
+      `08.5-v1.0-closeout/evidence/gates/preflight-versions.log`.
 - [ ] Verify under Xvfb, Xephyr, one VNC server, and one XRDP session if those are
       supported deployment targets.
       **PARTIAL, and the shortfall is narrower than it was.** Xvfb (the whole
@@ -634,28 +716,53 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
 For each release or handoff, attach:
 
 - [x] Commit hash and branch.
-      DONE: `evidence/gates/PROVENANCE.txt`.
+      DONE: `08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt` — commit
+      `39de54811084154ddac1d2115e5f950b0c9f1565` (`39de548`), branch
+      `worktree-agent-a0ef668e51c39c8dd`.
 - [x] Dependency/package list and tool versions.
-      DONE: `evidence/gates/preflight-versions.log`.
+      DONE: `08.5-v1.0-closeout/evidence/gates/preflight-versions.log`.
 - [x] Debug, Release, and sanitizer build logs.
-      DONE: `evidence/gates/build-all-{debug,release,asan}.log` plus `compiler-{debug,release}.log`.
+      DONE: `08.5-v1.0-closeout/evidence/gates/build-all-debug.log`,
+      `08.5-v1.0-closeout/evidence/gates/build-all-release.log` and
+      `08.5-v1.0-closeout/evidence/gates/build-all-asan.log`, plus
+      `08.5-v1.0-closeout/evidence/gates/compiler-debug.log`,
+      `08.5-v1.0-closeout/evidence/gates/compiler-release.log` and
+      `08.5-v1.0-closeout/evidence/gates/compiler-asan.log`.
 - [x] Full `ctest --output-on-failure` logs.
-      DONE: in the three build-all logs; 295/295 in every tree.
+      DONE: in the three build-all logs above; 100% tests passed, 0 tests
+      failed out of 337 in every tree.
 - [x] Runtime smoke transcript with `xprop -root` and `xwininfo -root -tree`
       output.
-      DONE: `evidence/local-xephyr/` and the three per-target directories.
+      DONE, two things, not one: `08-xrandr-vnc-compatibility-focus-rules/evidence/local-xephyr/`
+      and the three per-target directories (`tigervnc/`, `xrdp/`, `x11vnc-xvfb/`)
+      are Phase 8's transcripts, inherited rather than re-captured. This phase's
+      own capture is separate and taken at the gate commit:
+      `08.5-v1.0-closeout/evidence/gates/runtime-smoke/` (`capabilities.txt`,
+      `root-properties.txt`, `window-tree.txt`) — Xvfb `:135`, release binary
+      plus one `xmessage` client titled `wm2-smoke-39de548`, all three stopped
+      by PID.
 - [x] Screenshots from shaped and rectangular/no-Shape runs if supported.
-      DONE: `evidence/screenshots/`, seven images including the shaped and rectangular pair.
+      DONE: `08-xrandr-vnc-compatibility-focus-rules/evidence/screenshots/`,
+      seven images including the shaped and rectangular pair. Qualified at the
+      Phase 8 directory deliberately — no screenshot was taken in this phase.
 - [x] ASan/UBSan logs showing no actionable findings.
-      DONE: `evidence/gates/build-all-asan.log` and `evidence/gates/sanitizer-reports/`.
-- [ ] Manual interaction checklist results with tester name and date.
-      **PARTIAL.** Two manual passes were run by the operator (tpatarci) on
-      2026-08-29 and 2026-08-30, and their findings and dispositions are recorded
-      in `.continue-here.md` and in `08-14-SUMMARY.md`. What does NOT exist is a
-      per-item pass/fail table: the second pass produced a general verdict ("all
-      works like a charm"), which is not the same as a result for each row of the
-      User Interaction Checklist. The unticked rows in that section above are the
-      honest consequence. Remains open.
+      DONE: `08.5-v1.0-closeout/evidence/gates/build-all-asan.log` and
+      `08.5-v1.0-closeout/evidence/gates/sanitizer-reports/`.
+- [x] Manual interaction checklist results with tester name and date.
+      DONE: `evidence/INTERACTION-CHECKLIST.md`. **Tester** tpatarci
+      (operator). **Date** 2026-08-30. **Target** TigerVNC `:11`,
+      1280x1024x24, loopback only. **Commit** `0244c06`. Per-item results for
+      all 31 rows: **10 PASS** (walked step by step), **6 PASS (verdict)**
+      (covered by the operator's own statement, not walked row by row),
+      **11 DEFERRED** (explicitly declined by the operator), **4 n/a** (not
+      applicable in this session, reason given) — total **31**. This closes
+      the gap the row used to describe: a per-item table now exists, has a
+      tester and a date, and covers every row of the User Interaction
+      Checklist above. **What it does not close:** eleven rows were declined,
+      nine of them gestures (circulation permutations, middle-click maximize,
+      the circular fullscreen gesture, grab release) plus the menu's exit and
+      hidden-client rows — the honest gap this release ships with, and the
+      v1.1 "Gesture and input coverage" backlog line exists for exactly this.
 - [x] List of accepted deviations, each with owner and follow-up issue.
       DONE: D-8-TIGHTVNC and D-8-X2GO below, each with reason, owner and
       follow-up.

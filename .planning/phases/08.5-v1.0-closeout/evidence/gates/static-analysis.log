@@ -1,0 +1,15 @@
+== cppcheck 2.7 ==
+  15 finding(s) in src/ and include/ before suppression
+  derived suppression file: 10 de-duplicated (id, fileName) entr(ies), no line numbers
+  native run clean against the derived suppressions
+  cppcheck OK: 15 finding(s), all accounted for in the baseline
+
+== clang-tidy 14.0.0 ==
+  34 project translation unit(s) from /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/build/debug/compile_commands.json
+  0 fatal, 149 reported-only diagnostic(s)
+        144 cppcoreguidelines-init-variables
+          3 bugprone-use-after-move
+          2 bugprone-branch-clone
+  clang-tidy OK: no enforced check fired
+
+static-analysis OK

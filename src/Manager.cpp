@@ -1,5 +1,6 @@
 #include "Manager.h"
 #include "Client.h"
+#include "TimestampWait.h"
 #include <string>
 #include <cstring>
 #include <cstdio>
@@ -76,11 +77,12 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     , m_randrEventBase(-1)
     , m_lastKnownScreenW(0)
     , m_lastKnownScreenH(0)
-    , m_currentTime(-1)
+    , m_currentTime(CurrentTime)
     , m_timestampColdEntries(0)
     , m_timestampBlockedWaits(0)
     , m_timestampForeignMatches(0)
     , m_timestampLongestWaitMs(0)
+    , m_timestampWaitTimeouts(0)
     , m_looping(false)
     , m_returnCode(0)
     , m_menuWindow(None)
@@ -429,7 +431,12 @@ void WindowManager::sigHandler(int)
     // dereferencing object pointer (not guaranteed safe in signal handler).
     if (s_pipeWriteFd >= 0) {
         char c = 'x';
-        (void)write(s_pipeWriteFd, &c, 1);
+        // glibc marks write() warn_unused_result and a (void) cast does not
+        // silence it under -O2 (the release gate's one warning at 2a94cbb). A
+        // full pipe or a closed read end is not actionable here; the byte is
+        // a wake-up, and the flag above is what the loop acts on.
+        const ssize_t rc = write(s_pipeWriteFd, &c, 1);
+        (void)rc;
     }
 }
 
@@ -799,10 +806,13 @@ void WindowManager::setupEwmhProperties()
                     reinterpret_cast<unsigned char*>(&m_wmCheckWindow), 1);
 
     // Set _NET_WM_NAME on check window with UTF8_STRING encoding (Pitfall 2)
+    // Length from the string, not a literal: the literal was 13 for a
+    // 14-byte name and the 08.5-08 smoke transcript read "wm2-born-agai".
     const char *wmName = "wm2-born-again";
     XChangeProperty(display(), m_wmCheckWindow, Atoms::net_wmName,
                     Atoms::utf8_string, 8, PropModeReplace,
-                    reinterpret_cast<const unsigned char*>(wmName), 13);
+                    reinterpret_cast<const unsigned char*>(wmName),
+                    static_cast<int>(std::strlen(wmName)));
 
     // Set _NET_SUPPORTED atom array on root window
     Atom supported[] = {
@@ -920,20 +930,25 @@ Time WindowManager::timestamp(bool reset)
 
     if (m_currentTime == CurrentTime) {
         XEvent event;
-        XChangeProperty(display(), m_root, Atoms::wm2_running,
-                        Atoms::wm2_running, 8, PropModeAppend,
-                        reinterpret_cast<unsigned char*>(const_cast<char*>("")), 0);
 
-        // 08.5-06 attribution instrumentation. BEHAVIOUR-PRESERVING, and
-        // deliberately so: no deadline, no predicate narrowing, no fallback.
-        // Those are the fix (08.5-07); installing any of them here would make
-        // the measurement this instrumentation exists to take unattributable.
+        // 08.5-12: the sentinel request, the predicate and the wait live in
+        // include/TimestampWait.h, where a test binary can reach them and where
+        // all three are now fixed -- the request cannot mismatch, the predicate
+        // tests four fields, and the wait is bounded. Each fix is justified at
+        // its own site in that header.
         //
-        // The check form is taken first only to make two cases separable. It
-        // removes a matching event that is already queued and returns without
-        // blocking when there is none -- semantically identical to what the
-        // blocking call below would have done with an already-queued event.
-        // The same idiom is already used at src/Events.cpp:539.
+        // This request is the one the constructor makes at :288, TWO LINES
+        // before m_initialising is cleared at :290. That ordering is why the
+        // request had to be made survivable rather than merely bounded: while
+        // that flag is set, errorHandler() calls std::exit(1) for any error at
+        // all (:416-419), so a BadMatch here did not make the window manager
+        // slow, it stopped it starting.
+        timestampSentinelRequest(display(), m_root, Atoms::wm2_running);
+
+        // 08.5-06 attribution instrumentation. The counter names and the stderr
+        // spellings below are UNCHANGED -- two committed measurement records
+        // read those tokens and must stay comparable -- and the timeout record
+        // added further down is a new line beside them, not an edit to them.
         //
         // SECURITY (threat T-8-TRACE-01): every line printed below is a fixed
         // ASCII state word plus an integer. No window id, atom name, window
@@ -941,7 +956,11 @@ Time WindowManager::timestamp(bool reset)
         // committed to a public repository.
         ++m_timestampColdEntries;
 
-        if (XCheckMaskEvent(display(), PropertyChangeMask, &event) == False) {
+        const TimestampWaitResult wait = timestampWaitFor(
+            display(), m_root, Atoms::wm2_running,
+            kTimestampWaitDeadlineMs, &event);
+
+        if (wait.blocked) {
             ++m_timestampBlockedWaits;
 
             if (m_timestampBlockedWaits == 1) {
@@ -955,34 +974,53 @@ Time WindowManager::timestamp(bool reset)
                 std::fflush(stderr);
             }
 
-            const auto waitStart = std::chrono::steady_clock::now();
-            XMaskEvent(display(), PropertyChangeMask, &event);
-            const long elapsedMs = static_cast<long>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - waitStart).count());
-
-            if (elapsedMs > m_timestampLongestWaitMs) {
-                m_timestampLongestWaitMs = elapsedMs;
+            if (wait.elapsedMs > m_timestampLongestWaitMs) {
+                m_timestampLongestWaitMs = wait.elapsedMs;
             }
-            if (elapsedMs > 100) {
+            if (wait.elapsedMs > 100) {
                 // A warning, per the project's error-handling convention.
                 // Never fatal(): a slow wait is a diagnosis, not a reason to
                 // take the user's session down.
                 std::fprintf(stderr,
                              "wm2: warning: timestamp: blocking property wait %ld ms\n",
-                             elapsedMs);
+                             wait.elapsedMs);
                 std::fflush(stderr);
             }
         }
 
-        // Classification, on both paths. PropertyChangeMask is selected on the
-        // root (initialiseScreen) AND on every managed client (Client.cpp),
-        // so the wait can be satisfied by a client's own PropertyNotify --
-        // which is then consumed here and never reaches eventProperty(). That
-        // the possibility exists is a fact about the event masks; whether it
-        // actually happens is what this counter answers.
-        if (event.xproperty.window != m_root ||
-            event.xproperty.atom != Atoms::wm2_running) {
+        // 08.5-12: the deadline expired without the sentinel arriving. A
+        // DEFINED OUTCOME, not an error -- report CurrentTime and leave the
+        // cache COLD, so the very next call retries instead of caching a value
+        // that was never a server timestamp. Returning here is what makes the
+        // bound safe: nothing downstream is handed a fabricated time.
+        //
+        // Recorded on its own line, distinctly from merely having entered a
+        // wait, and ADDED BESIDE the existing instrumentation rather than
+        // folded into it: the loop() summary at src/Events.cpp:174 is read
+        // token-by-token by two committed measurement records and its spelling
+        // is not this plan's to change.
+        if (!wait.matched) {
+            ++m_timestampWaitTimeouts;
+            if (m_timestampWaitTimeouts == 1) {
+                std::fprintf(stderr,
+                             "wm2: warning: timestamp: property wait timed out\n");
+                std::fflush(stderr);
+            }
+            return CurrentTime;
+        }
+
+        // Classification, retained. It answered whether the wait had been
+        // satisfied by some other client's PropertyNotify -- a real hazard
+        // while the selector matched on event type alone.
+        //
+        // 08.5-12 has made it unreachable BY CONSTRUCTION rather than by
+        // deletion: the wait now returns only events the four-field predicate
+        // accepts, so a foreign match is no longer possible. The counter and
+        // its stderr spelling stay exactly as they are, still read by the two
+        // committed measurement records, and a run that prints foreign=0 now
+        // says so because the defect is gone rather than because it did not
+        // happen to fire.
+        if (!timestampIsSentinel(event, m_root, Atoms::wm2_running)) {
             ++m_timestampForeignMatches;
             if (m_timestampForeignMatches == 1) {
                 std::fprintf(stderr,
@@ -994,7 +1032,7 @@ Time WindowManager::timestamp(bool reset)
         m_currentTime = event.xproperty.time;
     }
 
-    return static_cast<Time>(m_currentTime);
+    return m_currentTime;
 }
 
 

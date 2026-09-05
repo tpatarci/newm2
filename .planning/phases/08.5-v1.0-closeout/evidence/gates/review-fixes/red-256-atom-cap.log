@@ -1,0 +1,37 @@
+Filters: "An explicit skip-taskbar=false rule still strips at the 256-atom cap"
+Randomness seeded to: 3376681597
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_wm_rules is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+An explicit skip-taskbar=false rule still strips at the 256-atom cap
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/tests/test_wm_rules.cpp:449
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/tests/test_wm_rules.cpp:482: FAILED:
+  REQUIRE_FALSE( hasState(d, win, "_NET_WM_STATE_SKIP_TASKBAR") )
+with expansion:
+  !true
+with message:
+  wm stderr:
+  
+wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: X_UnmapWindow (0x600026): BadWindow (invalid Window parameter)
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 4 | 3 passed | 1 failed
+

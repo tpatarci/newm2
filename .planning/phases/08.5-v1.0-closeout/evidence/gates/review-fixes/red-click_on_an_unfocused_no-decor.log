@@ -1,0 +1,58 @@
+Internal ctest changing into directory: /home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/build/debug
+Test project /home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/build/debug
+    Start 332: preflight
+1/2 Test #332: preflight .............................................................................................   Passed    0.20 sec
+    Start 221: A click on an unfocused no-decorate window focuses it, reaches it, and leaves the root menu working
+2/2 Test #221: A click on an unfocused no-decorate window focuses it, reaches it, and leaves the root menu working ...***Failed    8.27 sec
+Filters: "A click on an unfocused no-decorate window focuses it\, reaches it\, and leaves the root menu working"
+Randomness seeded to: 1599037114
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_wm_runtime is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+A click on an unfocused no-decorate window focuses it, reaches it, and leaves
+the root menu working
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/tests/test_wm_runtime.cpp:4322
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/codex-fixes/tests/test_wm_runtime.cpp:4362: FAILED:
+  REQUIRE( focused )
+with expansion:
+  false
+with messages:
+  wm stderr:
+  
+wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: X_UnmapWindow (0x600026): BadWindow (invalid Window parameter)
+  active=8388612 frameless=8388609 framed=8388612
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 6 | 5 passed | 1 failed
+
+
+
+50% tests passed, 1 tests failed out of 2
+
+Label Time Summary:
+preflight     =   0.20 sec*proc (1 test)
+wm_process    =   8.27 sec*proc (1 test)
+
+Total Test time (real) =   8.48 sec
+
+The following tests FAILED:
+	221 - A click on an unfocused no-decorate window focuses it, reaches it, and leaves the root menu working (Failed)
+Errors while running CTest

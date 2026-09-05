@@ -173,6 +173,15 @@ private:
     ClientState m_state;
     int m_protocol;
     bool m_managed;
+    // Managed WITHOUT a frame: docks, notifications and rule-no-decorate
+    // windows (issue #3 / Codex P1). parent() is root for these, so every
+    // frame operation is skipped or redirected at the client window itself.
+    bool m_frameless{false};
+    // Only rule-no-decorate NORMAL windows take focus; docks and
+    // notifications never do (a product decision recorded in issue #3).
+    bool isFocusableFrameless() const;
+    // Remove exactly two states from _NET_WM_STATE, keeping the rest (see .cpp).
+    void stripNetWmStates(Atom a, Atom b);
     bool m_reparenting;
 
     // EWMH state

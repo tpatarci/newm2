@@ -1148,6 +1148,12 @@ constexpr int kFatalDeadlineMs = 6000;   // tight: what a healthy host really ta
 
 }  // namespace
 
+// Defined below, beside the [wm_menulabel] cases that first needed it; declared
+// here so the exec-using-shell case above them can take the same verified open.
+bool openRootMenuVerified(Display* d, XTestDriver& driver, int x, int y,
+                          Window& menuOut, Rect& rectOut, std::string& whyOut,
+                          unsigned long expectedBg);
+
 
 // ===========================================================================
 // [wm_harness] -- the fixture's own stale-report cleanup (deferred item 14)
@@ -1686,7 +1692,16 @@ TEST_CASE("exec-using-shell gates whether a command with arguments and "
 
         Window menu = None;
         Rect menuRect{};
-        REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect));
+        // Verified open, as the three [wm_menulabel] sites use (WINDOWS.md
+        // ledger 13): the raw helper had no retry around deferred item 17, so
+        // one never-opens run failed this case's positive control after the
+        // whole 20 s stage budget, and the failure said nothing about shells.
+        std::string why;
+        const bool opened = openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                                 menu, menuRect, why,
+                                                 namedPixel(d, kShippedMenuBackground));
+        INFO("menu open diagnostics: " << why);
+        REQUIRE(opened);
         selectFirstMenuEntry(d, driver, menuRect);
 
         spawnedOut = awaitClientWithClass(d, kProbeClass, before,
@@ -4208,4 +4223,245 @@ TEST_CASE("The window manager reports how often its timestamp path took a "
     // 2. ANTI-VACUITY GUARD. A run reporting zero branch entries never reached
     //    the path and measures nothing.
     CHECK(summary.cold > 0);
+}
+
+
+// ---------------------------------------------------------------------------
+// WINDOWS.md ledger 8. Every modal grab loop -- the root menu, releaseGrab(),
+// move, resize, the tab button and the gesture recogniser -- waited either in
+// XMaskEvent or in a 50 ms sleep, and neither watched the exit flag or the
+// self-pipe. SIGTERM delivered while the operator held a button was therefore
+// honoured only once the button came up. The menu is the loop a test can hold
+// open deterministically: Button1 stays pressed for the menu's whole life.
+TEST_CASE("SIGTERM while the root menu is held open is honoured without waiting "
+          "for the release", "[wm_process]")
+{
+    WmFixture fixture(cleanFixture());
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());   // throws if XTEST is unavailable
+    parkPointer(d);
+
+    Window menu = None;
+    Rect menuRect{};
+    std::string why;
+    const bool opened = openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                             menu, menuRect, why,
+                                             namedPixel(d, kShippedMenuBackground));
+    INFO("menu open diagnostics: " << why);
+    REQUIRE(opened);
+    // Button1 is still held here; the window manager is inside menu()'s loop.
+
+    // The fixture's own pid, SIGTERM only. 3000 ms is well inside the fixture's
+    // 8000 ms SIGKILL escalation and far above a healthy exit, which the
+    // [wm_process] SIGTERM case measures in tens of milliseconds.
+    const bool clean = fixture.terminateWmCleanly(3000);
+    // Released only AFTER the verdict is taken, so the release cannot be what
+    // let the loop out.
+    driver.release(Button1);
+    INFO("wm stderr: " << fixture.wmStderr());
+    REQUIRE(clean);
+}
+
+
+// ---------------------------------------------------------------------------
+// Issue #3 / Codex P1: the frameless managed path. A no-decorate window that
+// has lost focus carries a pointer-synchronous button grab, exactly as a frame
+// does; a click on it must (1) focus it, (2) still reach the client -- the WM
+// replays the press -- and (3) leave the root menu working, because the old
+// code's grab/ungrab on parent() would have landed on the ROOT window.
+namespace {
+
+std::string seedNoDecorateConfig()
+{
+    return "rule-match-class=WmRuntimeFrameless\n"
+           "rule-no-decorate=true\n";
+}
+
+Window createClassedWindow(Display* d, int x, int y, int w, int h,
+                           const char* instance, const char* cls)
+{
+    const Window root = DefaultRootWindow(d);
+    Window win = XCreateSimpleWindow(d, root, x, y, static_cast<unsigned>(w),
+                                     static_cast<unsigned>(h), 0,
+                                     BlackPixel(d, DefaultScreen(d)),
+                                     WhitePixel(d, DefaultScreen(d)));
+    XClassHint hint;
+    hint.res_name  = const_cast<char*>(instance);
+    hint.res_class = const_cast<char*>(cls);
+    XSetClassHint(d, win, &hint);
+    XSync(d, False);
+    return win;
+}
+
+bool awaitInClientList(Display* d, Window win, int timeoutMs = 8000)
+{
+    return WmFixture::pollUntil([&] {
+        pumpWm(d);
+        const std::vector<Window> l = clientList(d);
+        return std::find(l.begin(), l.end(), win) != l.end();
+    }, timeoutMs);
+}
+
+Window rootActiveWindow(Display* d)
+{
+    const Atom prop = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+    Atom t = None; int f = 0; unsigned long n = 0, after = 0; unsigned char* raw = nullptr;
+    Window out = None;
+    if (XGetWindowProperty(d, DefaultRootWindow(d), prop, 0, 1, False, XA_WINDOW,
+                           &t, &f, &n, &after, &raw) == Success && raw) {
+        if (t == XA_WINDOW && f == 32 && n >= 1) out = *reinterpret_cast<Window*>(raw);
+        XFree(raw);
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("A click on an unfocused no-decorate window focuses it, reaches it, and "
+          "leaves the root menu working", "[wm_process]")
+{
+    WmFixture fixture(configuredFixture(seedNoDecorateConfig()));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    // Frameless first (focused on map), then a framed sibling that takes the
+    // focus away -- which is what installs the grab on the frameless client.
+    Window frameless = createClassedWindow(d, 400, 300, 240, 160,
+                                           "wmruntimeframeless", "WmRuntimeFrameless");
+    XSelectInput(d, frameless, ButtonPressMask);
+    XMapWindow(d, frameless);
+    REQUIRE(awaitInClientList(d, frameless));
+    Window framed = createClassedWindow(d, 40, 40, 200, 150, "wmruntimeframed", "WmRuntimeFramed");
+    XMapWindow(d, framed);
+    REQUIRE(awaitInClientList(d, framed));
+    REQUIRE(WmFixture::pollUntil([&] { pumpWm(d); return rootActiveWindow(d) == framed; }, 8000));
+    REQUIRE(parentOf(d, frameless) == DefaultRootWindow(d));
+
+    // Drain anything queued on the frameless window before the click.
+    XEvent drain; while (XCheckWindowEvent(d, frameless, ButtonPressMask, &drain)) {}
+
+    driver.moveTo(400 + 120, 300 + 80);
+    driver.click(Button1);
+
+    // (1) focus moved
+    const bool focused = WmFixture::pollUntil([&] { pumpWm(d); return rootActiveWindow(d) == frameless; }, 8000);
+    // (2) the press reached the client itself
+    XEvent got{}; bool delivered = false;
+    WmFixture::pollUntil([&] {
+        delivered = XCheckWindowEvent(d, frameless, ButtonPressMask, &got) == True;
+        return delivered;
+    }, 4000);
+    const std::string err = fixture.wmStderr();
+    INFO("wm stderr:\n" << err);
+    INFO("active=" << rootActiveWindow(d) << " frameless=" << frameless << " framed=" << framed);
+    REQUIRE(focused);
+    REQUIRE(delivered);
+    REQUIRE(err.find("bad parent") == std::string::npos);
+
+    // (3) the root menu still opens: the grab bookkeeping never touched root.
+    Window menu = None; Rect menuRect{}; std::string why;
+    const bool opened = openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                             menu, menuRect, why,
+                                             namedPixel(d, kShippedMenuBackground));
+    INFO("menu open diagnostics: " << why);
+    REQUIRE(opened);
+    driver.release(Button1);
+}
+
+
+// ---------------------------------------------------------------------------
+// Codex P1: a category with more entries than the screen has rows was laid out
+// at its full height and merely clamped to y = 0, so every row below the screen
+// edge could be neither seen nor pointed at. The binary scanner routinely puts
+// hundreds of programs in one category.
+namespace {
+
+// Seed an isolated XDG data tree with `count` desktop entries in ONE category
+// whose name sorts before every real one, so it is the first category row.
+std::string seedApplications(int count)
+{
+    static int counter = 0;
+    const std::string base = std::string(WM2_TEST_WORKDIR) + "/runtime-apps-" +
+                             std::to_string(::getpid()) + "-" + std::to_string(++counter);
+    ::mkdir(base.c_str(), 0700);
+    const std::string apps = base + "/applications";
+    ::mkdir(apps.c_str(), 0700);
+    for (int i = 0; i < count; ++i) {
+        char name[32]; std::snprintf(name, sizeof name, "aaa-entry-%03d", i);
+        std::ofstream out(apps + "/" + name + ".desktop");
+        out << "[Desktop Entry]\nType=Application\nName=" << name
+            << "\nExec=true\nCategories=AaaOverflow;\n";
+    }
+    return base;
+}
+
+} // namespace
+
+TEST_CASE("A category submenu with more entries than fit stays inside the screen",
+          "[wm_menulabel]")
+{
+    constexpr int kEntries = 60;
+    WmFixtureOptions o = cleanFixture({"--menu-background=blue",
+                                       "--menu-foreground=red",
+                                       "--menu-highlight=green"});
+    const std::string data = seedApplications(kEntries);
+    o.childEnv["XDG_DATA_HOME"]  = data;
+    o.childEnv["XDG_DATA_DIRS"]  = data + "/no-system-data";
+    o.childEnv["XDG_CACHE_HOME"] = data + "/cache";
+    WmFixture fixture(o);
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+    const unsigned long hl = namedPixel(d, "green");
+    REQUIRE(hl != ~0UL);
+    const int screenH = DisplayHeight(d, DefaultScreen(d));
+
+    Window menu = None; Rect menuRect; std::string why;
+    REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                 menu, menuRect, why, namedPixel(d, "blue")));
+    INFO("menu open diagnostics: " << why);
+
+    // entryHeight is measured from the row-0 highlight, as the other submenu
+    // case does; it depends on the menu font.
+    REQUIRE(nudgeUntil(driver, menuRect.x + menuRect.w / 2, menuRect.y + 14, [&] {
+        return countAll(captureRootBitmap(d, menuRect), hl) > 0;
+    }));
+    int hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+    REQUIRE(pixelBounds(captureRootBitmap(d, menuRect), hl, hx0, hy0, hx1, hy1));
+    const int entryHeight = hy1 - hy0 + 1;
+    REQUIRE(entryHeight > 0);
+    // Anti-vacuity: the seeded category must genuinely overflow this screen.
+    REQUIRE(entryHeight * kEntries + 13 > screenH);
+
+    const std::vector<Window> before = childrenOf(d, DefaultRootWindow(d));
+    Window submenu = None;
+    const bool opened = nudgeUntil(driver, menuRect.x + menuRect.w / 2,
+                                   menuRect.y + 14 + entryHeight, [&] {
+        for (Window w : childrenOf(d, DefaultRootWindow(d))) {
+            if (w == menu) continue;
+            Rect r;
+            if (!isViewable(d, w) || !serverRect(d, w, r)) continue;
+            if (r.w <= 1 || r.h <= 1) continue;
+            submenu = w;
+            return true;
+        }
+        return false;
+    });
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(opened);
+    Rect sub;
+    REQUIRE(serverRect(d, submenu, sub));
+    INFO("submenu " << describe(sub) << " on a " << screenH << " px tall screen, "
+         << kEntries << " entries of " << entryHeight << " px");
+    CHECK(sub.y >= 0);
+    CHECK(sub.h <= screenH);
+    CHECK(sub.y + sub.h <= screenH);
+    dismissMenu(d, driver);
 }

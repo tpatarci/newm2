@@ -1,0 +1,985 @@
+== preflight ==
+  preflight OK
+
+== asan ==
+-- The CXX compiler identification is GNU 11.4.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found PkgConfig: /usr/bin/pkg-config (found version "0.29.2") 
+-- Checking for module 'x11'
+--   Found x11, version 1.7.5
+-- Checking for module 'xext'
+--   Found xext, version 1.3.4
+-- Checking for module 'xft'
+--   Found xft, version 2.3.4
+-- Checking for module 'fontconfig'
+--   Found fontconfig, version 2.13.1
+-- Checking for module 'xrandr'
+--   Found xrandr, version 1.5.2
+-- Checking for module 'xrender'
+--   Found xrender, version 0.9.10
+-- Performing Test HAVE_FLAG__ffile_prefix_map__home_tomislav_development_wm2_born_again__claude_worktrees_agent_a0ef668e51c39c8dd_build_asan__deps_catch2_src__
+-- Performing Test HAVE_FLAG__ffile_prefix_map__home_tomislav_development_wm2_born_again__claude_worktrees_agent_a0ef668e51c39c8dd_build_asan__deps_catch2_src__ - Success
+-- Checking for module 'xtst'
+--   Found xtst, version 1.2.3
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/build/asan
+[  1%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Border.cpp.o
+[  2%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Buttons.cpp.o
+[  2%] Building CXX object CMakeFiles/wm2-born-again.dir/src/main.cpp.o
+[  3%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Manager.cpp.o
+[  3%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Events.cpp.o
+[  5%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/benchmark/detail/catch_analyse.cpp.o
+[  5%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/benchmark/detail/catch_run_for_at_least.cpp.o
+[  5%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Client.cpp.o
+[  5%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/benchmark/detail/catch_stats.cpp.o
+[  6%] Building CXX object CMakeFiles/wm2-born-again.dir/src/AppCache.cpp.o
+[  6%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Rules.cpp.o
+[  6%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/benchmark/detail/catch_benchmark_function.cpp.o
+[  6%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/benchmark/catch_chronometer.cpp.o
+[  7%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/generators/catch_generator_exception.cpp.o
+[  8%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Config.cpp.o
+[  8%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/generators/catch_generators_random.cpp.o
+[  8%] Building CXX object CMakeFiles/wm2-born-again.dir/src/DesktopEntry.cpp.o
+[  9%] Building CXX object CMakeFiles/wm2-born-again.dir/src/BinaryScanner.cpp.o
+[ 10%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/generators/catch_generators_throw.cpp.o
+[ 11%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/generators/catch_generators.cpp.o
+[ 12%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_console.cpp.o
+[ 13%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_common_base.cpp.o
+[ 13%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_automake.cpp.o
+[ 14%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_compact.cpp.o
+[ 14%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_cumulative_base.cpp.o
+[ 15%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_helpers.cpp.o
+[ 14%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_event_listener.cpp.o
+[ 16%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_junit.cpp.o
+[ 16%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_json.cpp.o
+[ 17%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_registrars.cpp.o
+[ 17%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_streaming_base.cpp.o
+[ 18%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_sonarqube.cpp.o
+[ 18%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_multi.cpp.o
+[ 19%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_tap.cpp.o
+[ 19%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_teamcity.cpp.o
+[ 20%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/reporters/catch_reporter_xml.cpp.o
+[ 20%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/interfaces/catch_interfaces_capture.cpp.o
+[ 20%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/interfaces/catch_interfaces_generatortracker.cpp.o
+[ 21%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/interfaces/catch_interfaces_exception.cpp.o
+[ 23%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/interfaces/catch_interfaces_config.cpp.o
+[ 23%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/interfaces/catch_interfaces_reporter.cpp.o
+[ 22%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/interfaces/catch_interfaces_registry_hub.cpp.o
+[ 24%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/interfaces/catch_interfaces_reporter_factory.cpp.o
+[ 24%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/interfaces/catch_interfaces_testcase.cpp.o
+[ 25%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_approx.cpp.o
+[ 26%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_assertion_result.cpp.o
+[ 27%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_get_random_seed.cpp.o
+[ 27%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_config.cpp.o
+[ 27%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_message.cpp.o
+[ 28%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_registry_hub.cpp.o
+[ 28%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_session.cpp.o
+[ 29%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_tag_alias_autoregistrar.cpp.o
+[ 30%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_test_case_info.cpp.o
+[ 30%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_test_spec.cpp.o
+[ 31%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_timer.cpp.o
+[ 31%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_tostring.cpp.o
+[ 31%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_translate_exception.cpp.o
+[ 32%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_totals.cpp.o
+[ 33%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_assertion_handler.cpp.o
+[ 34%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/catch_version.cpp.o
+[ 34%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_case_insensitive_comparisons.cpp.o
+[ 35%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_console_colour.cpp.o
+[ 36%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_clara.cpp.o
+[ 36%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_commandline.cpp.o
+[ 36%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_context.cpp.o
+[ 37%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_debug_console.cpp.o
+[ 37%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_decomposer.cpp.o
+[ 38%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_debugger.cpp.o
+[ 39%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_enforce.cpp.o
+[ 39%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_enum_values_registry.cpp.o
+[ 40%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_errno_guard.cpp.o
+[ 40%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_exception_translator_registry.cpp.o
+[ 41%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_floating_point_helpers.cpp.o
+[ 42%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_fatal_condition_handler.cpp.o
+[ 42%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_getenv.cpp.o
+[ 43%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_istream.cpp.o
+[ 43%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_jsonwriter.cpp.o
+[ 44%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_lazy_expr.cpp.o
+[ 45%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_list.cpp.o
+[ 45%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_leak_detector.cpp.o
+[ 46%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_message_info.cpp.o
+[ 47%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_parse_numbers.cpp.o
+[ 47%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_output_redirect.cpp.o
+[ 47%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_polyfills.cpp.o
+[ 48%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_random_number_generator.cpp.o
+[ 48%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_random_seed_generation.cpp.o
+[ 49%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_reporter_registry.cpp.o
+[ 50%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_reporter_spec_parser.cpp.o
+[ 50%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_reusable_string_stream.cpp.o
+[ 50%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_section.cpp.o
+[ 51%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_run_context.cpp.o
+[ 51%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_string_manip.cpp.o
+[ 51%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_source_line_info.cpp.o
+[ 52%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_singletons.cpp.o
+[ 53%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_stdstreams.cpp.o
+[ 54%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_test_case_info_hasher.cpp.o
+[ 55%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_startup_exception_registry.cpp.o
+[ 56%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_stringref.cpp.o
+[ 56%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_tag_alias_registry.cpp.o
+[ 56%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_test_case_registry_impl.cpp.o
+[ 57%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_test_case_tracker.cpp.o
+[ 58%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_test_failure_exception.cpp.o
+[ 59%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_test_spec_parser.cpp.o
+[ 59%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_test_registry.cpp.o
+[ 60%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_uncaught_exceptions.cpp.o
+[ 59%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_textflow.cpp.o
+[ 60%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_wildcard_pattern.cpp.o
+[ 61%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/internal/catch_xmlwriter.cpp.o
+[ 62%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/matchers/catch_matchers.cpp.o
+[ 62%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/matchers/catch_matchers_container_properties.cpp.o
+[ 63%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/matchers/catch_matchers_exception.cpp.o
+[ 63%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/matchers/catch_matchers_floating_point.cpp.o
+[ 64%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/matchers/catch_matchers_predicate.cpp.o
+[ 64%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/matchers/catch_matchers_quantifiers.cpp.o
+[ 65%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/matchers/catch_matchers_string.cpp.o
+[ 66%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/matchers/catch_matchers_templated.cpp.o
+[ 66%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2.dir/catch2/matchers/internal/catch_matchers_impl.cpp.o
+[ 67%] Linking CXX executable wm2-born-again
+[ 67%] Built target wm2-born-again
+[ 68%] Linking CXX static library libCatch2d.a
+[ 68%] Built target Catch2
+[ 68%] Building CXX object _deps/catch2-build/src/CMakeFiles/Catch2WithMain.dir/catch2/internal/catch_main.cpp.o
+[ 69%] Linking CXX static library libCatch2Maind.a
+[ 69%] Built target Catch2WithMain
+[ 70%] Building CXX object CMakeFiles/test_smoke.dir/tests/test_smoke.cpp.o
+[ 71%] Building CXX object CMakeFiles/test_menupaint.dir/tests/test_menupaint.cpp.o
+[ 71%] Building CXX object CMakeFiles/test_raii.dir/tests/test_raii.cpp.o
+[ 71%] Building CXX object CMakeFiles/test_client.dir/tests/test_client.cpp.o
+[ 72%] Building CXX object CMakeFiles/test_autoraise.dir/tests/test_autoraise.cpp.o
+[ 72%] Building CXX object CMakeFiles/test_eventloop.dir/tests/test_eventloop.cpp.o
+[ 72%] Building CXX object CMakeFiles/test_wm_process.dir/tests/test_wm_process.cpp.o
+[ 73%] Building CXX object CMakeFiles/test_wm_fallbacks.dir/tests/test_wm_fallbacks.cpp.o
+[ 74%] Building CXX object CMakeFiles/test_xft_poc.dir/tests/test_xft_poc.cpp.o
+[ 74%] Building CXX object CMakeFiles/test_wm_geometry.dir/tests/test_wm_geometry.cpp.o
+[ 75%] Building CXX object CMakeFiles/test_ewmh.dir/tests/test_ewmh.cpp.o
+[ 76%] Building CXX object CMakeFiles/test_wm_focus.dir/tests/test_wm_focus.cpp.o
+[ 77%] Building CXX object CMakeFiles/test_wm_resource.dir/tests/test_wm_resource.cpp.o
+[ 78%] Building CXX object CMakeFiles/test_wm_state.dir/tests/test_wm_state.cpp.o
+[ 78%] Building CXX object CMakeFiles/test_wm_repro.dir/tests/test_wm_repro.cpp.o
+[ 78%] Building CXX object CMakeFiles/test_wm_lifecycle.dir/tests/test_wm_lifecycle.cpp.o
+[ 80%] Building CXX object CMakeFiles/test_wm_runtime.dir/tests/test_wm_runtime.cpp.o
+[ 80%] Building CXX object CMakeFiles/test_rules.dir/src/Rules.cpp.o
+[ 81%] Building CXX object CMakeFiles/test_desktopentry.dir/tests/test_desktopentry.cpp.o
+[ 81%] Building CXX object CMakeFiles/test_rules.dir/tests/test_rules.cpp.o
+[ 82%] Building CXX object CMakeFiles/test_desktopentry.dir/src/DesktopEntry.cpp.o
+[ 83%] Building CXX object CMakeFiles/test_wm_rules.dir/tests/test_wm_rules.cpp.o
+[ 84%] Building CXX object CMakeFiles/test_config.dir/src/Config.cpp.o
+[ 84%] Building CXX object CMakeFiles/test_rules.dir/src/Config.cpp.o
+[ 84%] Building CXX object CMakeFiles/test_binaryscanner.dir/tests/test_binaryscanner.cpp.o
+[ 85%] Building CXX object CMakeFiles/test_appcache.dir/src/DesktopEntry.cpp.o
+[ 85%] Building CXX object CMakeFiles/test_config.dir/tests/test_config.cpp.o
+[ 85%] Building CXX object CMakeFiles/test_appcache.dir/src/BinaryScanner.cpp.o
+[ 86%] Building CXX object CMakeFiles/test_binaryscanner.dir/src/BinaryScanner.cpp.o
+[ 86%] Building CXX object CMakeFiles/test_appcache.dir/tests/test_appcache.cpp.o
+[ 87%] Building CXX object CMakeFiles/test_appcache.dir/src/AppCache.cpp.o
+[ 88%] Linking CXX executable test_autoraise
+[ 89%] Linking CXX executable test_menupaint
+[ 90%] Linking CXX executable test_binaryscanner
+[ 91%] Linking CXX executable test_xft_poc
+[ 92%] Linking CXX executable test_raii
+[ 93%] Linking CXX executable test_client
+[ 93%] Linking CXX executable test_smoke
+[ 93%] Linking CXX executable test_desktopentry
+[ 93%] Linking CXX executable test_eventloop
+[ 93%] Built target test_autoraise
+[ 94%] Linking CXX executable test_appcache
+[ 94%] Built target test_menupaint
+[ 94%] Linking CXX executable test_ewmh
+[ 94%] Built target test_binaryscanner
+[ 94%] Built target test_xft_poc
+[ 94%] Built target test_raii
+[ 94%] Built target test_smoke
+[ 94%] Built target test_desktopentry
+[ 94%] Built target test_client
+[ 95%] Linking CXX executable test_rules
+[ 95%] Built target test_eventloop
+[ 95%] Built target test_appcache
+[ 95%] Built target test_ewmh
+[ 96%] Linking CXX executable test_wm_repro
+[ 96%] Linking CXX executable test_wm_fallbacks
+[ 96%] Linking CXX executable test_config
+[ 96%] Built target test_rules
+[ 96%] Linking CXX executable test_wm_resource
+[ 97%] Linking CXX executable test_wm_process
+[ 97%] Linking CXX executable test_wm_focus
+[ 97%] Linking CXX executable test_wm_rules
+[ 97%] Built target test_config
+[ 97%] Built target test_wm_repro
+[ 97%] Built target test_wm_process
+[ 98%] Linking CXX executable test_wm_geometry
+[ 98%] Built target test_wm_fallbacks
+[ 98%] Built target test_wm_resource
+[ 98%] Built target test_wm_focus
+[ 98%] Built target test_wm_rules
+[ 98%] Built target test_wm_geometry
+[ 99%] Linking CXX executable test_wm_lifecycle
+[ 99%] Built target test_wm_lifecycle
+[100%] Linking CXX executable test_wm_state
+[100%] Built target test_wm_state
+[100%] Linking CXX executable test_wm_runtime
+[100%] Built target test_wm_runtime
+  asan: 0 compiler/linker warning line(s) recorded in build/asan/build.log
+Internal ctest changing into directory: /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/build/asan
+Test project /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/build/asan
+        Start   1: DisplayPtr is move-only
+  1/337 Test   #1: DisplayPtr is move-only ............................................................................................................................   Passed    0.04 sec
+        Start   2: UniquePixmap default constructor is None
+  2/337 Test   #2: UniquePixmap default constructor is None ...........................................................................................................   Passed    0.04 sec
+        Start   3: GCDeleter handles null GC safely
+  3/337 Test   #3: GCDeleter handles null GC safely ...................................................................................................................   Passed    0.04 sec
+        Start   4: UniqueFont default constructor is None
+  4/337 Test   #4: UniqueFont default constructor is None .............................................................................................................   Passed    0.04 sec
+        Start   5: UniqueColormap default constructor is None
+  5/337 Test   #5: UniqueColormap default constructor is None .........................................................................................................   Passed    0.04 sec
+        Start   6: UniqueCursor release disassociates without freeing
+  6/337 Test   #6: UniqueCursor release disassociates without freeing .................................................................................................   Passed    0.04 sec
+        Start   7: UniqueCursor default constructor is None
+  7/337 Test   #7: UniqueCursor default constructor is None ...........................................................................................................   Passed    0.04 sec
+        Start   8: UniqueCursor is move-only
+  8/337 Test   #8: UniqueCursor is move-only ..........................................................................................................................   Passed    0.04 sec
+        Start   9: UniqueFont is move-only
+  9/337 Test   #9: UniqueFont is move-only ............................................................................................................................   Passed    0.04 sec
+        Start  10: FontStructDeleter handles null safely
+ 10/337 Test  #10: FontStructDeleter handles null safely ..............................................................................................................   Passed    0.04 sec
+        Start  11: GCDeleter default state has null display
+ 11/337 Test  #11: GCDeleter default state has null display ...........................................................................................................   Passed    0.04 sec
+        Start  12: UniqueColormap is move-only
+ 12/337 Test  #12: UniqueColormap is move-only ........................................................................................................................   Passed    0.04 sec
+        Start  13: GCDeleter handles null display + null GC safely
+ 13/337 Test  #13: GCDeleter handles null display + null GC safely ....................................................................................................   Passed    0.04 sec
+        Start  14: UniquePixmap is move-only
+ 14/337 Test  #14: UniquePixmap is move-only ..........................................................................................................................   Passed    0.04 sec
+        Start  15: DisplayDeleter handles null safely
+ 15/337 Test  #15: DisplayDeleter handles null safely .................................................................................................................   Passed    0.05 sec
+        Start  16: UniqueCursor move transfers ownership
+ 16/337 Test  #16: UniqueCursor move transfers ownership ..............................................................................................................   Passed    0.04 sec
+        Start 336: start_xvfb
+ 17/337 Test #336: start_xvfb .........................................................................................................................................   Passed    0.11 sec
+        Start  17: UniqueCursor manages cursor lifecycle
+ 18/337 Test  #17: UniqueCursor manages cursor lifecycle ..............................................................................................................   Passed    0.05 sec
+        Start  18: UniquePixmap manages pixmap lifecycle
+ 19/337 Test  #18: UniquePixmap manages pixmap lifecycle ..............................................................................................................   Passed    0.04 sec
+        Start  19: DisplayPtr manages display lifecycle
+ 20/337 Test  #19: DisplayPtr manages display lifecycle ...............................................................................................................   Passed    0.04 sec
+        Start  20: Xvfb display is available
+ 21/337 Test  #20: Xvfb display is available ..........................................................................................................................   Passed    0.04 sec
+        Start  21: GCPtr manages GC lifecycle
+ 22/337 Test  #21: GCPtr manages GC lifecycle .........................................................................................................................   Passed    0.04 sec
+        Start  22: Can open Xvfb display
+ 23/337 Test  #22: Can open Xvfb display ..............................................................................................................................   Passed    0.04 sec
+        Start  23: FontStructPtr manages font lifecycle
+ 24/337 Test  #23: FontStructPtr manages font lifecycle ...............................................................................................................   Passed    0.04 sec
+        Start  24: pump-reports-zero-when-idle: a quiescent connection reports nothing pending
+ 25/337 Test  #24: pump-reports-zero-when-idle: a quiescent connection reports nothing pending ........................................................................   Passed    0.04 sec
+        Start  25: pump-reports-what-is-available: the pump must not report zero while an event is already in hand
+ 26/337 Test  #25: pump-reports-what-is-available: the pump must not report zero while an event is already in hand ....................................................   Passed    0.04 sec
+        Start  26: timestamp-is-bounded: the wait must return within its deadline when the sentinel can never arrive
+ 27/337 Test  #26: timestamp-is-bounded: the wait must return within its deadline when the sentinel can never arrive ..................................................   Passed    0.31 sec
+        Start  27: exit-flag-stops-the-loop: the decision must be to stop when the exit flag is set
+ 28/337 Test  #27: exit-flag-stops-the-loop: the decision must be to stop when the exit flag is set ...................................................................   Passed    0.04 sec
+        Start  28: FdGuard move assignment transfers ownership
+ 29/337 Test  #28: FdGuard move assignment transfers ownership ........................................................................................................   Passed    0.04 sec
+        Start  29: FdGuard move transfers ownership
+ 30/337 Test  #29: FdGuard move transfers ownership ...................................................................................................................   Passed    0.04 sec
+        Start  30: FdGuard default constructed has fd -1
+ 31/337 Test  #30: FdGuard default constructed has fd -1 ..............................................................................................................   Passed    0.04 sec
+        Start  31: timestamp-rejects-synthetic: a forged notification must not supply the timestamp
+ 32/337 Test  #31: timestamp-rejects-synthetic: a forged notification must not supply the timestamp ...................................................................   Passed    0.30 sec
+        Start  32: timestamp-survives-poisoned-property: the sentinel request must not raise a protocol error against a root property a foreign client has replaced
+ 33/337 Test  #32: timestamp-survives-poisoned-property: the sentinel request must not raise a protocol error against a root property a foreign client has replaced ...   Passed    0.05 sec
+        Start  33: FdGuard closes fd on destruction
+ 34/337 Test  #33: FdGuard closes fd on destruction ...................................................................................................................   Passed    0.04 sec
+        Start  34: timestamp-leaves-foreign-property-alone: a notification that is not the sentinel must be left in the queue for the ordinary dispatcher
+ 35/337 Test  #34: timestamp-leaves-foreign-property-alone: a notification that is not the sentinel must be left in the queue for the ordinary dispatcher .............   Passed    0.30 sec
+        Start  35: readable-is-not-deliverable: a readable descriptor carrying a protocol error must not mean deliver-an-event
+ 36/337 Test  #35: readable-is-not-deliverable: a readable descriptor carrying a protocol error must not mean deliver-an-event ........................................   Passed    0.05 sec
+        Start  36: Self-pipe can be created and used
+ 37/337 Test  #36: Self-pipe can be created and used ..................................................................................................................   Passed    0.04 sec
+        Start  37: Duration arithmetic produces positive ms for past deadlines
+ 38/337 Test  #37: Duration arithmetic produces positive ms for past deadlines ........................................................................................   Passed    0.04 sec
+        Start  38: Duration arithmetic produces positive ms for future deadlines
+ 39/337 Test  #38: Duration arithmetic produces positive ms for future deadlines ......................................................................................   Passed    0.03 sec
+        Start  39: Minimum of two deadlines returns earlier
+ 40/337 Test  #39: Minimum of two deadlines returns earlier ...........................................................................................................   Passed    0.04 sec
+        Start  40: Timeout computation clamps past deadlines to 0
+ 41/337 Test  #40: Timeout computation clamps past deadlines to 0 .....................................................................................................   Passed    0.04 sec
+        Start  41: steady_clock future 400ms deadline is after now
+ 42/337 Test  #41: steady_clock future 400ms deadline is after now ....................................................................................................   Passed    0.04 sec
+        Start  42: steady_clock future 80ms deadline is after now
+ 43/337 Test  #42: steady_clock future 80ms deadline is after now .....................................................................................................   Passed    0.04 sec
+        Start  43: verdict-rejects-bleed-through
+ 44/337 Test  #43: verdict-rejects-bleed-through ......................................................................................................................   Passed    0.04 sec
+        Start  44: verdict-target-vocabulary is reachable without a display
+ 45/337 Test  #44: verdict-target-vocabulary is reachable without a display ...........................................................................................   Passed    0.03 sec
+        Start  45: foreign-expose-is-named
+ 46/337 Test  #45: foreign-expose-is-named ............................................................................................................................   Passed    0.04 sec
+        Start  46: verdict-rejects-wrong-colour
+ 47/337 Test  #46: verdict-rejects-wrong-colour .......................................................................................................................   Passed    0.04 sec
+        Start  47: verdict-names-background-only
+ 48/337 Test  #47: verdict-names-background-only ......................................................................................................................   Passed    0.04 sec
+        Start  48: Colormap window property read and free
+ 49/337 Test  #48: Colormap window property read and free .............................................................................................................   Passed    0.04 sec
+        Start  49: Window reparenting on Xvfb
+ 50/337 Test  #49: Window reparenting on Xvfb .........................................................................................................................   Passed    0.04 sec
+        Start  50: ClientState is a scoped enum
+ 51/337 Test  #50: ClientState is a scoped enum .......................................................................................................................   Passed    0.04 sec
+        Start  51: Window move and resize operations
+ 52/337 Test  #51: Window move and resize operations ..................................................................................................................   Passed    0.04 sec
+        Start  52: ServerGrab grabs and releases X server
+ 53/337 Test  #52: ServerGrab grabs and releases X server .............................................................................................................   Passed    0.04 sec
+        Start  53: Multiple windows managed simultaneously
+ 54/337 Test  #53: Multiple windows managed simultaneously ............................................................................................................   Passed    0.04 sec
+        Start  54: Window creation and destruction on Xvfb
+ 55/337 Test  #54: Window creation and destruction on Xvfb ............................................................................................................   Passed    0.04 sec
+        Start  55: ClientState enum values match X11 constants
+ 56/337 Test  #55: ClientState enum values match X11 constants ........................................................................................................   Passed    0.04 sec
+        Start  56: WM_STATE property round-trip with ClientState values
+ 57/337 Test  #56: WM_STATE property round-trip with ClientState values ...............................................................................................   Passed    0.06 sec
+        Start  57: ServerGrab handles null display safely
+ 58/337 Test  #57: ServerGrab handles null display safely .............................................................................................................   Passed    0.04 sec
+        Start  58: ServerGrab is not copyable
+ 59/337 Test  #58: ServerGrab is not copyable .........................................................................................................................   Passed    0.04 sec
+        Start  59: Rotated font loads via FcMatrix
+ 60/337 Test  #59: Rotated font loads via FcMatrix ....................................................................................................................   Passed    0.54 sec
+        Start  60: XftColor allocation and cleanup
+ 61/337 Test  #60: XftColor allocation and cleanup ....................................................................................................................   Passed    0.04 sec
+        Start  61: Xft font loads by fontconfig pattern
+ 62/337 Test  #61: Xft font loads by fontconfig pattern ...............................................................................................................   Passed    0.58 sec
+        Start  62: Xft text renders inside shaped window
+ 63/337 Test  #62: Xft text renders inside shaped window ..............................................................................................................   Passed    0.55 sec
+        Start  63: UTF-8 string rendering does not crash
+ 64/337 Test  #63: UTF-8 string rendering does not crash ..............................................................................................................   Passed    0.54 sec
+        Start  64: Xft text measurement with XftTextExtentsUtf8
+ 65/337 Test  #64: Xft text measurement with XftTextExtentsUtf8 .......................................................................................................   Passed    0.57 sec
+        Start  65: _NET_NUMBER_OF_DESKTOPS is 1
+ 66/337 Test  #65: _NET_NUMBER_OF_DESKTOPS is 1 .......................................................................................................................   Passed    0.04 sec
+        Start  66: EWMH _NET_WM_STRUT_PARTIAL preferred over _NET_WM_STRUT
+ 67/337 Test  #66: EWMH _NET_WM_STRUT_PARTIAL preferred over _NET_WM_STRUT ............................................................................................   Passed    0.05 sec
+        Start  67: EWMH fullscreen state round-trip
+ 68/337 Test  #67: EWMH fullscreen state round-trip ...................................................................................................................   Passed    0.05 sec
+        Start  68: EWMH _NET_WM_STATE property format is Atom array
+ 69/337 Test  #68: EWMH _NET_WM_STATE property format is Atom array ...................................................................................................   Passed    0.04 sec
+        Start  69: _NET_WM_NAME UTF8_STRING encoding
+ 70/337 Test  #69: _NET_WM_NAME UTF8_STRING encoding ..................................................................................................................   Passed    0.05 sec
+        Start  70: _NET_SUPPORTED contains declared atoms
+ 71/337 Test  #70: _NET_SUPPORTED contains declared atoms .............................................................................................................   Passed    0.05 sec
+        Start  71: _NET_SUPPORTING_WM_CHECK self-reference
+ 72/337 Test  #71: _NET_SUPPORTING_WM_CHECK self-reference ............................................................................................................   Passed    0.05 sec
+        Start  72: EWMH _NET_WM_STRUT clamped to screen dimensions
+ 73/337 Test  #72: EWMH _NET_WM_STRUT clamped to screen dimensions ....................................................................................................   Passed    0.04 sec
+        Start  73: EWMH atoms can be interned
+ 74/337 Test  #73: EWMH atoms can be interned .........................................................................................................................   Passed    0.05 sec
+        Start  74: EWMH _NET_WM_STATE add/remove/toggle semantics
+ 75/337 Test  #74: EWMH _NET_WM_STATE add/remove/toggle semantics .....................................................................................................   Passed    0.05 sec
+        Start  75: _NET_ACTIVE_WINDOW can be set to None
+ 76/337 Test  #75: _NET_ACTIVE_WINDOW can be set to None ..............................................................................................................   Passed    0.05 sec
+        Start  76: _NET_CLIENT_LIST round-trip
+ 77/337 Test  #76: _NET_CLIENT_LIST round-trip ........................................................................................................................   Passed    0.05 sec
+        Start  77: EWMH _NET_WORKAREA subtracts dock struts
+ 78/337 Test  #77: EWMH _NET_WORKAREA subtracts dock struts ...........................................................................................................   Passed    0.04 sec
+        Start  78: EWMH maximize state both axes
+ 79/337 Test  #78: EWMH maximize state both axes ......................................................................................................................   Passed    0.05 sec
+        Start  79: _NET_CURRENT_DESKTOP is 0
+ 80/337 Test  #79: _NET_CURRENT_DESKTOP is 0 ..........................................................................................................................   Passed    0.05 sec
+        Start  80: _NET_WORKAREA is 4-element CARDINAL
+ 81/337 Test  #80: _NET_WORKAREA is 4-element CARDINAL ................................................................................................................   Passed    0.04 sec
+        Start 335: preflight
+ 82/337 Test #335: preflight ..........................................................................................................................................   Passed    0.19 sec
+        Start  81: Destroying a dock window restores _NET_WORKAREA with no sanitizer report
+ 83/337 Test  #81: Destroying a dock window restores _NET_WORKAREA with no sanitizer report ...........................................................................   Passed    0.81 sec
+        Start  82: WmFixture starts the real WM and it publishes _NET_SUPPORTING_WM_CHECK
+ 84/337 Test  #82: WmFixture starts the real WM and it publishes _NET_SUPPORTING_WM_CHECK .............................................................................   Passed    0.77 sec
+        Start  83: A dock window with _NET_WM_STRUT_PARTIAL shrinks _NET_WORKAREA
+ 85/337 Test  #83: A dock window with _NET_WM_STRUT_PARTIAL shrinks _NET_WORKAREA .....................................................................................   Passed    0.79 sec
+        Start  84: A root right-click with no eligible client leaves the WM responsive and idle
+ 86/337 Test  #84: A root right-click with no eligible client leaves the WM responsive and idle .......................................................................   Passed    2.82 sec
+        Start  85: Synthesised XTEST input on a client's tab activates that window
+ 87/337 Test  #85: Synthesised XTEST input on a client's tab activates that window ....................................................................................   Passed    1.06 sec
+        Start  86: SIGTERM shuts the WM down cleanly with exit status 0
+ 88/337 Test  #86: SIGTERM shuts the WM down cleanly with exit status 0 ...............................................................................................   Passed    0.80 sec
+        Start  87: On a server without XRender SIGTERM still shuts the WM down cleanly
+ 89/337 Test  #87: On a server without XRender SIGTERM still shuts the WM down cleanly ................................................................................   Passed    0.76 sec
+        Start  88: src/Border.cpp names the Xlib rectangle-combining call exactly once
+ 90/337 Test  #88: src/Border.cpp names the Xlib rectangle-combining call exactly once ................................................................................   Passed    0.04 sec
+        Start  89: With Shape forced off the WM still manages and frames a client
+ 91/337 Test  #89: With Shape forced off the WM still manages and frames a client .....................................................................................   Passed    0.79 sec
+        Start  90: With Shape forced off SIGTERM still shuts the WM down cleanly
+ 92/337 Test  #90: With Shape forced off SIGTERM still shuts the WM down cleanly ......................................................................................   Passed    0.79 sec
+        Start  91: With no tab font at all the WM still frames clients and exits cleanly
+ 93/337 Test  #91: With no tab font at all the WM still frames clients and exits cleanly ..............................................................................   Passed    0.76 sec
+        Start  92: A RENDER-less server is recorded in the transcript and costs no font rung
+ 94/337 Test  #92: A RENDER-less server is recorded in the transcript and costs no font rung ..........................................................................   Passed    0.75 sec
+        Start  93: On a server without XRender the WM starts, manages a client and frames it
+ 95/337 Test  #93: On a server without XRender the WM starts, manages a client and frames it ..........................................................................   Passed    0.79 sec
+        Start  94: The forced no-Shape path announces itself distinctly in the transcript
+ 96/337 Test  #94: The forced no-Shape path announces itself distinctly in the transcript .............................................................................   Passed    0.72 sec
+        Start  95: With Shape forced off the server reports the frame as unshaped
+ 97/337 Test  #95: With Shape forced off the server reports the frame as unshaped .....................................................................................   Passed    0.83 sec
+        Start  96: With the rotated tab font unavailable the WM degrades to horizontal labels
+ 98/337 Test  #96: With the rotated tab font unavailable the WM degrades to horizontal labels .........................................................................   Passed    0.82 sec
+        Start  97: Without the lever the server reports the same frame as shaped
+ 99/337 Test  #97: Without the lever the server reports the same frame as shaped ......................................................................................   Passed    0.81 sec
+        Start  98: Spike: a rotated Xft font loads, measures and draws with XRender disabled
+100/337 Test  #98: Spike: a rotated Xft font loads, measures and draws with XRender disabled ..........................................................................   Passed    1.37 sec
+        Start  99: Without the disable the same WM records XRender as available
+101/337 Test  #99: Without the disable the same WM records XRender as available .......................................................................................   Passed    0.80 sec
+        Start 100: A resolution change updates _NET_WORKAREA to the new screen rectangle
+102/337 Test #100: A resolution change updates _NET_WORKAREA to the new screen rectangle ..............................................................................   Passed    0.76 sec
+        Start 101: The WM manages windows normally on a server with no RANDR extension
+103/337 Test #101: The WM manages windows normally on a server with no RANDR extension ................................................................................   Passed    0.83 sec
+        Start 102: A window left offscreen by a shrink is moved back into view, not resized
+104/337 Test #102: A window left offscreen by a shrink is moved back into view, not resized ...........................................................................   Passed    0.82 sec
+        Start 103: A fullscreen client is sized to exactly the screen
+105/337 Test #103: A fullscreen client is sized to exactly the screen .................................................................................................   Passed    0.83 sec
+        Start 104: A fullscreen client is not repositioned by the resolution-change reflow
+106/337 Test #104: A fullscreen client is not repositioned by the resolution-change reflow ............................................................................   Passed    0.88 sec
+        Start 105: With no docks _NET_WORKAREA is the full screen rectangle
+107/337 Test #105: With no docks _NET_WORKAREA is the full screen rectangle ...........................................................................................   Passed    0.81 sec
+        Start 106: Redelivered screen-change notifications carrying stale dimensions change nothing
+108/337 Test #106: Redelivered screen-change notifications carrying stale dimensions change nothing ...................................................................   Passed    1.03 sec
+        Start 107: The WM starts and warns on a server with no RANDR extension
+109/337 Test #107: The WM starts and warns on a server with no RANDR extension ........................................................................................   Passed    0.74 sec
+        Start 108: A client mapped fully on screen is not moved
+110/337 Test #108: A client mapped fully on screen is not moved .......................................................................................................   Passed    0.79 sec
+        Start 109: The WM exits cleanly on SIGTERM with no RANDR extension
+111/337 Test #109: The WM exits cleanly on SIGTERM with no RANDR extension ............................................................................................   Passed    0.77 sec
+        Start 110: A client hanging off the right and bottom edges is moved fully on screen
+112/337 Test #110: A client hanging off the right and bottom edges is moved fully on screen ...........................................................................   Passed    0.81 sec
+        Start 111: On a RANDR-capable server the WM announces the extension as available
+113/337 Test #111: On a RANDR-capable server the WM announces the extension as available ..............................................................................   Passed    0.76 sec
+        Start 112: A window larger than the screen is clamped to the origin, not to a negative coordinate
+114/337 Test #112: A window larger than the screen is clamped to the origin, not to a negative coordinate .............................................................   Passed    0.81 sec
+        Start 113: A window that still fits after a shrink is not moved
+115/337 Test #113: A window that still fits after a shrink is not moved ...............................................................................................   Passed    0.81 sec
+        Start 114: With RANDR inert the root-ConfigureNotify fallback still reflows
+116/337 Test #114: With RANDR inert the root-ConfigureNotify fallback still reflows ...................................................................................   Passed    0.85 sec
+        Start 115: A configure request naming the frame does not move the window
+117/337 Test #115: A configure request naming the frame does not move the window ......................................................................................   Passed    0.84 sec
+        Start 116: A window dragged off the top-left keeps its tab on screen
+118/337 Test #116: A window dragged off the top-left keeps its tab on screen ..........................................................................................   Passed    1.48 sec
+        Start 117: A window mapped with no user-time property is focused
+119/337 Test #117: A window mapped with no user-time property is focused ..............................................................................................   Passed    1.24 sec
+        Start 118: With raise-on-focus off a window is focused without changing stacking order
+120/337 Test #118: With raise-on-focus off a window is focused without changing stacking order ........................................................................   Passed    2.82 sec
+        Start 119: A stale user-time on the user-time-window proxy is arbitrated
+121/337 Test #119: A stale user-time on the user-time-window proxy is arbitrated ......................................................................................   Passed    1.53 sec
+        Start 120: A window mapped with a user-time newer than the last interaction is focused
+122/337 Test #120: A window mapped with a user-time newer than the last interaction is focused ........................................................................   Passed    1.51 sec
+        Start 121: Malformed activation requests are ignored without crashing the WM
+123/337 Test #121: Malformed activation requests are ignored without crashing the WM ..................................................................................   Passed    2.53 sec
+        Start 122: An activation request with no source indication is granted
+124/337 Test #122: An activation request with no source indication is granted .........................................................................................   Passed    1.60 sec
+        Start 123: A window mapped with a user-time of exactly zero is not focused
+125/337 Test #123: A window mapped with a user-time of exactly zero is not focused ....................................................................................   Passed    1.49 sec
+        Start 124: Activating a refused window clears its demands-attention state
+126/337 Test #124: Activating a refused window clears its demands-attention state .....................................................................................   Passed    1.88 sec
+        Start 125: With raise-on-focus on a focused window is also raised
+127/337 Test #125: With raise-on-focus on a focused window is also raised .............................................................................................   Passed    1.03 sec
+        Start 126: An activation request from a pager is granted despite a stale timestamp
+128/337 Test #126: An activation request from a pager is granted despite a stale timestamp ............................................................................   Passed    1.58 sec
+        Start 127: A window mapped with a stale user-time is refused focus and demands attention
+129/337 Test #127: A window mapped with a stale user-time is refused focus and demands attention ......................................................................   Passed    1.59 sec
+        Start 128: A user-time of zero is refused even before any user interaction
+130/337 Test #128: A user-time of zero is refused even before any user interaction ....................................................................................   Passed    1.18 sec
+        Start 129: With click-to-focus the pointer alone does not focus a window but a click does
+131/337 Test #129: With click-to-focus the pointer alone does not focus a window but a click does .....................................................................   Passed    2.88 sec
+        Start 130: A fresh application activation request is granted
+132/337 Test #130: A fresh application activation request is granted ..................................................................................................   Passed    1.51 sec
+        Start 131: With auto-raise on pointer entry raises the window above its neighbour
+133/337 Test #131: With auto-raise on pointer entry raises the window above its neighbour .............................................................................   Passed    0.98 sec
+        Start 132: With auto-raise off the WM burns no CPU while focus tracking is live
+134/337 Test #132: With auto-raise off the WM burns no CPU while focus tracking is live ...............................................................................   Passed    5.39 sec
+        Start 133: With auto-raise off pointer entry neither raises nor focuses the window
+135/337 Test #133: With auto-raise off pointer entry neither raises nor focuses the window ............................................................................   Passed    2.65 sec
+        Start 134: With focus-stealing prevention off a stale activation request is granted
+136/337 Test #134: With focus-stealing prevention off a stale activation request is granted ...........................................................................   Passed    1.56 sec
+        Start 135: With click-to-focus off the pointer alone focuses a window
+137/337 Test #135: With click-to-focus off the pointer alone focuses a window .........................................................................................   Passed    1.00 sec
+        Start 136: With focus-stealing prevention off a stale window is focused anyway
+138/337 Test #136: With focus-stealing prevention off a stale window is focused anyway ................................................................................   Passed    1.25 sec
+        Start 137: A stale application activation request is refused and demands attention
+139/337 Test #137: A stale application activation request is refused and demands attention ............................................................................   Passed    1.83 sec
+        Start 138: An explicit skip-taskbar=false rule removes a client's own skip states
+140/337 Test #138: An explicit skip-taskbar=false rule removes a client's own skip states .............................................................................   Passed    1.55 sec
+        Start 139: With no rules configured a window is framed, placed and stated as before
+141/337 Test #139: With no rules configured a window is framed, placed and stated as before ...........................................................................   Passed    1.90 sec
+        Start 140: A window that matches no configured rule is untouched by the rules
+142/337 Test #140: A window that matches no configured rule is untouched by the rules .................................................................................   Passed    1.88 sec
+        Start 141: An explicit skip-taskbar=false rule still strips at the 256-atom cap
+143/337 Test #141: An explicit skip-taskbar=false rule still strips at the 256-atom cap ...............................................................................   Passed    1.60 sec
+        Start 142: A no-decorate window created with an X border is managed without it and maximizes exactly
+144/337 Test #142: A no-decorate window created with an X border is managed without it and maximizes exactly ..........................................................   Passed    1.58 sec
+        Start 143: A window matching a skip-taskbar rule carries skip-taskbar and skip-pager
+145/337 Test #143: A window matching a skip-taskbar rule carries skip-taskbar and skip-pager ..........................................................................   Passed    1.56 sec
+        Start 144: A title rule places a window whose title matches
+146/337 Test #144: A title rule places a window whose title matches ...................................................................................................   Passed    1.87 sec
+        Start 145: With no rules configured a titled window is placed where it asked
+147/337 Test #145: With no rules configured a titled window is placed where it asked ..................................................................................   Passed    1.54 sec
+        Start 146: A position rule that would strand a window offscreen is clamped
+148/337 Test #146: A position rule that would strand a window offscreen is clamped ....................................................................................   Passed    1.92 sec
+        Start 147: A no-decorate window maximizes to the workarea exactly
+149/337 Test #147: A no-decorate window maximizes to the workarea exactly .............................................................................................   Passed    1.58 sec
+        Start 148: A rule matching on window type alone applies to every window of that type
+150/337 Test #148: A rule matching on window type alone applies to every window of that type ..........................................................................   Passed    2.48 sec
+        Start 149: Two matching rules fold later-wins per action, not first-match
+151/337 Test #149: Two matching rules fold later-wins per action, not first-match .....................................................................................   Passed    1.59 sec
+        Start 150: A position rule places a window and a size rule sizes it
+152/337 Test #150: A position rule places a window and a size rule sizes it ...........................................................................................   Passed    1.87 sec
+        Start 151: A no-decorate window can take focus and is published as the active window
+153/337 Test #151: A no-decorate window can take focus and is published as the active window ..........................................................................   Passed    1.88 sec
+        Start 152: A title rule matches a window that advertises its title only through _NET_WM_NAME
+154/337 Test #152: A title rule matches a window that advertises its title only through _NET_WM_NAME ..................................................................   Passed    1.52 sec
+        Start 153: A title changed after mapping does not re-apply the rule
+155/337 Test #153: A title changed after mapping does not re-apply the rule ...........................................................................................   Passed    1.83 sec
+        Start 154: A window matching a no-decorate rule is managed without a frame
+156/337 Test #154: A window matching a no-decorate rule is managed without a frame ....................................................................................   Passed    1.49 sec
+        Start 155: A title rule and a class rule fold later-wins over one window
+157/337 Test #155: A title rule and a class rule fold later-wins over one window ......................................................................................   Passed    1.52 sec
+        Start 156: A zero, negative or absurd resize increment neither divides by zero nor produces a nonsensical size
+158/337 Test #156: A zero, negative or absurd resize increment neither divides by zero nor produces a nonsensical size ................................................   Passed    6.42 sec
+        Start 157: Hiding a client moves it to the hidden list, marks it hidden and unmaps its frame
+159/337 Test #157: Hiding a client moves it to the hidden list, marks it hidden and unmaps its frame ..................................................................   Passed    1.46 sec
+        Start 158: A fixed-size client is not resized by a drag and shows no resize handle
+160/337 Test #158: A fixed-size client is not resized by a drag and shows no resize handle ............................................................................   Passed    1.62 sec
+        Start 159: A client declaring no gravity is placed as NorthWest
+161/337 Test #159: A client declaring no gravity is placed as NorthWest ...............................................................................................   Passed    1.49 sec
+        Start 160: Destroying one of three clients removes exactly that one, in order
+162/337 Test #160: Destroying one of three clients removes exactly that one, in order .................................................................................   Passed    1.44 sec
+        Start 161: Destroying a client while it is the live focus candidate does not crash
+163/337 Test #161: Destroying a client while it is the live focus candidate does not crash ............................................................................   Passed    2.08 sec
+        Start 162: The placement adjustment is its own inverse across map/unmap cycles
+164/337 Test #162: The placement adjustment is its own inverse across map/unmap cycles ................................................................................   Passed    3.38 sec
+        Start 163: Destroying a mapped focused client leaves no stale list or active-window entry
+165/337 Test #163: Destroying a mapped focused client leaves no stale list or active-window entry .....................................................................   Passed    1.49 sec
+        Start 164: An unhandled gravity value places the window without a negative coordinate
+166/337 Test #164: An unhandled gravity value places the window without a negative coordinate .........................................................................   Passed    1.17 sec
+        Start 165: An increment with no base size quantises against the minimum size
+167/337 Test #165: An increment with no base size quantises against the minimum size ..................................................................................   Passed    2.08 sec
+        Start 166: A maximum smaller than the minimum resolves without a nonsensical dimension
+168/337 Test #166: A maximum smaller than the minimum resolves without a nonsensical dimension ........................................................................   Passed    2.12 sec
+        Start 167: A minimum size cannot be dragged past, in either dimension
+169/337 Test #167: A minimum size cannot be dragged past, in either dimension .........................................................................................   Passed    1.57 sec
+        Start 168: Every handled window gravity places the client where that mode implies
+170/337 Test #168: Every handled window gravity places the client where that mode implies .............................................................................   Passed    4.54 sec
+        Start 169: A base size plus an increment quantises to base + n*increment
+171/337 Test #169: A base size plus an increment quantises to base + n*increment ......................................................................................   Passed    1.60 sec
+        Start 170: Destroying a hidden client removes it from the list without a sanitizer report
+172/337 Test #170: Destroying a hidden client removes it from the list without a sanitizer report .....................................................................   Passed    1.83 sec
+        Start 171: A maximum size cannot be dragged past, in either dimension
+173/337 Test #171: A maximum size cannot be dragged past, in either dimension .........................................................................................   Passed    1.62 sec
+        Start 172: Unhiding a client moves it back to the visible list, clears the state and remaps
+174/337 Test #172: Unhiding a client moves it back to the visible list, clears the state and remaps ...................................................................   Passed    1.85 sec
+        Start 173: A name containing invalid UTF-8 renders without crashing or corrupting
+175/337 Test #173: A name containing invalid UTF-8 renders without crashing or corrupting .............................................................................   Passed    1.18 sec
+        Start 174: A state message naming an unmanaged window is ignored and does not crash
+176/337 Test #174: A state message naming an unmanaged window is ignored and does not crash ...........................................................................   Passed    2.42 sec
+        Start 175: Fullscreen covers the whole screen including the dock, and restores exactly
+177/337 Test #175: Fullscreen covers the whole screen including the dock, and restores exactly ........................................................................   Passed    1.49 sec
+        Start 176: A state message toggles fullscreen in both directions
+178/337 Test #176: A state message toggles fullscreen in both directions ..............................................................................................   Passed    0.80 sec
+        Start 177: A state message with the wrong format is ignored
+179/337 Test #177: A state message with the wrong format is ignored ...................................................................................................   Passed    1.81 sec
+        Start 178: A strut larger than the screen produces a clamped, valid workarea
+180/337 Test #178: A strut larger than the screen produces a clamped, valid workarea ..................................................................................   Passed    1.48 sec
+        Start 179: The whole malformed-property battery against one window leaves the WM consistent
+181/337 Test #179: The whole malformed-property battery against one window leaves the WM consistent ...................................................................   Passed    1.51 sec
+        Start 180: Maximize fills the workarea rather than the screen, and restores exactly
+182/337 Test #180: Maximize fills the workarea rather than the screen, and restores exactly ...........................................................................   Passed    1.87 sec
+        Start 181: A single state message naming two properties applies both
+183/337 Test #181: A single state message naming two properties applies both ..........................................................................................   Passed    0.89 sec
+        Start 182: Maximizing straight after leaving fullscreen uses workarea geometry
+184/337 Test #182: Maximizing straight after leaving fullscreen uses workarea geometry ................................................................................   Passed    1.79 sec
+        Start 183: A property of the wrong FORMAT is rejected rather than misread
+185/337 Test #183: A property of the wrong FORMAT is rejected rather than misread .....................................................................................   Passed    1.19 sec
+        Start 184: Deleting a property after the window is managed is handled on the notification
+186/337 Test #184: Deleting a property after the window is managed is handled on the notification .....................................................................   Passed    1.52 sec
+        Start 185: A window-type property of the wrong atom type is ignored
+187/337 Test #185: A window-type property of the wrong atom type is ignored ...........................................................................................   Passed    1.19 sec
+        Start 186: Destroying a client while it is fullscreen leaves nothing behind
+188/337 Test #186: Destroying a client while it is fullscreen leaves nothing behind ...................................................................................   Passed    1.23 sec
+        Start 187: Fullscreen requested while hidden takes effect when the client is unhidden
+189/337 Test #187: Fullscreen requested while hidden takes effect when the client is unhidden .........................................................................   Passed    1.57 sec
+        Start 188: An empty property array is handled as absent, not as a zero value
+190/337 Test #188: An empty property array is handled as absent, not as a zero value ..................................................................................   Passed    0.80 sec
+        Start 189: A state message adds and removes fullscreen
+191/337 Test #189: A state message adds and removes fullscreen ........................................................................................................   Passed    1.45 sec
+        Start 190: A state message naming an unsupported state changes nothing
+192/337 Test #190: A state message naming an unsupported state changes nothing ........................................................................................   Passed    1.54 sec
+        Start 191: A two-property toggle flips each property independently
+193/337 Test #191: A two-property toggle flips each property independently ............................................................................................   Passed    1.18 sec
+        Start 192: Negative and out-of-range struts never invert or empty the workarea
+194/337 Test #192: Negative and out-of-range struts never invert or empty the workarea ................................................................................   Passed    2.96 sec
+        Start 193: A WM_CHANGE_STATE iconify message hides the client and adds hidden
+195/337 Test #193: A WM_CHANGE_STATE iconify message hides the client and adds hidden .................................................................................   Passed    1.14 sec
+        Start 194: Single-axis maximize changes only that axis, and restores exactly
+196/337 Test #194: Single-axis maximize changes only that axis, and restores exactly ..................................................................................   Passed    3.65 sec
+        Start 195: A dock mapped after a window is maximized leaves its restore geometry intact
+197/337 Test #195: A dock mapped after a window is maximized leaves its restore geometry intact .......................................................................   Passed    2.16 sec
+        Start 196: An oversized property array is read within a bound and does not hang
+198/337 Test #196: An oversized property array is read within a bound and does not hang ...............................................................................   Passed    1.21 sec
+        Start 197: A title advertised only through _NET_WM_NAME reaches the sideways tab
+199/337 Test #197: A title advertised only through _NET_WM_NAME reaches the sideways tab ..............................................................................   Passed    1.95 sec
+        Start 198: A long title on a short window is shortened to fit its tab, still legibly
+200/337 Test #198: A long title on a short window is shortened to fit its tab, still legibly ..........................................................................   Passed    2.51 sec
+        Start 199: Highlighting a root-menu row does not erase its label, and neither does leaving it
+201/337 Test #199: Highlighting a root-menu row does not erase its label, and neither does leaving it .................................................................   Passed    1.71 sec
+        Start 200: The window manager reports how often its timestamp path took a cold-cache property wait
+202/337 Test #200: The window manager reports how often its timestamp path took a cold-cache property wait ............................................................   Passed    4.00 sec
+        Start 201: With no display available the binary exits non-zero and names the display
+203/337 Test #201: With no display available the binary exits non-zero and names the display ..........................................................................   Passed    0.11 sec
+        Start 202: Frame thickness changes the measured frame geometry in both directions
+204/337 Test #202: Frame thickness changes the measured frame geometry in both directions .............................................................................   Passed    4.58 sec
+        Start 203: The window button answers across the whole tab-top square while painting the same square as before
+205/337 Test #203: The window button answers across the whole tab-top square while painting the same square as before .................................................   Passed   14.20 sec
+        Start 204: An unrecognised flag exits non-zero and its advice names a flag that works
+206/337 Test #204: An unrecognised flag exits non-zero and its advice names a flag that works .........................................................................   Passed    0.09 sec
+        Start 205: A click on an unfocused no-decorate window focuses it, reaches it, and leaves the root menu working
+207/337 Test #205: A click on an unfocused no-decorate window focuses it, reaches it, and leaves the root menu working ................................................   Passed    1.40 sec
+        Start 206: Repeated create, map, unmap and destroy over 120 windows leaves the WM correct, bounded and free of zombies
+208/337 Test #206: Repeated create, map, unmap and destroy over 120 windows leaves the WM correct, bounded and free of zombies ........................................   Passed    5.58 sec
+        Start 207: A setting given on the command line overrides the same setting in the config file
+209/337 Test #207: A setting given on the command line overrides the same setting in the config file ..................................................................   Passed    3.13 sec
+        Start 208: A second window manager fails cleanly and leaves the incumbent working
+210/337 Test #208: A second window manager fails cleanly and leaves the incumbent working .............................................................................   Passed    0.90 sec
+        Start 209: Menu background colour reaches the menu opened by a real root click
+211/337 Test #209: Menu background colour reaches the menu opened by a real root click ................................................................................   Passed    3.23 sec
+        Start 210: _NET_WM_NAME wins over WM_NAME when a client sets both
+212/337 Test #210: _NET_WM_NAME wins over WM_NAME when a client sets both .............................................................................................   Passed    2.55 sec
+        Start 211: exec-using-shell gates whether a command with arguments and metacharacters is evaluated by a shell
+213/337 Test #211: exec-using-shell gates whether a command with arguments and metacharacters is evaluated by a shell .................................................   Passed   32.65 sec
+        Start 212: The help flag prints usage and exits successfully
+214/337 Test #212: The help flag prints usage and exits successfully ..................................................................................................   Passed    0.07 sec
+        Start 213: The root menu still opens and tracks the pointer after a submenu episode
+215/337 Test #213: The root menu still opens and tracks the pointer after a submenu episode ...........................................................................   Passed    2.46 sec
+        Start 214: new-window-command decides which program the menu's New entry starts
+216/337 Test #214: new-window-command decides which program the menu's New entry starts ...............................................................................   Passed    1.47 sec
+        Start 215: Highlighting a category submenu row does not erase its label either
+217/337 Test #215: Highlighting a category submenu row does not erase its label either ................................................................................   Passed    1.71 sec
+        Start 216: SIGTERM while the root menu is held open is honoured without waiting for the release
+218/337 Test #216: SIGTERM while the root menu is held open is honoured without waiting for the release ...............................................................   Passed    1.34 sec
+        Start 217: A category submenu with more entries than fit stays inside the screen
+219/337 Test #217: A category submenu with more entries than fit stays inside the screen ..............................................................................   Passed    1.44 sec
+        Start 218: The active window's tab wears a bevel and an inactive one does not
+220/337 Test #218: The active window's tab wears a bevel and an inactive one does not .................................................................................   Passed    2.28 sec
+        Start 219: Moving from a submenu back to the outer menu re-highlights it and closes the submenu
+221/337 Test #219: Moving from a submenu back to the outer menu re-highlights it and closes the submenu ...............................................................   Passed    1.68 sec
+        Start 220: destroy-window-delay decides whether a tab-button press hides or deletes
+222/337 Test #220: destroy-window-delay decides whether a tab-button press hides or deletes ...........................................................................   Passed    3.40 sec
+        Start 221: Tab foreground and background colours reach the rendered tab
+223/337 Test #221: Tab foreground and background colours reach the rendered tab .......................................................................................   Passed    3.11 sec
+        Start 222: A UTF-8 title is not truncated at its first multi-byte character
+224/337 Test #222: A UTF-8 title is not truncated at its first multi-byte character ...................................................................................   Passed    2.31 sec
+        Start 223: With no font available at all the binary exits non-zero and names the menu font
+225/337 Test #223: With no font available at all the binary exits non-zero and names the menu font ....................................................................   Passed    0.37 sec
+        Start 224: The sideways tab grows with the window title and renders its label
+226/337 Test #224: The sideways tab grows with the window title and renders its label .................................................................................   Passed    2.32 sec
+        Start 225: A stale sanitizer report on a reused display prefix is cleared, and only that prefix is cleared
+227/337 Test #225: A stale sanitizer report on a reused display prefix is cleared, and only that prefix is cleared ....................................................   Passed    1.50 sec
+        Start 226: A WM_NAME-only client is unaffected by the EWMH title read
+228/337 Test #226: A WM_NAME-only client is unaffected by the EWMH title read .........................................................................................   Passed    2.23 sec
+        Start 227: An unparseable colour setting exits non-zero and names the offending setting
+229/337 Test #227: An unparseable colour setting exits non-zero and names the offending setting .......................................................................   Passed    4.25 sec
+        Start 228: Every terminating path exits within a deadline rather than hanging
+230/337 Test #228: Every terminating path exits within a deadline rather than hanging .................................................................................   Passed    1.29 sec
+        Start 229: Idle CPU stays under one percent with auto-raise disabled
+231/337 Test #229: Idle CPU stays under one percent with auto-raise disabled ..........................................................................................   Passed   31.52 sec
+        Start 230: Idle CPU with twenty clients mapped and no input stays under one percent of wall clock
+232/337 Test #230: Idle CPU with twenty clients mapped and no input stays under one percent of wall clock .............................................................   Passed   31.57 sec
+        Start 231: Resident memory with twenty clients mapped stays inside the fixed, pre-committed budget
+233/337 Test #231: Resident memory with twenty clients mapped stays inside the fixed, pre-committed budget ............................................................   Passed    3.47 sec
+        Start 232: The hang-time capture path yields an eight-channel bundle and one confirmed intervention from a healthy window manager
+234/337 Test #232: The hang-time capture path yields an eight-channel bundle and one confirmed intervention from a healthy window manager .............................   Passed    1.68 sec
+        Start 233: The post-readiness reparent is sampled to a stated budget in two modes
+235/337 Test #233: The post-readiness reparent is sampled to a stated budget in two modes .............................................................................   Passed    2.45 sec
+        Start 234: applyFile skips comments and blank lines
+236/337 Test #234: applyFile skips comments and blank lines ...........................................................................................................   Passed    0.05 sec
+        Start 235: xdgConfigDirs skips relative paths
+237/337 Test #235: xdgConfigDirs skips relative paths .................................................................................................................   Passed    0.04 sec
+        Start 236: CLI integer values are clamped to valid ranges
+238/337 Test #236: CLI integer values are clamped to valid ranges .....................................................................................................   Passed    0.04 sec
+        Start 237: Config load precedence: user config overrides system config
+239/337 Test #237: Config load precedence: user config overrides system config ........................................................................................   Passed    0.05 sec
+        Start 238: menu-entry-category with no preceding menu-entry-name is a no-op
+240/337 Test #238: menu-entry-category with no preceding menu-entry-name is a no-op ...................................................................................   Passed    0.04 sec
+        Start 239: CLI --no-exec-using-shell disables boolean
+241/337 Test #239: CLI --no-exec-using-shell disables boolean .........................................................................................................   Passed    0.04 sec
+        Start 240: Integer values are clamped to valid ranges
+242/337 Test #240: Integer values are clamped to valid ranges .........................................................................................................   Passed    0.05 sec
+        Start 241: Lines exceeding 4096 chars are skipped
+243/337 Test #241: Lines exceeding 4096 chars are skipped .............................................................................................................   Passed    0.05 sec
+        Start 242: Config load with no config files returns pure defaults
+244/337 Test #242: Config load with no config files returns pure defaults .............................................................................................   Passed    0.04 sec
+        Start 243: A CLI enable overrides a config-file disable for every focus boolean
+245/337 Test #243: A CLI enable overrides a config-file disable for every focus boolean ...............................................................................   Passed    0.05 sec
+        Start 244: CLI --exec-using-shell enables boolean
+246/337 Test #244: CLI --exec-using-shell enables boolean .............................................................................................................   Passed    0.04 sec
+        Start 245: CLI --auto-raise-delay sets integer value
+247/337 Test #245: CLI --auto-raise-delay sets integer value ..........................................................................................................   Passed    0.04 sec
+        Start 246: CLI multiple options all applied
+248/337 Test #246: CLI multiple options all applied ...................................................................................................................   Passed    0.04 sec
+        Start 247: xdgConfigHome falls back to HOME/.config
+249/337 Test #247: xdgConfigHome falls back to HOME/.config ...........................................................................................................   Passed    0.04 sec
+        Start 248: CLI -- terminates option parsing
+250/337 Test #248: CLI -- terminates option parsing ...................................................................................................................   Passed    0.05 sec
+        Start 249: CLI --focus-stealing-prevention enables the mitigation
+251/337 Test #249: CLI --focus-stealing-prevention enables the mitigation .............................................................................................   Passed    0.04 sec
+        Start 250: CLI overrides config file values
+252/337 Test #250: CLI overrides config file values ...................................................................................................................   Passed    0.04 sec
+        Start 251: A CLI negation overrides a config-file enable for every focus boolean
+253/337 Test #251: A CLI negation overrides a config-file enable for every focus boolean ..............................................................................   Passed    0.04 sec
+        Start 252: applyKeyValue handles non-numeric int values gracefully
+254/337 Test #252: applyKeyValue handles non-numeric int values gracefully ............................................................................................   Passed    0.04 sec
+        Start 253: menu-entry-name/command/category produce one manual AppEntry
+255/337 Test #253: menu-entry-name/command/category produce one manual AppEntry .......................................................................................   Passed    0.04 sec
+        Start 254: CLI --no-click-to-focus disables boolean
+256/337 Test #254: CLI --no-click-to-focus disables boolean ...........................................................................................................   Passed    0.05 sec
+        Start 255: multiple menu-entry-name blocks accumulate independently
+257/337 Test #255: multiple menu-entry-name blocks accumulate independently ...........................................................................................   Passed    0.05 sec
+        Start 256: CLI --raise-on-focus enables boolean
+258/337 Test #256: CLI --raise-on-focus enables boolean ...............................................................................................................   Passed    0.05 sec
+        Start 257: CLI no args leaves config unchanged
+259/337 Test #257: CLI no args leaves config unchanged ................................................................................................................   Passed    0.04 sec
+        Start 258: CLI --tab-foreground sets string value
+260/337 Test #258: CLI --tab-foreground sets string value .............................................................................................................   Passed    0.05 sec
+        Start 259: xdgConfigHome returns XDG_CONFIG_HOME when set and absolute
+261/337 Test #259: xdgConfigHome returns XDG_CONFIG_HOME when set and absolute ........................................................................................   Passed    0.04 sec
+        Start 260: CLI --frame-thickness sets integer value
+262/337 Test #260: CLI --frame-thickness sets integer value ...........................................................................................................   Passed    0.04 sec
+        Start 261: CLI unknown option causes exit
+263/337 Test #261: CLI unknown option causes exit .....................................................................................................................   Passed    0.07 sec
+        Start 262: applyFile parses key=value and overrides defaults
+264/337 Test #262: applyFile parses key=value and overrides defaults ..................................................................................................   Passed    0.05 sec
+        Start 263: A CLI enable overrides a config-file disable of focus-stealing prevention
+265/337 Test #263: A CLI enable overrides a config-file disable of focus-stealing prevention ..........................................................................   Passed    0.04 sec
+        Start 264: CLI --new-window-command sets string value
+266/337 Test #264: CLI --new-window-command sets string value .........................................................................................................   Passed    0.05 sec
+        Start 265: Values exceeding 256 chars are rejected
+267/337 Test #265: Values exceeding 256 chars are rejected ............................................................................................................   Passed    0.04 sec
+        Start 266: xdgConfigHome ignores relative XDG_CONFIG_HOME
+268/337 Test #266: xdgConfigHome ignores relative XDG_CONFIG_HOME .....................................................................................................   Passed    0.05 sec
+        Start 267: Config key focus-stealing-prevention parses in both directions
+269/337 Test #267: Config key focus-stealing-prevention parses in both directions .....................................................................................   Passed    0.04 sec
+        Start 268: Config defaults match upstream Config.h
+270/337 Test #268: Config defaults match upstream Config.h ............................................................................................................   Passed    0.04 sec
+        Start 269: CLI --no-raise-on-focus disables boolean
+271/337 Test #269: CLI --no-raise-on-focus disables boolean ...........................................................................................................   Passed    0.05 sec
+        Start 270: CLI --click-to-focus enables boolean
+272/337 Test #270: CLI --click-to-focus enables boolean ...............................................................................................................   Passed    0.04 sec
+        Start 271: menu-entry-name alone defaults category to Custom
+273/337 Test #271: menu-entry-name alone defaults category to Custom ..................................................................................................   Passed    0.05 sec
+        Start 272: CLI --auto-raise enables boolean
+274/337 Test #272: CLI --auto-raise enables boolean ...................................................................................................................   Passed    0.04 sec
+        Start 273: CLI --no-focus-stealing-prevention disables the mitigation
+275/337 Test #273: CLI --no-focus-stealing-prevention disables the mitigation .........................................................................................   Passed    0.05 sec
+        Start 274: menu-entry-command with no preceding menu-entry-name is a no-op
+276/337 Test #274: menu-entry-command with no preceding menu-entry-name is a no-op ....................................................................................   Passed    0.05 sec
+        Start 275: applyKeyValue handles all 18 settings
+277/337 Test #275: applyKeyValue handles all 18 settings ..............................................................................................................   Passed    0.04 sec
+        Start 276: xdgConfigDirs defaults to /etc/xdg
+278/337 Test #276: xdgConfigDirs defaults to /etc/xdg .................................................................................................................   Passed    0.04 sec
+        Start 277: CLI --no-auto-raise disables boolean
+279/337 Test #277: CLI --no-auto-raise disables boolean ...............................................................................................................   Passed    0.05 sec
+        Start 278: Boolean config values accept multiple formats
+280/337 Test #278: Boolean config values accept multiple formats ......................................................................................................   Passed    0.04 sec
+        Start 279: applyFile warns on lines without equals sign
+281/337 Test #279: applyFile warns on lines without equals sign .......................................................................................................   Passed    0.04 sec
+        Start 280: applyFile silently skips non-existent files
+282/337 Test #280: applyFile silently skips non-existent files ........................................................................................................   Passed    0.05 sec
+        Start 281: xdgConfigDirs parses colon-separated XDG_CONFIG_DIRS
+283/337 Test #281: xdgConfigDirs parses colon-separated XDG_CONFIG_DIRS ...............................................................................................   Passed    0.04 sec
+        Start 282: A malformed position or size warns and leaves that action unset
+284/337 Test #282: A malformed position or size warns and leaves that action unset ....................................................................................   Passed    0.04 sec
+        Start 283: Consecutive match and mode lines attach to the same rule
+285/337 Test #283: Consecutive match and mode lines attach to the same rule ...........................................................................................   Passed    0.04 sec
+        Start 284: Rules append across the system-then-user chain without merging groups
+286/337 Test #284: Rules append across the system-then-user chain without merging groups ..............................................................................   Passed    0.04 sec
+        Start 285: rule-match-title parses and opens a rule group
+287/337 Test #285: rule-match-title parses and opens a rule group .....................................................................................................   Passed    0.04 sec
+        Start 286: A title criterion matches on the window title
+288/337 Test #286: A title criterion matches on the window title ......................................................................................................   Passed    0.03 sec
+        Start 287: A later rule setting an action false overrides an earlier true
+289/337 Test #287: A later rule setting an action false overrides an earlier true .....................................................................................   Passed    0.04 sec
+        Start 288: rule-match-instance matches the instance name only
+290/337 Test #288: rule-match-instance matches the instance name only .................................................................................................   Passed    0.04 sec
+        Start 289: A rule with only a title criterion is not treated as criterion-free
+291/337 Test #289: A rule with only a title criterion is not treated as criterion-free ................................................................................   Passed    0.04 sec
+        Start 290: A title criterion against an untitled window does not match
+292/337 Test #290: A title criterion against an untitled window does not match ........................................................................................   Passed    0.04 sec
+        Start 291: An unrecognised window type warns and leaves the type criterion unset
+293/337 Test #291: An unrecognised window type warns and leaves the type criterion unset ..............................................................................   Passed    0.04 sec
+        Start 292: A config file of only rule lines produces no unknown-key warnings
+294/337 Test #292: A config file of only rule lines produces no unknown-key warnings ..................................................................................   Passed    0.04 sec
+        Start 293: A title criterion honours exact and substring modes
+295/337 Test #293: A title criterion honours exact and substring modes ................................................................................................   Passed    0.04 sec
+        Start 294: A rule value longer than the value-length limit is rejected
+296/337 Test #294: A rule value longer than the value-length limit is rejected ........................................................................................   Passed    0.04 sec
+        Start 295: A rule with only a class criterion matches that class and nothing else
+297/337 Test #295: A rule with only a class criterion matches that class and nothing else .............................................................................   Passed    0.04 sec
+        Start 296: Folding matching rules yields the last value set for each action
+298/337 Test #296: Folding matching rules yields the last value set for each action ...................................................................................   Passed    0.04 sec
+        Start 297: A rule with no criteria matches nothing
+299/337 Test #297: A rule with no criteria matches nothing ............................................................................................................   Passed    0.04 sec
+        Start 298: A title criterion is AND-ed with a class criterion
+300/337 Test #298: A title criterion is AND-ed with a class criterion .................................................................................................   Passed    0.04 sec
+        Start 299: A class line, a name line and two action lines produce one rule
+301/337 Test #299: A class line, a name line and two action lines produce one rule ....................................................................................   Passed    0.04 sec
+        Start 300: A class criterion and a name criterion are AND-ed
+302/337 Test #300: A class criterion and a name criterion are AND-ed ..................................................................................................   Passed    0.04 sec
+        Start 301: The class criterion is tested against both the instance and the class name
+303/337 Test #301: The class criterion is tested against both the instance and the class name .........................................................................   Passed    0.04 sec
+        Start 302: Substring is the default match mode
+304/337 Test #302: Substring is the default match mode ................................................................................................................   Passed    0.04 sec
+        Start 303: An action with no preceding match line warns and produces no rule
+305/337 Test #303: An action with no preceding match line warns and produces no rule ..................................................................................   Passed    0.04 sec
+        Start 304: rule-match-name is no longer a rule key
+306/337 Test #304: rule-match-name is no longer a rule key ............................................................................................................   Passed    0.04 sec
+        Start 305: Exact mode requires whole-string equality, substring mode accepts a partial match
+307/337 Test #305: Exact mode requires whole-string equality, substring mode accepts a partial match ..................................................................   Passed    0.04 sec
+        Start 306: A match line following an action line opens a second rule
+308/337 Test #306: A match line following an action line opens a second rule ..........................................................................................   Passed    0.04 sec
+        Start 307: parseFile handles a CRLF-terminated blank line without crashing
+309/337 Test #307: parseFile handles a CRLF-terminated blank line without crashing ....................................................................................   Passed    0.04 sec
+        Start 308: parseFile parses a well-formed entry
+310/337 Test #308: parseFile parses a well-formed entry ...............................................................................................................   Passed    0.04 sec
+        Start 309: xdgApplicationsDirs appends applications to each data dir and prepends user dir
+311/337 Test #309: xdgApplicationsDirs appends applications to each data dir and prepends user dir ....................................................................   Passed    0.04 sec
+        Start 310: parseFile rejects unrecognized Exec field codes
+312/337 Test #310: parseFile rejects unrecognized Exec field codes ....................................................................................................   Passed    0.04 sec
+        Start 311: parseFile excludes Hidden=true entries
+313/337 Test #311: parseFile excludes Hidden=true entries .............................................................................................................   Passed    0.04 sec
+        Start 312: scanAll does not throw when XDG data dirs are empty/missing
+314/337 Test #312: scanAll does not throw when XDG data dirs are empty/missing ........................................................................................   Passed    0.04 sec
+        Start 313: xdgDataDirs parses colon-separated XDG_DATA_DIRS
+315/337 Test #313: xdgDataDirs parses colon-separated XDG_DATA_DIRS ...................................................................................................   Passed    0.04 sec
+        Start 314: parseFile excludes NoDisplay=true entries
+316/337 Test #314: parseFile excludes NoDisplay=true entries ..........................................................................................................   Passed    0.04 sec
+        Start 315: parseExec treats a quoted argument as one literal token
+317/337 Test #315: parseExec treats a quoted argument as one literal token ............................................................................................   Passed    0.04 sec
+        Start 316: xdgDataDirs defaults to /usr/local/share and /usr/share
+318/337 Test #316: xdgDataDirs defaults to /usr/local/share and /usr/share ............................................................................................   Passed    0.04 sec
+        Start 317: parseFile excludes entries with unresolvable TryExec
+319/337 Test #317: parseFile excludes entries with unresolvable TryExec ...............................................................................................   Passed    0.04 sec
+        Start 318: parseFile excludes NotShowIn=wm2-born-again entries
+320/337 Test #318: parseFile excludes NotShowIn=wm2-born-again entries ................................................................................................   Passed    0.04 sec
+        Start 319: readNeededLibraries returns nullopt for a shebang script
+321/337 Test #319: readNeededLibraries returns nullopt for a shebang script ...........................................................................................   Passed    0.03 sec
+        Start 320: readNeededLibraries returns nullopt for an empty file
+322/337 Test #320: readNeededLibraries returns nullopt for an empty file ..............................................................................................   Passed    0.04 sec
+        Start 321: readNeededLibraries returns nullopt for a nonexistent path
+323/337 Test #321: readNeededLibraries returns nullopt for a nonexistent path .........................................................................................   Passed    0.04 sec
+        Start 322: readNeededLibraries returns nullopt for bad ELF magic
+324/337 Test #322: readNeededLibraries returns nullopt for bad ELF magic ..............................................................................................   Passed    0.04 sec
+        Start 323: readNeededLibraries succeeds on a real CLI ELF binary
+325/337 Test #323: readNeededLibraries succeeds on a real CLI ELF binary ..............................................................................................   Passed    0.04 sec
+        Start 324: scanUsrBin excludes names already present in existingNames
+326/337 Test #324: scanUsrBin excludes names already present in existingNames .........................................................................................   Passed    0.56 sec
+        Start 325: isGuiBinary classifies known GUI toolkit substrings
+327/337 Test #325: isGuiBinary classifies known GUI toolkit substrings ................................................................................................   Passed    0.03 sec
+        Start 326: scanUsrBin produces only well-formed BinaryScan entries
+328/337 Test #326: scanUsrBin produces only well-formed BinaryScan entries ............................................................................................   Passed    0.33 sec
+        Start 327: mergeEntries preserves explicit non-Custom category on manual entry
+329/337 Test #327: mergeEntries preserves explicit non-Custom category on manual entry ................................................................................   Passed    0.04 sec
+        Start 328: needsRescan returns true for epoch and false for far-future timestamp
+330/337 Test #328: needsRescan returns true for epoch and false for far-future timestamp ..............................................................................   Passed    0.04 sec
+        Start 329: AppCache write-then-read round-trips mixed-source entries
+331/337 Test #329: AppCache write-then-read round-trips mixed-source entries ..........................................................................................   Passed    0.04 sec
+        Start 330: mergeEntries D-08 override replaces name-matching entry entirely
+332/337 Test #330: mergeEntries D-08 override replaces name-matching entry entirely ...................................................................................   Passed    0.04 sec
+        Start 331: mergeEntries D-07 default Custom category preserved for non-colliding manual entry
+333/337 Test #331: mergeEntries D-07 default Custom category preserved for non-colliding manual entry .................................................................   Passed    0.04 sec
+        Start 332: AppCache read skips a malformed entry but keeps well-formed ones
+334/337 Test #332: AppCache read skips a malformed entry but keeps well-formed ones ...................................................................................   Passed    0.04 sec
+        Start 333: loadOrRescan performs a full rescan, persists, then fast-paths
+335/337 Test #333: loadOrRescan performs a full rescan, persists, then fast-paths .....................................................................................   Passed    0.73 sec
+        Start 334: AppCache read on nonexistent path returns empty CacheData
+336/337 Test #334: AppCache read on nonexistent path returns empty CacheData ..........................................................................................   Passed    0.04 sec
+        Start 337: stop_xvfb
+337/337 Test #337: stop_xvfb ..........................................................................................................................................   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 337
+
+Label Time Summary:
+appcache              =   1.00 sec*proc (8 tests)
+autoraise             =   0.24 sec*proc (6 tests)
+binaryscanner         =   1.11 sec*proc (8 tests)
+cli                   =   1.05 sec*proc (23 tests)
+client                =   0.47 sec*proc (11 tests)
+color                 =   0.04 sec*proc (1 test)
+colormap              =   0.12 sec*proc (3 tests)
+config                =   2.14 sec*proc (48 tests)
+cursor                =   0.17 sec*proc (4 tests)
+desktopentry          =   0.48 sec*proc (12 tests)
+display               =   0.09 sec*proc (2 tests)
+eventloop             =   1.34 sec*proc (13 tests)
+ewmh                  =   0.72 sec*proc (16 tests)
+font                  =   0.12 sec*proc (3 tests)
+gc                    =   0.11 sec*proc (3 tests)
+lifecycle             =   0.17 sec*proc (4 tests)
+menupaint             =   0.18 sec*proc (5 tests)
+metrics               =   0.57 sec*proc (1 test)
+pipe                  =   0.04 sec*proc (1 test)
+pixmap                =   0.09 sec*proc (2 tests)
+poc                   =   2.82 sec*proc (6 tests)
+preflight             =   0.19 sec*proc (1 test)
+pump                  =   0.18 sec*proc (4 tests)
+raii                  =   1.02 sec*proc (25 tests)
+rotation              =   0.54 sec*proc (1 test)
+rules                 =   0.99 sec*proc (25 tests)
+servergrab            =   0.13 sec*proc (3 tests)
+shape                 =   0.55 sec*proc (1 test)
+shape_invariant       =   0.04 sec*proc (1 test)
+smoke                 =   0.29 sec*proc (7 tests)
+state                 =   0.32 sec*proc (7 tests)
+timer                 =   0.24 sec*proc (6 tests)
+timestamp             =   0.96 sec*proc (4 tests)
+utf8                  =   0.54 sec*proc (1 test)
+wm_bevel              =   2.28 sec*proc (1 test)
+wm_button             =  14.20 sec*proc (1 test)
+wm_circulate          =   2.82 sec*proc (1 test)
+wm_config_runtime     =  51.56 sec*proc (7 tests)
+wm_errors             =   7.08 sec*proc (7 tests)
+wm_focus              =  39.05 sec*proc (21 tests)
+wm_fsmax              =  13.76 sec*proc (7 tests)
+wm_geometry           =  11.42 sec*proc (13 tests)
+wm_gravity            =  10.58 sec*proc (4 tests)
+wm_harness            =   1.50 sec*proc (1 test)
+wm_lifecycle          =  10.16 sec*proc (6 tests)
+wm_menuback           =   1.68 sec*proc (1 test)
+wm_menulabel          =   4.86 sec*proc (3 tests)
+wm_menureopen         =   2.46 sec*proc (1 test)
+wm_norandr            =   3.20 sec*proc (4 tests)
+wm_norender           =   4.68 sec*proc (6 tests)
+wm_noshape            =   3.93 sec*proc (5 tests)
+wm_process            =   9.79 sec*proc (8 tests)
+wm_props              =  13.04 sec*proc (9 tests)
+wm_repro              =   4.12 sec*proc (2 tests)
+wm_resource_budget    =  66.56 sec*proc (3 tests)
+wm_rules              =  31.13 sec*proc (18 tests)
+wm_sizehints          =  17.03 sec*proc (7 tests)
+wm_state              =  11.22 sec*proc (8 tests)
+wm_stress             =   5.58 sec*proc (1 test)
+wm_tablabel           =  13.88 sec*proc (6 tests)
+wm_timestamp          =   4.00 sec*proc (1 test)
+workarea              =   0.13 sec*proc (3 tests)
+xdg                   =   0.36 sec*proc (9 tests)
+xft                   =   2.82 sec*proc (6 tests)
+xft_norender_spike    =   1.37 sec*proc (1 test)
+
+Total Test time (real) = 373.08 sec
+  asan: 6 suppression-accounting log(s); matched suppressions:
+          2        288 libfontconfig
+  asan: no sanitizer findings
+  asan: OK
+
+build-all OK: asan

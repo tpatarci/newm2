@@ -184,15 +184,22 @@ std::vector<Atom> wmState(Display* d, Window w)
     unsigned long nItems = 0, bytesAfter = 0;
     unsigned char* raw = nullptr;
 
-    if (XGetWindowProperty(d, w, prop, 0, 64, False, XA_ATOM, &actualType,
-                           &actualFormat, &nItems, &bytesAfter, &raw) != Success) {
-        return out;
-    }
-    if (raw && actualType == XA_ATOM && actualFormat == 32) {
-        Atom* vals = reinterpret_cast<Atom*>(raw);
-        out.assign(vals, vals + nItems);
-    }
-    if (raw) XFree(raw);
+    // The whole property, however long: a negative assertion against a
+    // 64-atom prefix would pass vacuously for an atom past it (the 256-atom
+    // cap case puts SKIP_PAGER last on purpose).
+    long offset = 0;
+    do {
+        if (XGetWindowProperty(d, w, prop, offset, 256, False, XA_ATOM, &actualType,
+                               &actualFormat, &nItems, &bytesAfter, &raw) != Success) {
+            return out;
+        }
+        if (raw && actualType == XA_ATOM && actualFormat == 32) {
+            Atom* vals = reinterpret_cast<Atom*>(raw);
+            out.insert(out.end(), vals, vals + nItems);
+        }
+        if (raw) { XFree(raw); raw = nullptr; }
+        offset += static_cast<long>(nItems);
+    } while (bytesAfter > 0 && nItems > 0);
     return out;
 }
 
@@ -227,6 +234,26 @@ Window createClient(Display* d, int x, int y, int w, int h,
         hint.res_class = const_cast<char*>(cls);
         XSetClassHint(d, win, &hint);
     }
+    XSync(d, False);
+    return win;
+}
+
+// As createClient(), but with an X border of `bw` set AT CREATION. CreateWindow
+// is not subject to substructure redirection, so unlike XSetWindowBorderWidth()
+// on an existing top-level (which the running WM intercepts as a
+// ConfigureRequest and answers with border 0), this border reaches manage().
+Window createClientWithBorder(Display* d, int x, int y, int w, int h, unsigned bw,
+                              const char* instance, const char* cls)
+{
+    Window root = DefaultRootWindow(d);
+    Window win = XCreateSimpleWindow(d, root, x, y,
+                                     static_cast<unsigned>(w), static_cast<unsigned>(h), bw,
+                                     BlackPixel(d, DefaultScreen(d)),
+                                     WhitePixel(d, DefaultScreen(d)));
+    XClassHint hint;
+    hint.res_name  = const_cast<char*>(instance);
+    hint.res_class = const_cast<char*>(cls);
+    XSetClassHint(d, win, &hint);
     XSync(d, False);
     return win;
 }
@@ -320,6 +347,330 @@ TEST_CASE("A window matching a no-decorate rule is managed without a frame", "[w
     INFO("client rect " << describe(r));
     REQUIRE(r.x == 140);
     REQUIRE(r.y == 160);
+}
+
+
+namespace {
+
+// Root _NET_WORKAREA, first desktop, as a Rect.
+bool readWorkarea(Display* d, Rect& out)
+{
+    const Atom prop = XInternAtom(d, "_NET_WORKAREA", False);
+    Atom actualType = None; int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0; unsigned char* raw = nullptr;
+    if (XGetWindowProperty(d, DefaultRootWindow(d), prop, 0, 4, False, XA_CARDINAL,
+                           &actualType, &actualFormat, &nItems, &bytesAfter,
+                           &raw) != Success || !raw) return false;
+    bool ok = false;
+    if (actualType == XA_CARDINAL && actualFormat == 32 && nItems >= 4) {
+        const long* v = reinterpret_cast<const long*>(raw);
+        out.x = static_cast<int>(v[0]); out.y = static_cast<int>(v[1]);
+        out.w = static_cast<int>(v[2]); out.h = static_cast<int>(v[3]);
+        ok = true;
+    }
+    XFree(raw);
+    return ok;
+}
+
+// EWMH _NET_WM_STATE client message to root: action 1 = add.
+void requestStates(Display* d, Window w, const char* a, const char* b)
+{
+    XEvent ev{};
+    ev.xclient.type         = ClientMessage;
+    ev.xclient.window       = w;
+    ev.xclient.message_type = XInternAtom(d, "_NET_WM_STATE", False);
+    ev.xclient.format       = 32;
+    ev.xclient.data.l[0]    = 1;
+    ev.xclient.data.l[1]    = static_cast<long>(XInternAtom(d, a, False));
+    ev.xclient.data.l[2]    = static_cast<long>(XInternAtom(d, b, False));
+    ev.xclient.data.l[3]    = 1;  // source: application
+    XSendEvent(d, DefaultRootWindow(d), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &ev);
+    XSync(d, False);
+}
+
+} // namespace
+
+// Codex branch review, 2026-09-05: maximize deducted the decorated frame's
+// one-pixel outer border for a frameless client too, so a no-decorate window
+// maximized one pixel short of the workarea on each axis.
+TEST_CASE("A no-decorate window maximizes to the workarea exactly", "[wm_rules]")
+{
+    WmFixture fx(rulesFixture(
+        "rule-match-class=WmRulesNoDecorateMax\n"
+        "rule-no-decorate=true\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+    const Window root = DefaultRootWindow(d);
+
+    Window win = createClient(d, 100, 100, 260, 200, "wmrulesnodecoratemax", "WmRulesNoDecorateMax");
+    REQUIRE(mapAndAwait(d, win));
+    REQUIRE(parentOf(d, win) == root);
+
+    Rect wa{};
+    REQUIRE(readWorkarea(d, wa));
+    REQUIRE(wa.w > 0);
+    REQUIRE(wa.h > 0);
+
+    requestStates(d, win, "_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ");
+
+    // Await the exact workarea rectangle; a one-pixel shortfall never matches
+    // and the loop runs out, which is the RED this case was written to show.
+    Rect r{};
+    bool exact = false;
+    for (int i = 0; i < 400 && !exact; ++i) {
+        XSync(d, False);
+        if (serverRect(d, win, r) && r.x == wa.x && r.y == wa.y && r.w == wa.w && r.h == wa.h)
+            exact = true;
+        else
+            usleep(20000);
+    }
+    INFO("wm stderr:\n" << fx.wmStderr());
+    INFO("workarea " << describe(wa) << " client " << describe(r));
+    REQUIRE(hasState(d, win, "_NET_WM_STATE_MAXIMIZED_VERT"));
+    REQUIRE(hasState(d, win, "_NET_WM_STATE_MAXIMIZED_HORZ"));
+    CHECK(r.x == wa.x);
+    CHECK(r.y == wa.y);
+    REQUIRE(r.w == wa.w);
+    REQUIRE(r.h == wa.h);
+}
+
+
+// Codex, second pass on the fix above: a frameless client could keep its own X
+// border, so its OUTER rectangle (client plus border) would overshoot the
+// workarea by 2*border when the client itself is sized to the workarea. Every
+// other managed client has its border stripped -- the framed path at manage(),
+// and any ConfigureRequest -- so the frameless path now strips it too, and the
+// invariant "a managed client has no X border" holds on every path.
+TEST_CASE("A no-decorate window created with an X border is managed without it and maximizes exactly",
+          "[wm_rules]")
+{
+    WmFixture fx(rulesFixture(
+        "rule-match-class=WmRulesNoDecorateBw\n"
+        "rule-no-decorate=true\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+    const Window root = DefaultRootWindow(d);
+
+    constexpr unsigned kBw = 3;
+    Window win = createClientWithBorder(d, 100, 100, 260, 200, kBw,
+                                        "wmrulesnodecoratebw", "WmRulesNoDecorateBw");
+    REQUIRE(mapAndAwait(d, win));
+    REQUIRE(parentOf(d, win) == root);
+
+    // The border the client asked for at creation is gone once managed, as it
+    // is for a framed client (Client.cpp, XSetWindowBorderWidth(..., 0)).
+    {
+        Window rr = None; int gx = 0, gy = 0; unsigned gw = 0, gh = 0, gbw = 99, gd = 0;
+        REQUIRE(XGetGeometry(d, win, &rr, &gx, &gy, &gw, &gh, &gbw, &gd));
+        INFO("wm stderr:\n" << fx.wmStderr());
+        REQUIRE(gbw == 0u);
+    }
+
+    Rect wa{};
+    REQUIRE(readWorkarea(d, wa));
+    requestStates(d, win, "_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ");
+
+    Rect r{};
+    bool exact = false;
+    for (int i = 0; i < 400 && !exact; ++i) {
+        XSync(d, False);
+        if (serverRect(d, win, r) && r.x == wa.x && r.y == wa.y && r.w == wa.w && r.h == wa.h)
+            exact = true;
+        else
+            usleep(20000);
+    }
+    INFO("wm stderr:\n" << fx.wmStderr());
+    INFO("workarea " << describe(wa) << " client " << describe(r));
+    REQUIRE(hasState(d, win, "_NET_WM_STATE_MAXIMIZED_VERT"));
+    CHECK(r.x == wa.x);
+    CHECK(r.y == wa.y);
+    REQUIRE(r.w == wa.w);
+    REQUIRE(r.h == wa.h);
+}
+
+
+namespace {
+
+// Root _NET_ACTIVE_WINDOW, or None when unset.
+Window activeWindowOf(Display* d)
+{
+    const Atom prop = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+    Atom actualType = None; int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0; unsigned char* raw = nullptr;
+    Window out = None;
+    if (XGetWindowProperty(d, DefaultRootWindow(d), prop, 0, 1, False, XA_WINDOW,
+                           &actualType, &actualFormat, &nItems, &bytesAfter,
+                           &raw) == Success && raw) {
+        if (actualType == XA_WINDOW && actualFormat == 32 && nItems >= 1)
+            out = *reinterpret_cast<Window*>(raw);
+        XFree(raw);
+    }
+    return out;
+}
+
+// A pager-sourced _NET_ACTIVE_WINDOW request, which the WM grants
+// unconditionally (source 2 -- see src/Events.cpp, the arbitration comment).
+void requestActivation(Display* d, Window w)
+{
+    XEvent ev{};
+    ev.xclient.type         = ClientMessage;
+    ev.xclient.window       = w;
+    ev.xclient.message_type = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+    ev.xclient.format       = 32;
+    ev.xclient.data.l[0]    = 2;
+    ev.xclient.data.l[1]    = CurrentTime;
+    XSendEvent(d, DefaultRootWindow(d), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &ev);
+    XSync(d, False);
+}
+
+} // namespace
+
+// Issue #3 (github) / CodeRabbit + Codex P1: a rule-no-decorate window took the
+// dock/notification early return in manage(), which left m_managed false and
+// the border's parent at root, so activate() refused it with
+// "wm2: warning: bad parent in Client::activate". The feature promised a
+// managed window without decoration; this pins the "managed" half.
+TEST_CASE("A no-decorate window can take focus and is published as the active window",
+          "[wm_rules]")
+{
+    WmFixture fx(rulesFixture(
+        "rule-match-class=WmRulesNoDecorate\n"
+        "rule-no-decorate=true\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+    const Window root = DefaultRootWindow(d);
+
+    // A framed sibling first, so the no-decorate window is NOT the one focused
+    // on map and activation has to be requested for it explicitly.
+    Window other = createClient(d, 40, 40, 200, 150, "wmrulesother", "WmRulesOther");
+    REQUIRE(mapAndAwait(d, other));
+    Window win = createClient(d, 300, 300, 260, 200, "wmrulesnodecorate", "WmRulesNoDecorate");
+    REQUIRE(mapAndAwait(d, win));
+    REQUIRE(parentOf(d, win) == root);              // still frameless
+
+    requestActivation(d, win);
+    const bool active = WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return activeWindowOf(d) == win;
+    }, 8000);
+    const std::string err = fx.wmStderr();
+    INFO("wm stderr:\n" << err);
+    INFO("_NET_ACTIVE_WINDOW is " << activeWindowOf(d) << ", wanted " << win);
+    REQUIRE(active);
+    REQUIRE(err.find("bad parent") == std::string::npos);
+
+    // And back to the framed one, so the frameless client's deactivate() path
+    // -- which used to print the same warning -- runs too.
+    requestActivation(d, other);
+    REQUIRE(WmFixture::pollUntil([&] { pumpWm(d); return activeWindowOf(d) == other; }, 8000));
+    INFO("wm stderr:\n" << fx.wmStderr());
+    REQUIRE(fx.wmStderr().find("bad parent") == std::string::npos);
+}
+
+
+// Codex P2: an explicit rule-skip-taskbar=false resolved to Off, and Off was
+// not published, so states the client had set itself before mapping survived.
+TEST_CASE("An explicit skip-taskbar=false rule removes a client's own skip states",
+          "[wm_rules]")
+{
+    WmFixture fx(rulesFixture(
+        "rule-match-class=WmRulesUnskip\n"
+        "rule-skip-taskbar=false\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    Window win = createClient(d, 120, 120, 260, 200, "wmrulesunskip", "WmRulesUnskip");
+    // The client asks for both skip states BEFORE mapping, as a client that
+    // wants to hide from the panel does.
+    {
+        const Atom state = XInternAtom(d, "_NET_WM_STATE", False);
+        // Plus one UNRELATED state, which the rule has no business touching
+        // (Codex re-review: the first fix rewrote the whole property).
+        Atom vals[3] = { XInternAtom(d, "_NET_WM_STATE_SKIP_TASKBAR", False),
+                         XInternAtom(d, "_NET_WM_STATE_SKIP_PAGER", False),
+                         XInternAtom(d, "_NET_WM_STATE_DEMANDS_ATTENTION", False) };
+        XChangeProperty(d, win, state, XA_ATOM, 32, PropModeReplace,
+                        reinterpret_cast<unsigned char*>(vals), 3);
+        XSync(d, False);
+    }
+    REQUIRE(mapAndAwait(d, win));
+    INFO("wm stderr:\n" << fx.wmStderr());
+
+    // The rule said no, explicitly. Neither state may survive the fold.
+    REQUIRE_FALSE(hasState(d, win, "_NET_WM_STATE_SKIP_TASKBAR"));
+    REQUIRE_FALSE(hasState(d, win, "_NET_WM_STATE_SKIP_PAGER"));
+    // And the state the rule did not name is still there.
+    REQUIRE(hasState(d, win, "_NET_WM_STATE_DEMANDS_ATTENTION"));
+}
+
+
+// Codex re-review 4, P2: the bounded re-read compared (count + retry slack)
+// against the 256-atom cap, so a property of 249..256 atoms -- inside the
+// documented limit -- was left untouched. This case sits exactly AT the cap.
+TEST_CASE("An explicit skip-taskbar=false rule still strips at the 256-atom cap",
+          "[wm_rules]")
+{
+    WmFixture fx(rulesFixture(
+        "rule-match-class=WmRulesUnskipCap\n"
+        "rule-skip-taskbar=false\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    Window win = createClient(d, 120, 120, 260, 200, "wmrulesunskipcap", "WmRulesUnskipCap");
+    const Atom state = XInternAtom(d, "_NET_WM_STATE", False);
+    constexpr int kCap = 256;
+    {
+        // Skip-taskbar first, skip-pager LAST (past the first 64-atom chunk),
+        // and 254 distinct unrelated atoms in between that must all survive.
+        std::vector<Atom> vals;
+        vals.push_back(XInternAtom(d, "_NET_WM_STATE_SKIP_TASKBAR", False));
+        for (int i = 0; i < kCap - 2; ++i) {
+            const std::string name = "WM2_TEST_STATE_" + std::to_string(i);
+            vals.push_back(XInternAtom(d, name.c_str(), False));
+        }
+        vals.push_back(XInternAtom(d, "_NET_WM_STATE_SKIP_PAGER", False));
+        REQUIRE(vals.size() == static_cast<size_t>(kCap));
+        XChangeProperty(d, win, state, XA_ATOM, 32, PropModeReplace,
+                        reinterpret_cast<unsigned char*>(vals.data()),
+                        static_cast<int>(vals.size()));
+        XSync(d, False);
+    }
+    REQUIRE(mapAndAwait(d, win));
+    INFO("wm stderr:\n" << fx.wmStderr());
+
+    REQUIRE_FALSE(hasState(d, win, "_NET_WM_STATE_SKIP_TASKBAR"));
+    REQUIRE_FALSE(hasState(d, win, "_NET_WM_STATE_SKIP_PAGER"));
+
+    // Exactly the 254 unrelated atoms remain, in order, nothing dropped.
+    Atom actualType = None; int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0; unsigned char* raw = nullptr;
+    REQUIRE(XGetWindowProperty(d, win, state, 0L, 1024L, False, XA_ATOM,
+                               &actualType, &actualFormat, &nItems, &bytesAfter,
+                               &raw) == Success);
+    REQUIRE(raw != nullptr);
+    CHECK(bytesAfter == 0);
+    CHECK(actualFormat == 32);
+    CHECK(nItems == static_cast<unsigned long>(kCap - 2));
+    const Atom* atoms = reinterpret_cast<const Atom*>(raw);
+    bool ordered = true;
+    for (unsigned long i = 0; i < nItems && ordered; ++i) {
+        const std::string name = "WM2_TEST_STATE_" + std::to_string(i);
+        ordered = (atoms[i] == XInternAtom(d, name.c_str(), False));
+    }
+    XFree(raw);
+    CHECK(ordered);
 }
 
 
