@@ -765,12 +765,15 @@ void Client::stripNetWmStates(Atom a, Atom b)
 {
     Atom actualType = None; int actualFormat = 0;
     unsigned long nItems = 0, bytesAfter = 0; unsigned char* raw = nullptr;
-    // Whole property, however long: a first read that leaves bytesAfter is
-    // repeated with a length that covers the remainder, so a skip atom past
-    // the first chunk is still found and nothing after it is dropped
-    // (Codex re-review 2, P2).
+    // Whole property, BOUNDED: a first read that leaves bytesAfter is repeated
+    // once with a length covering the remainder, so a skip atom past the first
+    // chunk is still found and nothing after it is dropped (Codex re-review 2,
+    // P2). The property is client-controlled, so the retry is one and the size
+    // is capped; past either bound the property is left exactly as it was
+    // rather than read into an allocation the client chose (re-review 3, P1).
+    constexpr long kMaxStateAtoms = 256L;   // the EWMH defines a dozen
     long length = 64L;
-    for (;;) {
+    for (int attempt = 0; ; ++attempt) {
         if (XGetWindowProperty(display(), m_window, Atoms::net_wmState, 0L, length, false,
                                XA_ATOM, &actualType, &actualFormat, &nItems, &bytesAfter,
                                &raw) != Success || !raw) {
@@ -779,7 +782,9 @@ void Client::stripNetWmStates(Atom a, Atom b)
         }
         if (bytesAfter == 0) break;
         XFree(raw); raw = nullptr;
-        length = static_cast<long>(nItems + bytesAfter / 4 + 8);
+        const unsigned long wanted = nItems + bytesAfter / 4 + 8;
+        if (attempt >= 1 || wanted > static_cast<unsigned long>(kMaxStateAtoms)) return;
+        length = static_cast<long>(wanted);
     }
     std::vector<Atom> kept;
     if (actualType == XA_ATOM && actualFormat == 32) {

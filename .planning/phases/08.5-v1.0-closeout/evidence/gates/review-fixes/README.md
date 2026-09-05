@@ -63,3 +63,9 @@ Three findings, all confirmed by reading and fixed in the follow-up commit:
 | P2 `stripNetWmStates()` read only the first 64 atoms | reads the whole property, re-fetching with a covering length while `bytesAfter` is non-zero |
 
 Both by reading; the four review cases and the no-decorate geometry case pass after.
+
+## Third re-review (Codex), 2026-09-05
+
+One finding, confirmed: the whole-property read had no size or retry bound on a
+client-controlled property. Now one retry and a 256-atom cap; past either the
+property is left unchanged. The passive-grab cleanup was judged sound.
