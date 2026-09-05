@@ -4,8 +4,8 @@ milestone: v1.0
 current_phase: 08.5
 current_phase_name: v1.0 Closeout
 status: executing
-stopped_at: "08.5 shipped: PR #6 merged into main as 0fec5db (2026-09-05T18:05Z), issue #3 closed. Verification human_needed (operator ratification of two delegated blocking-human rulings; row 23 label); no 08.5 SECURITY.md yet -- /gsd-secure-phase 8.5 next, then Phase 9"
-last_updated: "2026-09-05T18:15:00Z"
+stopped_at: "08.5 shipped (PR #6 merged 0fec5db) and security-verified (08.5-SECURITY.md, 0 open). Verification human_needed awaits the operator. Next: Phase 9 planning; UI refresh reminder pending"
+last_updated: "2026-09-05T18:40:00Z"
 last_activity: 2026-09-05
 last_activity_desc: Phase 8.5 shipped -- PR #6 merged (0fec5db); Codex fourth pass and CodeRabbit fourth delta pass recorded; ten-run series at 39de548 10/10 green
 state_head: 5a418206824065ab01d647835a34c71e78cb1ecd
@@ -91,8 +91,13 @@ decision.
    silently: verification `human_needed` (item 9) and `workflow.security_enforcement`
    with no `08.5-SECURITY.md`. The merge was taken under the operator's standing
    "carry the PR through to merge" instruction, as PR #5 was.
-11. **Next**: `/gsd-secure-phase 8.5` to produce the phase's SECURITY.md against
-   the merged code; then Phase 9 (Config GUI + IPC) planning.
+11. **Security review done** (`08.5-SECURITY.md`, 2026-09-05): 40 register rows
+   from ten plans' threat models, 23 high, 0 open; read-only auditor verdict
+   SECURED, every high citation re-read by the lead. The second ship gate is now
+   green; the first (verification `human_needed`) remains the operator's.
+12. **Next**: Phase 9 (Config GUI + IPC) — no plans exist yet; discuss, plan,
+   execute. Operator reminder on file: they want a visual refresh of the WM's
+   look once all planned work is done (screenshots in chat, they approve).
 
 ### History (superseded 2026-09-05)
 
@@ -504,5 +509,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-09-05T18:15:00Z
-Stopped at: Phase 8.5 shipped (PR #6 merged 0fec5db); next /gsd-secure-phase 8.5, then Phase 9
+Stopped at: Phase 8.5 shipped and security-verified; next Phase 9 planning
 Resume file: None
