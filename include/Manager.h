@@ -212,7 +212,7 @@ private:
     int m_lastKnownScreenW;
     int m_lastKnownScreenH;
 
-    int m_currentTime;
+    Time m_currentTime;
 
     // 08.5-06: cold-cache property-wait self-report for timestamp().
     //

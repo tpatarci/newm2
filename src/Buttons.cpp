@@ -14,7 +14,12 @@
 #define ButtonMask      ( ButtonPressMask | ButtonReleaseMask )
 #define DragMask        ( ButtonMask | ButtonMotionMask )
 #define MenuMask        ( ButtonMask | ButtonMotionMask | ExposureMask )
-#define MenuGrabMask    ( ButtonMask | ButtonMotionMask | StructureNotifyMask )
+// Pointer-grab masks are SETofPOINTEREVENT on the wire: the GrabPointer
+// request carries the event mask as a CARD16, so Xlib silently drops any bit
+// above bit 15. StructureNotifyMask is bit 17 and was never in effect here
+// (WINDOWS.md ledger 11). Structure events on a grab window are selected with
+// XSelectInput, never through the grab.
+#define MenuGrabMask    ( ButtonMask | ButtonMotionMask )
 
 
 void WindowManager::eventButton(XButtonEvent *e)

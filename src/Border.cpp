@@ -1455,8 +1455,10 @@ void Border::eventButton(XButtonEvent *e)
 // than nothing happening.
 void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
 {
-    int menuGrabMask = ButtonPressMask | ButtonReleaseMask |
-                       ButtonMotionMask | StructureNotifyMask;
+    // Pointer events only: the GrabPointer request carries its mask as a
+    // CARD16, so StructureNotifyMask (bit 17) was silently truncated out of
+    // this mask and never took effect (WINDOWS.md ledger 11).
+    int menuGrabMask = ButtonPressMask | ButtonReleaseMask | ButtonMotionMask;
     if (windowManager()->attemptGrab(m_button, None, menuGrabMask, e->time)
         != GrabSuccess) {
         return;

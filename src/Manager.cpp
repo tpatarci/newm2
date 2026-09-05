@@ -77,7 +77,7 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     , m_randrEventBase(-1)
     , m_lastKnownScreenW(0)
     , m_lastKnownScreenH(0)
-    , m_currentTime(-1)
+    , m_currentTime(CurrentTime)
     , m_timestampColdEntries(0)
     , m_timestampBlockedWaits(0)
     , m_timestampForeignMatches(0)
@@ -1024,7 +1024,7 @@ Time WindowManager::timestamp(bool reset)
         m_currentTime = event.xproperty.time;
     }
 
-    return static_cast<Time>(m_currentTime);
+    return m_currentTime;
 }
 
 
