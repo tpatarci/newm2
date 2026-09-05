@@ -94,3 +94,10 @@ once more before filtering. The race is not deterministically testable; the
 256-atom case and the original Off case still pass. Re-review series closed
 here: five passes, 4 -> 3 -> 1 -> 1 -> 1 findings, each narrower than the
 last and the final two confined to the exactness of one bound.
+
+## Sixth re-review (Codex), 2026-09-05 — clean
+
+No findings: "The added guard correctly enforces the 256-atom processing limit
+after the widened re-read and frees the Xlib allocation before returning. The
+project builds successfully, and no regression was identified." The series
+ends on a clean pass rather than on a stopping rule.
