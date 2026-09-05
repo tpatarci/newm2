@@ -169,5 +169,14 @@ source cases / 337 registered.
 
 "The frameless management path now consistently strips client borders like the framed and
 ConfigureRequest paths, and the added regression test directly covers both border removal and exact
-maximized geometry. No actionable defects were identified." The branch's source review ends here; the
-fifth capture runs at this commit.
+maximized geometry. No actionable defects were identified." The branch's source review ends here. The fifth capture
+(`2781664`) ran at this commit and, being the first built from empty build directories, surfaced four
+pre-existing release warnings in `tests/test_config.cpp`'s shell-outs (fixed at `39de548`,
+`../capture-attempts/README.md` attempt 5); the sixth capture, at `39de548`, is the bundle.
+
+## CodeRabbit CLI over the delta since its second pass (`--base-commit e471398`), 2026-09-05
+
+Three minor documentation findings, all fixed by wording: the review-fixes README's chronology sentence
+named the fifth capture as the final one (now: fifth at `2781664`, sixth at `39de548`); the 08.5-08
+summary's smoke display was `:135` where PROVENANCE records `:136` for the final capture; and one
+sentence in that summary still called `f54de6e` the final capture commit.
