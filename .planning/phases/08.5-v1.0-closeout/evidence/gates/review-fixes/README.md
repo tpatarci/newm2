@@ -83,3 +83,14 @@ unrelated atoms between, survivors checked for count and order):
 `red-256-atom-cap.log` (fails on the first `REQUIRE_FALSE` before the fix),
 `green-256-atom-cap.log` (11 assertions after). The original Off case still
 passes.
+
+## Fifth re-review (Codex), 2026-09-05
+
+One P2, confirmed by reading: the widened second read asks for `present + 8`
+atoms, so a client appending between the two reads could return 257..264
+atoms with `bytesAfter == 0`, and the property would be processed past the
+stated cap. The count that actually arrived is now checked against the cap
+once more before filtering. The race is not deterministically testable; the
+256-atom case and the original Off case still pass. Re-review series closed
+here: five passes, 4 -> 3 -> 1 -> 1 -> 1 findings, each narrower than the
+last and the final two confined to the exactness of one bound.
