@@ -1,6 +1,6 @@
 # Phase 8.5 (v1.0 closeout) evidence bundle
 
-Snapshot taken at commit `d08b6e5d3824822b823c0aea4971223ca51b0692` (`d08b6e5`)
+Snapshot taken at commit `f54de6efec4057ec9259d0200f70b93fae5cc4f4` (`f54de6e`)
 on branch `worktree-agent-a0ef668e51c39c8dd`, 2026-09-05
 (`gates/PROVENANCE.txt`). This directory is committed deliberately: it is the
 basis on which `COMPILED_CODE_BEHAVIOR_CHECKLIST.md` certifies the tree, so it
@@ -40,7 +40,7 @@ credential value appears in the bundle.
 
 `xwininfo -root -tree` records every window's title. This bundle's captures
 were taken on displays started fresh for their own runs, carrying only test
-client titles (e.g. `wm2-smoke-d08b6e5`, `wm2-tightvnc-validation`,
+client titles (e.g. `wm2-smoke-f54de6e`, `wm2-tightvnc-validation`,
 `wm2-x2go-validation`). **Anything added later must be read before it is
 committed.** Screenshots carry the same exposure and are worse, because a
 reviewer skims them without reading.
@@ -49,7 +49,7 @@ reviewer skims them without reading.
 
 ## One correction to the snapshot framing
 
-The `gates/` material below is all from one commit, `d08b6e5`. The two
+The `gates/` material below is all from one commit, `f54de6e`. The two
 per-target transcripts are **not**: each stamps its own commit in its
 provenance header — `tightvnc/` at `9869aea` and `x2go-nxagent/` at `f5bbea7`
 — captured earlier in this phase, before the gate bundle's commit. Both also
@@ -79,7 +79,7 @@ capture time.
 
 **Results at this snapshot, quoted from `PROVENANCE.txt`:** debug, release and
 asan each exit 0 and each report "100% tests passed, 0 tests failed out of
-335"; static-analysis exits 0; preflight exits 0; runtime-smoke exits 0.
+336"; static-analysis exits 0; preflight exits 0; runtime-smoke exits 0.
 
 **On `sanitizer-reports/`:** these six files are **not findings**. Each holds
 only LSan suppression accounting — 2 allocations, 288 bytes, matched by the

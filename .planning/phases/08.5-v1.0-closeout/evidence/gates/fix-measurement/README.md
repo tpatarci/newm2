@@ -6,7 +6,7 @@ is green in one shot, ten times in a row with no run omitted and none retried.
 The first two series below are the **pre-capture precondition** for plan
 08.5-08 (ten green at `5ffee20`, then ten green at `70fbd8f`); the capture
 itself then found and fixed two things in the source, so those series are not
-final-tree evidence. The final-tree series, at the capture commit `d08b6e5`, is
+final-tree evidence. The final-tree series, at the capture commit `f54de6e`, is
 the third section, added after it ran; until that section exists, nothing here
 speaks for the tree that shipped.
 The gate bundle itself sits at the top level of `evidence/gates/`; the
@@ -34,12 +34,11 @@ This was written as "the final source tree" and then the first 08.5-08 capture
 found two things in it (`../capture-8e29d6d/README.md`): five cppcheck
 findings in the modal loops (dead stores, one shadowed local) and the window
 manager's own name published one byte short. Commit `2a94cbb` fixed both, so
-the tree under test here differs from the capture tree by exactly that commit;
-`git diff --stat 70fbd8f..2a94cbb -- src include tests` names the three source
-files and one test file. The store deletions and the rename cannot change
-behaviour; the name fix changes one property's length. A third series at the
-capture tree itself is recorded in its own section below, added after it ran.
-Logs: `run-01.log` .. `run-10.log`; ledger: `LEDGER.txt`.
+the tree under test here differs from the final capture tree by that commit
+and the four review-fix commits after it (`git log --oneline 70fbd8f..f54de6e
+-- src include tests`). A third series at the capture tree itself is recorded
+in its own section below, added after it ran.
+Logs: `at-70fbd8f/run-01.log` .. `run-10.log`; ledger: `at-70fbd8f/LEDGER.txt`.
 
 | Run | Start (UTC) | End (UTC) | Exit | load1 at start | MemAvailable (MiB) | ctest summary |
 |---|---|---|---|---|---|---|
