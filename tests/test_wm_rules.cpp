@@ -238,6 +238,26 @@ Window createClient(Display* d, int x, int y, int w, int h,
     return win;
 }
 
+// As createClient(), but with an X border of `bw` set AT CREATION. CreateWindow
+// is not subject to substructure redirection, so unlike XSetWindowBorderWidth()
+// on an existing top-level (which the running WM intercepts as a
+// ConfigureRequest and answers with border 0), this border reaches manage().
+Window createClientWithBorder(Display* d, int x, int y, int w, int h, unsigned bw,
+                              const char* instance, const char* cls)
+{
+    Window root = DefaultRootWindow(d);
+    Window win = XCreateSimpleWindow(d, root, x, y,
+                                     static_cast<unsigned>(w), static_cast<unsigned>(h), bw,
+                                     BlackPixel(d, DefaultScreen(d)),
+                                     WhitePixel(d, DefaultScreen(d)));
+    XClassHint hint;
+    hint.res_name  = const_cast<char*>(instance);
+    hint.res_class = const_cast<char*>(cls);
+    XSetClassHint(d, win, &hint);
+    XSync(d, False);
+    return win;
+}
+
 void setWindowType(Display* d, Window w, const char* typeAtomName)
 {
     Atom prop = XInternAtom(d, "_NET_WM_WINDOW_TYPE", False);
@@ -411,6 +431,62 @@ TEST_CASE("A no-decorate window maximizes to the workarea exactly", "[wm_rules]"
     INFO("workarea " << describe(wa) << " client " << describe(r));
     REQUIRE(hasState(d, win, "_NET_WM_STATE_MAXIMIZED_VERT"));
     REQUIRE(hasState(d, win, "_NET_WM_STATE_MAXIMIZED_HORZ"));
+    CHECK(r.x == wa.x);
+    CHECK(r.y == wa.y);
+    REQUIRE(r.w == wa.w);
+    REQUIRE(r.h == wa.h);
+}
+
+
+// Codex, second pass on the fix above: a frameless client could keep its own X
+// border, so its OUTER rectangle (client plus border) would overshoot the
+// workarea by 2*border when the client itself is sized to the workarea. Every
+// other managed client has its border stripped -- the framed path at manage(),
+// and any ConfigureRequest -- so the frameless path now strips it too, and the
+// invariant "a managed client has no X border" holds on every path.
+TEST_CASE("A no-decorate window created with an X border is managed without it and maximizes exactly",
+          "[wm_rules]")
+{
+    WmFixture fx(rulesFixture(
+        "rule-match-class=WmRulesNoDecorateBw\n"
+        "rule-no-decorate=true\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+    const Window root = DefaultRootWindow(d);
+
+    constexpr unsigned kBw = 3;
+    Window win = createClientWithBorder(d, 100, 100, 260, 200, kBw,
+                                        "wmrulesnodecoratebw", "WmRulesNoDecorateBw");
+    REQUIRE(mapAndAwait(d, win));
+    REQUIRE(parentOf(d, win) == root);
+
+    // The border the client asked for at creation is gone once managed, as it
+    // is for a framed client (Client.cpp, XSetWindowBorderWidth(..., 0)).
+    {
+        Window rr = None; int gx = 0, gy = 0; unsigned gw = 0, gh = 0, gbw = 99, gd = 0;
+        REQUIRE(XGetGeometry(d, win, &rr, &gx, &gy, &gw, &gh, &gbw, &gd));
+        INFO("wm stderr:\n" << fx.wmStderr());
+        REQUIRE(gbw == 0u);
+    }
+
+    Rect wa{};
+    REQUIRE(readWorkarea(d, wa));
+    requestStates(d, win, "_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ");
+
+    Rect r{};
+    bool exact = false;
+    for (int i = 0; i < 400 && !exact; ++i) {
+        XSync(d, False);
+        if (serverRect(d, win, r) && r.x == wa.x && r.y == wa.y && r.w == wa.w && r.h == wa.h)
+            exact = true;
+        else
+            usleep(20000);
+    }
+    INFO("wm stderr:\n" << fx.wmStderr());
+    INFO("workarea " << describe(wa) << " client " << describe(r));
+    REQUIRE(hasState(d, win, "_NET_WM_STATE_MAXIMIZED_VERT"));
     CHECK(r.x == wa.x);
     CHECK(r.y == wa.y);
     REQUIRE(r.w == wa.w);

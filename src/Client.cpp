@@ -210,6 +210,12 @@ void Client::manage(bool mapped)
         // activate() refused the window with a "bad parent" warning and a
         // rule-no-decorate window could never be focused.
         m_frameless = true;
+        // Same strip as the framed path below and as every ConfigureRequest:
+        // a managed client has no X border. Without this a client created
+        // with a border kept it here alone, and maximize -- which sizes the
+        // client itself to the workarea -- overshot by twice its width
+        // (Codex, second pass on the maximize fix, 2026-09-05).
+        XSetWindowBorderWidth(d, m_window, 0);
         XAddToSaveSet(d, m_window);
         m_managed = true;
 
@@ -715,6 +721,10 @@ void Client::setMaximized(bool vert, bool horz)
             // frameless client has none and fills the workarea exactly
             // (Codex branch review, 2026-09-05).
             const int edge = m_frameless ? 0 : 1;
+            // No border term: a managed client has no X border on any path --
+            // the framed path and every ConfigureRequest strip it, and since
+            // Codex's second pass (2026-09-05) so does the frameless path in
+            // manage(); m_bw is the ORIGINAL width, kept for gravity only.
             int maxW = ww - xi - edge;
             int maxH = wh - yi - edge;
             if (maxW < 1) maxW = 1;

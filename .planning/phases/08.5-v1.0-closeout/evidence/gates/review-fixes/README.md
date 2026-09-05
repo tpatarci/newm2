@@ -145,3 +145,22 @@ Six findings, all documentation. Five fixed by wording; one declined with the co
 | `08.5-05-SUMMARY.md` "336 registered" | Reworded: 336 ctest tests = 333 registered Catch2 cases + 3 fixture tests |
 | `INTERACTION-CHECKLIST.md` preamble said no human had ever exercised the nine rows; row #8 was exercised in Phase 8's manual passes | Reworded to this session, with #8's Phase 8 exercise named |
 | **major** `COMPILED_CODE_BEHAVIOR_CHECKLIST.md` per-file table "missing 16 cases and one file" against its totals | **Declined.** Recomputed from the table text: 23 `test_*.cpp` rows summing to 334, equal to the stated 334 cases / 23 files (`grep -oE '\`test_[a-z_]+\.cpp\` \| [0-9]+'` over the table, summed). The plan's own per-file staleness loop also prints nothing. The table is a two-column layout, which is the likely misreading |
+
+## Codex, second pass on the branch-review fix commit (`codex review --commit f54de6e`), 2026-09-05
+
+One P2, confirmed and then found to be half of a larger inconsistency. Codex: a `rule-no-decorate` client
+keeps its own X border on the frameless path, so sizing the client to the workarea overshoots by twice the
+border width. Reading further: the window manager strips the client's X border on the framed path at
+`manage()` and answers **every** ConfigureRequest with `border_width = 0` while recording the requested
+width in `m_bw` — so the frameless path was the one place a managed client could keep a border, and a
+border-aware subtraction in maximize (the first attempt at this fix) came out six pixels short whenever
+the border had already been stripped by a request. The fix restores one invariant on every path: **a
+managed client has no X border.** The frameless path now strips it at `manage()` exactly as the framed
+path does; maximize has no border term; `m_bw` stays what it was (the original width, for gravity).
+
+Case: "A no-decorate window created with an X border is managed without it and maximizes exactly" — the
+border is set at *creation* (CreateWindow is not redirected, so the running WM cannot strip it before
+`manage()`), then the case requires the border gone after management and the client at the exact
+workarea after maximize. `red-frameless-border-kept.log` fails `3 == 0` on the border; `green-frameless-border-kept.log`
+passes 11 assertions. Dock and notification cases, which share the path, still pass. Test surface: 335
+source cases / 337 registered.
