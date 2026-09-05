@@ -6,9 +6,8 @@ is green in one shot, ten times in a row with no run omitted and none retried.
 The first two series below are the **pre-capture precondition** for plan
 08.5-08 (ten green at `5ffee20`, then ten green at `70fbd8f`); the capture
 itself then found and fixed two things in the source, so those series are not
-final-tree evidence. The final-tree series, at the capture commit `f54de6e`, is
-the third section, added after it ran; until that section exists, nothing here
-speaks for the tree that shipped.
+final-tree evidence. The final-tree series, at the capture commit `39de548`, is
+the third section: ten green at 337 tests, the tree that shipped.
 The gate bundle itself sits at the top level of `evidence/gates/`; the
 diagnosis is under `attribution/` and `wakeup/`; the fixes and their
 RED-before / GREEN-after records are under `eventloop/` (08.5-11),
@@ -35,9 +34,9 @@ found two things in it (`../capture-attempts/README.md`): five cppcheck
 findings in the modal loops (dead stores, one shadowed local) and the window
 manager's own name published one byte short. Commit `2a94cbb` fixed both, so
 the tree under test here differs from the final capture tree by that commit
-and the four review-fix commits after it (`git log --oneline 70fbd8f..f54de6e
--- src include tests`). A third series at the capture tree itself is recorded
-in its own section below, added after it ran.
+and the five review-fix commits after it (`git log --oneline 70fbd8f..39de548
+-- src include tests scripts CMakeLists.txt` lists six). The third series, at
+the capture tree `39de548` itself, is the section below.
 Logs: `at-70fbd8f/run-01.log` .. `run-10.log`; ledger: `at-70fbd8f/LEDGER.txt`.
 
 | Run | Start (UTC) | End (UTC) | Exit | load1 at start | MemAvailable (MiB) | ctest summary |
@@ -84,11 +83,40 @@ debug-suite run at `-j2` in a sibling worktree (whose two failures were the
 load-sensitive cases noted in `review-fixes/README.md`, each passing 2/2 alone),
 and Codex review processes.
 
+## Ten runs at the final tree — commit `39de548` (the criterion-7 capture commit)
+
+The series this directory exists for: the tree the gate bundle at the top level
+of `evidence/gates/` describes, after every review fix. Nothing under `src/`,
+`include/`, `tests/`, `scripts/` or `CMakeLists.txt` changed between this
+commit and the phase's final commit (`git diff --name-only 39de548..HEAD --
+src include tests scripts CMakeLists.txt` prints nothing). Logs: `run-01.log`
+.. `run-10.log`; ledger: `LEDGER.txt`. Started 2026-09-05T17:09:32Z, finished 2026-09-05T17:49:24Z.
+
+| Run | Start (UTC) | End (UTC) | Exit | load1 at start | MemAvailable (MiB) | ctest summary |
+|---|---|---|---|---|---|---|
+| 1 | 2026-09-05T17:09:32Z | 2026-09-05T17:13:36Z | 0 | 1.92 | 15139 | 100% tests passed, 0 tests failed out of 337 |
+| 2 | 2026-09-05T17:13:36Z | 2026-09-05T17:17:35Z | 0 | 0.49 | 15407 | 100% tests passed, 0 tests failed out of 337 |
+| 3 | 2026-09-05T17:17:35Z | 2026-09-05T17:21:34Z | 0 | 0.43 | 15576 | 100% tests passed, 0 tests failed out of 337 |
+| 4 | 2026-09-05T17:21:34Z | 2026-09-05T17:25:32Z | 0 | 1.50 | 15411 | 100% tests passed, 0 tests failed out of 337 |
+| 5 | 2026-09-05T17:25:32Z | 2026-09-05T17:29:31Z | 0 | 2.64 | 16892 | 100% tests passed, 0 tests failed out of 337 |
+| 6 | 2026-09-05T17:29:31Z | 2026-09-05T17:33:29Z | 0 | 3.70 | 16506 | 100% tests passed, 0 tests failed out of 337 |
+| 7 | 2026-09-05T17:33:29Z | 2026-09-05T17:37:27Z | 0 | 2.67 | 16892 | 100% tests passed, 0 tests failed out of 337 |
+| 8 | 2026-09-05T17:37:27Z | 2026-09-05T17:41:25Z | 0 | 2.66 | 16852 | 100% tests passed, 0 tests failed out of 337 |
+| 9 | 2026-09-05T17:41:25Z | 2026-09-05T17:45:24Z | 0 | 0.97 | 17130 | 100% tests passed, 0 tests failed out of 337 |
+| 10 | 2026-09-05T17:45:24Z | 2026-09-05T17:49:24Z | 0 | 2.54 | 16735 | 100% tests passed, 0 tests failed out of 337 |
+
+**10 of 10 green, 337 tests each.** Concurrent with these runs: nothing that
+builds or tests; documentation edits only (the Codex review of `39de548` was
+deliberately held until the series finished, because its sandbox builds in
+this worktree).
+
 ## Runs stopped and discarded
 
-Two later attempts were started and stopped before completing, each because a
-Codex re-review finding changed the source tree mid-measurement: one run at
-`2128a4d` (green) and two at `4830909` (both green). Their logs were removed
+Three later attempts were started and stopped before completing, each because a
+review finding changed the source tree mid-measurement: one run at `2128a4d`
+(green), two at `4830909` (both green) and six at `f54de6e` (all green, stopped
+when Codex's second pass over the review fixes changed `src/Client.cpp` once
+more). Their logs were removed
 rather than kept, because a partial series at a superseded tree is neither a
 measurement nor a gate result; they are named here so the ledger's gap in
 commit hashes is not read as a hidden red run.
@@ -98,9 +126,10 @@ commit hashes is not read as a hidden red run.
 - **It is not a rate proof.** The before-rate (`flake-measurement/README.md`)
   was 2 red of 5 full debug runs at `69da106`. Against that, 0 red of 10 gives a
   one-sided Fisher exact `p ≈ 0.095`; 0 of 16 would have been needed for
-  `p < 0.05`. Pooling both tens as 0 of 20 gives `p ≈ 0.033`, but the two
-  tens are at different trees and pooling them assumes the review fixes did not
-  touch the failing paths, which is an assumption rather than a reading. The
+  `p < 0.05`. Pooling all three tens as 0 of 30 gives `p ≈ 0.017`
+  (`C(5,2)/C(35,2)`), but the three tens are at different trees and pooling
+  them assumes the review fixes did not touch the failing paths, which is an
+  assumption rather than a reading. The
   evidence that the flake is fixed is the attribution (`wakeup/README.md`,
   ruled ATTRIBUTED) and the three RED-to-GREEN records above, not this table.
 - **It is the debug tree only.** Release and ASan are gated once each in the

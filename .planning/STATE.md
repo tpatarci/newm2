@@ -5,9 +5,9 @@ current_phase: 08.5
 current_phase_name: v1.0 Closeout
 status: executing
 stopped_at: "08.5 all plans complete (08.5-08 bundle at 39de548, 08.5-05 repointed); phase verification and closeout PR #6 pending"
-last_updated: "2026-09-05T15:45:00Z"
+last_updated: "2026-09-05T17:55:00Z"
 last_activity: 2026-09-05
-last_activity_desc: 08.5-08 complete after four captures (three findings fixed at source); 08.5-05 complete; CodeRabbit CLI and Codex branch reviews fixed; ten-run series at the final tree
+last_activity_desc: 08.5-08 complete after four captures (three findings fixed at source); 08.5-05 complete; CodeRabbit CLI and Codex branch reviews fixed; ten-run series at the final tree 39de548 10/10 green
 state_head: 5a418206824065ab01d647835a34c71e78cb1ecd
 progress:
   total_phases: 10
@@ -52,8 +52,8 @@ decision.
    submenu overflow; frameless reflow; skip-taskbar=false) and re-reviewed
    through six Codex passes ending clean (`evidence/gates/review-fixes/README.md`).
 5. **Ten-run measurement**: ten consecutive green `build-all.sh debug` runs at
-   `5ffee20` (330 tests) and at `70fbd8f` (335 tests), `evidence/gates/fix-measurement/`;
-   a third series at the final capture commit is recorded in the same README.
+   `5ffee20` (330 tests), at `70fbd8f` (335 tests) and at the final capture commit
+   `39de548` (337 tests, 10 of 10 green, 17:09-17:49Z), `evidence/gates/fix-measurement/`.
 6. **08.5-08: complete** (`08.5-08-SUMMARY.md`). Six captures: `8e29d6d`
    (static analysis red on five cppcheck findings in the modal loops; the smoke
    transcript showed the window manager's own name one byte short), `2a94cbb`

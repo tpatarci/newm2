@@ -105,7 +105,7 @@ own README's opening line; none of them counts toward the totals above.
 | `menupaint/` | Plan 08.5-13's round record for dismembering the menu open-paint-sample path. |
 | `modal/` | Ledger 8: the six modal grab loops that now observe SIGTERM instead of blocking it out. |
 | `review-fixes/` | The Codex review series on PR #5 (six rounds) — findings reproduced RED, fixed, and confirmed GREEN. |
-| `fix-measurement/` | **Not the gate bundle, and not a rate proof.** Ten consecutive green debug runs at the pre-capture tree, and ten more at an earlier tree, operational validation that the fix holds under repetition — not a statistical claim; see its own "What this does not establish" for the p-value arithmetic it deliberately declines to lean on. |
+| `fix-measurement/` | **Not the gate bundle, and not a rate proof.** Three series of ten consecutive green debug runs: at `5ffee20` (330 tests), at `70fbd8f` (335) and at the final capture commit `39de548` (337), operational validation that the fix holds under repetition — not a statistical claim; see its own "What this does not establish" for the p-value arithmetic it deliberately declines to lean on. |
 
 ### Per-target transcripts
 
