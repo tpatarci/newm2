@@ -1503,11 +1503,11 @@ void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
         if (!found) {
             // Ledger 8: the 50 ms sleep is now a wait that also watches the
             // exit flag and the self-pipe. Interrupted: no action is taken.
-            const WindowManager::ModalWait w = windowManager()->modalWait(
+            const WindowManager::ModalWait wait = windowManager()->modalWait(
                 ButtonPressMask | ButtonReleaseMask | ButtonMotionMask | ExposureMask,
                 &event, 50);
-            if (w == WindowManager::ModalWait::Interrupted) { done = true; break; }
-            if (w == WindowManager::ModalWait::Timeout) { tdiff += 50; continue; }
+            if (wait == WindowManager::ModalWait::Interrupted) break;
+            if (wait == WindowManager::ModalWait::Timeout) { tdiff += 50; continue; }
         }
 
         switch (event.type) {

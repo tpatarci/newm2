@@ -801,10 +801,13 @@ void WindowManager::setupEwmhProperties()
                     reinterpret_cast<unsigned char*>(&m_wmCheckWindow), 1);
 
     // Set _NET_WM_NAME on check window with UTF8_STRING encoding (Pitfall 2)
+    // Length from the string, not a literal: the literal was 13 for a
+    // 14-byte name and the 08.5-08 smoke transcript read "wm2-born-agai".
     const char *wmName = "wm2-born-again";
     XChangeProperty(display(), m_wmCheckWindow, Atoms::net_wmName,
                     Atoms::utf8_string, 8, PropModeReplace,
-                    reinterpret_cast<const unsigned char*>(wmName), 13);
+                    reinterpret_cast<const unsigned char*>(wmName),
+                    static_cast<int>(std::strlen(wmName)));
 
     // Set _NET_SUPPORTED atom array on root window
     Atom supported[] = {

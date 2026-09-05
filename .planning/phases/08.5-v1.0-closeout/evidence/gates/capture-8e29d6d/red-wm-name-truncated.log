@@ -1,0 +1,22 @@
+Filters: "WmFixture starts the real WM and it publishes _NET_SUPPORTING_WM_CHECK"
+Randomness seeded to: 2032911721
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_wm_process is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+WmFixture starts the real WM and it publishes _NET_SUPPORTING_WM_CHECK
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_wm_process.cpp:243
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_wm_process.cpp:296: FAILED:
+  REQUIRE( published == "wm2-born-again" )
+with expansion:
+  "wm2-born-agai" == "wm2-born-again"
+
+===============================================================================
+test cases:  1 |  0 passed | 1 failed
+assertions: 16 | 15 passed | 1 failed
+

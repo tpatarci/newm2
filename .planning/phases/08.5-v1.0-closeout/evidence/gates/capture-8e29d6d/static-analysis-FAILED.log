@@ -1,0 +1,27 @@
+== cppcheck 2.7 ==
+  20 finding(s) in src/ and include/ before suppression
+  derived suppression file: 10 de-duplicated (id, fileName) entr(ies), no line numbers
+wm2: static-analysis: cppcheck reported 5 finding(s) outside the baseline:
+  unreadVariable|src/Border.cpp|Variable 'done' is assigned a value that is never used.|            if (w == WindowManager::ModalWait::Interrupted) { done = true; break; }
+  shadowVariable|src/Client.cpp|Local variable 'w' shadows outer variable|            const WindowManager::ModalWait w = windowManager()->modalWait(
+  unreadVariable|src/Client.cpp|Variable 'done' is assigned a value that is never used.|            if (w == WindowManager::ModalWait::Interrupted) { done = true; break; }
+  unreadVariable|src/Client.cpp|Variable 'done' is assigned a value that is never used.|            if (w == WindowManager::ModalWait::Interrupted) { done = true; break; }
+  unreadVariable|src/Client.cpp|Variable 'done' is assigned a value that is never used.|            done = true;
+wm2: static-analysis: cppcheck native run failed (exit 1)
+wm2: static-analysis: 5 cppcheck finding(s) NOT in the baseline:
+  unreadVariable	src/Border.cpp	Variable 'done' is assigned a value that is never used.| if (w == WindowManager::ModalWait::Interrupted) { done = true; break; }
+  unreadVariable	src/Client.cpp	Variable 'done' is assigned a value that is never used.| if (w == WindowManager::ModalWait::Interrupted) { done = true; break; }
+  unreadVariable	src/Client.cpp	Variable 'done' is assigned a value that is never used.| if (w == WindowManager::ModalWait::Interrupted) { done = true; break; }
+  shadowVariable	src/Client.cpp	Local variable 'w' shadows outer variable| const WindowManager::ModalWait w = windowManager()->modalWait(
+  unreadVariable	src/Client.cpp	Variable 'done' is assigned a value that is never used.| done = true;
+wm2: static-analysis: cppcheck: new finding(s) versus /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/scripts/analysis/cppcheck-suppressions.xml
+
+== clang-tidy 14.0.0 ==
+  34 project translation unit(s) from /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/build/debug/compile_commands.json
+  0 fatal, 149 reported-only diagnostic(s)
+        144 cppcoreguidelines-init-variables
+          3 bugprone-use-after-move
+          2 bugprone-branch-clone
+  clang-tidy OK: no enforced check fired
+
+wm2: static-analysis FAILED (2 problem(s))

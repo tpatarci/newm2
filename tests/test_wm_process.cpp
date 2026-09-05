@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -274,6 +275,26 @@ TEST_CASE("WmFixture starts the real WM and it publishes _NET_SUPPORTING_WM_CHEC
     Window selfRef = None;
     REQUIRE(readWindowProp(d.get(), checkWindow, check, selfRef));
     REQUIRE(selfRef == checkWindow);
+
+    // And it carries the window manager's name in full. The 08.5-08 runtime
+    // smoke transcript showed "wm2-born-agai": the property was published with
+    // a hard-coded length one short of the string. Read as UTF8_STRING, byte
+    // for byte, with the length taken from the property rather than assumed.
+    {
+        const Atom netWmName = XInternAtom(d.get(), "_NET_WM_NAME", False);
+        const Atom utf8 = XInternAtom(d.get(), "UTF8_STRING", False);
+        Atom type = None; int format = 0;
+        unsigned long n = 0, after = 0; unsigned char* raw = nullptr;
+        REQUIRE(XGetWindowProperty(d.get(), checkWindow, netWmName, 0, 64, False,
+                                   utf8, &type, &format, &n, &after, &raw) == Success);
+        REQUIRE(raw != nullptr);
+        const std::string published(reinterpret_cast<const char*>(raw), n);
+        XFree(raw);
+        CHECK(type == utf8);
+        CHECK(format == 8);
+        CHECK(after == 0);
+        REQUIRE(published == "wm2-born-again");
+    }
 
     REQUIRE(fixture.wmAlive());
 }
