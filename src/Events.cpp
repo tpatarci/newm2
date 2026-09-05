@@ -337,7 +337,12 @@ void WindowManager::wakeEventLoop()
 {
     if (s_pipeWriteFd >= 0) {
         char c = 'x';
-        (void)write(s_pipeWriteFd, &c, 1);
+        // glibc marks write() warn_unused_result and a (void) cast does not
+        // silence it under -O2 (the release gate's one warning at 2a94cbb). A
+        // full pipe or a closed read end is not actionable here; the byte is
+        // a wake-up, and the flag above is what the loop acts on.
+        const ssize_t rc = write(s_pipeWriteFd, &c, 1);
+        (void)rc;
     }
 }
 
