@@ -1,6 +1,6 @@
 # Phase 8.5 (v1.0 closeout) evidence bundle
 
-Snapshot taken at commit `2781664b0c9bbc135f6d478341b9cdda8675de45` (`2781664`)
+Snapshot taken at commit `39de54811084154ddac1d2115e5f950b0c9f1565` (`39de548`)
 on branch `worktree-agent-a0ef668e51c39c8dd`, 2026-09-05
 (`gates/PROVENANCE.txt`). This directory is committed deliberately: it is the
 basis on which `COMPILED_CODE_BEHAVIOR_CHECKLIST.md` certifies the tree, so it
@@ -40,7 +40,7 @@ credential value appears in the bundle.
 
 `xwininfo -root -tree` records every window's title. This bundle's captures
 were taken on displays started fresh for their own runs, carrying only test
-client titles (e.g. `wm2-smoke-2781664`, `wm2-tightvnc-validation`,
+client titles (e.g. `wm2-smoke-39de548`, `wm2-tightvnc-validation`,
 `wm2-x2go-validation`). **Anything added later must be read before it is
 committed.** Screenshots carry the same exposure and are worse, because a
 reviewer skims them without reading.
@@ -49,7 +49,7 @@ reviewer skims them without reading.
 
 ## One correction to the snapshot framing
 
-The `gates/` material below is all from one commit, `2781664`. The two
+The `gates/` material below is all from one commit, `39de548`. The two
 per-target transcripts are **not**: each stamps its own commit in its
 provenance header — `tightvnc/` at `9869aea` and `x2go-nxagent/` at `f5bbea7`
 — captured earlier in this phase, before the gate bundle's commit. Both also

@@ -133,7 +133,7 @@ fc-match "Noto Sans,DejaVu Sans,Sans:bold:size=12"
 - [x] Configure a clean Debug build with tests enabled:
       DONE. `scripts/gates/build-all.sh debug`; log at
       `08.5-v1.0-closeout/evidence/gates/build-all-debug.log`, exit 0 (confirmed
-      in `08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt` at `2781664`).
+      in `08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt` at `39de548`).
 
 ```bash
 cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
@@ -155,7 +155,7 @@ cmake --build build/debug --parallel
 
 - [x] Run the full CTest suite:
       DONE. **337/337 (100% tests passed, 0 tests failed) in all three trees**
-      at `2781664` (`08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt`); full
+      at `39de548` (`08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt`); full
       logs in `08.5-v1.0-closeout/evidence/gates/build-all-debug.log`,
       `08.5-v1.0-closeout/evidence/gates/build-all-release.log` and
       `08.5-v1.0-closeout/evidence/gates/build-all-asan.log`.
@@ -167,7 +167,7 @@ ctest --test-dir build/debug --output-on-failure
 - [x] Confirm the expected discovered test surface is present. The tree contains
       **335 Catch2 test cases** across 23 files, of which **334 are registered
       with ctest** (`Total Tests: 337` including the `preflight`, `start_xvfb`
-      and `stop_xvfb` fixture tests). RECOMPUTED at `2781664`, not transcribed.
+      and `stop_xvfb` fixture tests). RECOMPUTED at `39de548`, not transcribed.
       The arithmetic: 335 source cases − 1 hidden case = 334 registered Catch2
       cases, + 3 fixture tests = 337 `Total Tests`. The one case not registered
       is the hidden `[.][wm_resource_calibration]` case in
@@ -190,7 +190,7 @@ grep -c '^TEST_CASE' tests/*.cpp
 ctest --test-dir build/debug -N | tail -1
 ```
 
-      Per file, at the time of writing (plan 08.5-05, commit `2781664`):
+      Per file, at the time of writing (plan 08.5-05, commit `39de548`):
 
       | File | Cases | | File | Cases |
       |---|---|---|---|---|
@@ -717,7 +717,7 @@ For each release or handoff, attach:
 
 - [x] Commit hash and branch.
       DONE: `08.5-v1.0-closeout/evidence/gates/PROVENANCE.txt` — commit
-      `2781664b0c9bbc135f6d478341b9cdda8675de45` (`2781664`), branch
+      `39de54811084154ddac1d2115e5f950b0c9f1565` (`39de548`), branch
       `worktree-agent-a0ef668e51c39c8dd`.
 - [x] Dependency/package list and tool versions.
       DONE: `08.5-v1.0-closeout/evidence/gates/preflight-versions.log`.
@@ -739,7 +739,7 @@ For each release or handoff, attach:
       own capture is separate and taken at the gate commit:
       `08.5-v1.0-closeout/evidence/gates/runtime-smoke/` (`capabilities.txt`,
       `root-properties.txt`, `window-tree.txt`) — Xvfb `:135`, release binary
-      plus one `xmessage` client titled `wm2-smoke-2781664`, all three stopped
+      plus one `xmessage` client titled `wm2-smoke-39de548`, all three stopped
       by PID.
 - [x] Screenshots from shaped and rectangular/no-Shape runs if supported.
       DONE: `08-xrandr-vnc-compatibility-focus-rules/evidence/screenshots/`,

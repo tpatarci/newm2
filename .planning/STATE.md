@@ -4,7 +4,7 @@ milestone: v1.0
 current_phase: 08.5
 current_phase_name: v1.0 Closeout
 status: executing
-stopped_at: "08.5 all plans complete (08.5-08 bundle at f54de6e, 08.5-05 repointed); phase verification and closeout PR #6 pending"
+stopped_at: "08.5 all plans complete (08.5-08 bundle at 39de548, 08.5-05 repointed); phase verification and closeout PR #6 pending"
 last_updated: "2026-09-05T15:45:00Z"
 last_activity: 2026-09-05
 last_activity_desc: 08.5-08 complete after four captures (three findings fixed at source); 08.5-05 complete; CodeRabbit CLI and Codex branch reviews fixed; ten-run series at the final tree
@@ -54,19 +54,21 @@ decision.
 5. **Ten-run measurement**: ten consecutive green `build-all.sh debug` runs at
    `5ffee20` (330 tests) and at `70fbd8f` (335 tests), `evidence/gates/fix-measurement/`;
    a third series at the final capture commit is recorded in the same README.
-6. **08.5-08: complete** (`08.5-08-SUMMARY.md`). Four captures: `8e29d6d`
+6. **08.5-08: complete** (`08.5-08-SUMMARY.md`). Six captures: `8e29d6d`
    (static analysis red on five cppcheck findings in the modal loops; the smoke
    transcript showed the window manager's own name one byte short), `2a94cbb`
    (one new release warning, the signal handler's ignored `write()` result),
-   `d08b6e5` (all green, then superseded when the two branch reviews changed
-   `src/` and `tests/`), and the final bundle. Each stopped capture and what it
+   `d08b6e5` and `f54de6e` (all green, each superseded when a review pass changed
+   `src/` or `tests/`), `2781664` (the first full compile; four pre-existing
+   release warnings in a test's shell-outs), and the final bundle at `39de548`. Each stopped capture and what it
    found: `evidence/gates/capture-attempts/README.md`.
 7. **Branch reviews before the PR**: CodeRabbit CLI (8 findings: one real
    defect — a hide-or-kill of the client on a signal during a tab-button press —
    two test-helper hardenings, five documentation corrections) and Codex over
    the whole diff (2 findings: an uninitialised event read on gesture
-   interruption; frameless maximize one pixel short). All fixed;
-   `evidence/gates/review-fixes/README.md`.
+   interruption; frameless maximize one pixel short) and a second Codex pass on
+   that fix (a managed client has no X border on the frameless path either). All
+   fixed; `evidence/gates/review-fixes/README.md`.
 8. **08.5-05: complete** (`08.5-05-SUMMARY.md`, executed by a subagent, every
    verify command re-run by the lead): gate rows repointed at this phase's
    bundle, test-surface row recomputed by its own commands, interaction rows
