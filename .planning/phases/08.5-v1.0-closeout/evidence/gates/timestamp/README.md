@@ -124,6 +124,77 @@ absent from the `:99` root after all ten.
 Nothing under `src/`, `include/` or `CMakeLists.txt` differs from `PLAN_12_T1`:
 the cases establish this RED result against untouched production.
 
+## The fix at Task 3
+
+One header and one production function; `git revert` of the Task 3 commit
+restores all three defects. The three sub-fixes, each answering one defect:
+
+1. **Survivable request.** The sentinel is now a zero-length `PropModeReplace`
+   whose type and format the code itself chooses. Replace has no
+   existing-type-must-match rule, so a foreign client that has replaced
+   `_WM2_RUNNING` with another type can no longer provoke `BadMatch`. The
+   comment beside it states that the constructor calls this at `:288`, two lines
+   before `m_initialising` is cleared at `:290`, and that this ordering is why
+   the old failure mode was `exit(1)` rather than a hang. The error handler's
+   contract for genuine initialisation errors is untouched: no trap was added.
+2. **Four-field predicate.** The wait accepts an event only if window is the
+   root, atom is `_WM2_RUNNING`, `send_event` is false and `state` is
+   `PropertyNewValue`. Everything else stays in the queue for `eventProperty()`.
+3. **Bounded wait.** Built from `XCheckIfEvent` plus `poll()` against a
+   monotonic deadline of `kTimestampWaitDeadlineMs = 250` ms, a value chosen so
+   that a window manager stalled in this path is stalled for less than a user
+   perceives while a loaded server still has room to answer. It is a compile-time
+   constant and not settable from the environment. On expiry the wait reports
+   `timedOut`, `timestamp()` returns `CurrentTime`, leaves `m_currentTime` cold so
+   the next call retries, increments `m_timestampWaitTimeouts` and prints
+   `wm2: warning: timestamp: property wait timed out` once. The pre-existing
+   counter names and stderr spellings from the 08.5-06 instrumentation are
+   unchanged; the timeout record is added beside them.
+
+Selector inventory after the fix, comments stripped: `XMaskEvent`, `XIfEvent`,
+`XWindowEvent` and `XPeekIfEvent` are all absent from `include/TimestampWait.h`
+and from `WindowManager::timestamp()`.
+
+## Before and after, by case
+
+| Case | `red-before-fix.log` at `PLAN_12_T1` | `green-after-fix.log` at the Task 3 tree |
+| --- | --- | --- |
+| `timestamp-survives-poisoned-property` | Failed — `protocol errors from the sentinel request: 1; last error code: 8` | Passed |
+| `timestamp-leaves-foreign-property-alone` | Failed — `PropertyDelete survived: 0` | Passed |
+| `timestamp-rejects-synthetic` | Failed — `forged time accepted` | Passed |
+| `timestamp-is-bounded` | Failed — `child observed for 3000 ms; killed: 1` | Passed |
+
+`green-after-fix.log` is the full `build-all.sh debug` transcript at the Task 3
+tree: `100% tests passed, 0 tests failed out of 329`, closing with
+`build-all OK: debug`. The 329 is the pre-existing 325 plus the four cases above.
+
+## Ten runs of the eventloop label
+
+`ctest --test-dir build/debug -L '^eventloop$' --no-tests=error --timeout 120`,
+ten consecutive invocations at the Task 3 tree, none omitted and none retried:
+
+| Run | Exit | Result |
+| --- | --- | --- |
+| 1–10 | `0` each | `100% tests passed, 0 tests failed out of 15`, all ten identical |
+
+Ten agreeing runs of a deterministic case are a check that the case is not
+itself order- or timing-dependent. They are not a rate measurement of anything
+(see below).
+
+## Execution note
+
+Task 3 was written on 2026-09-01 and could not be closed then: the full debug
+suite at that tree failed one `[wm_menulabel]` case because the test helper
+`findOpenMenu()` accepted an unrelated window as the menu, a defect in
+`tests/test_wm_runtime.cpp` outside this plan's `files_modified`. That helper was
+dismembered and fixed by `08.5-13`. This plan's Task 3 commit was then rebased
+onto `08.5-13`'s merged tip (`afd3ec2`) on 2026-09-05 and its gates re-run there;
+that is the tree `green-after-fix.log` records. The plan's `PLAN_11_TIP`
+no-touch gate over `include/EventPump.h`, `src/Events.cpp`, `src/Buttons.cpp`
+and `CMakeLists.txt` fires against that tree because `08.5-13` legitimately
+changed the last two; the same diff taken against `afd3ec2` is empty, which is
+the property the gate exists to establish.
+
 ## Relationship to round 3
 
 Round 3 ruled on whether this path explained an **observed** reparent hang, on
