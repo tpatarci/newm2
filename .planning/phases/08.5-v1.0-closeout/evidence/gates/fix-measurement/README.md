@@ -23,12 +23,18 @@ Host: the development workstation, 8 logical CPUs, 31 GiB RAM,
 Linux 6.8.0-124-generic. Not a VPS; the 512 MiB VPS budget is measured elsewhere
 (`evidence/STRESS-RESULTS.md`, the `[wm_resource]` cases).
 
-## Ten runs at the final source tree — commit `70fbd8f`
+## Ten runs at the pre-capture tree — commit `70fbd8f`
 
-Source tree identical to the phase's final commit under `src/`, `include/`,
-`tests/`, `scripts/` and `CMakeLists.txt`; a reader checks with
-`git diff --name-only 70fbd8f..HEAD -- src include tests scripts CMakeLists.txt`,
-which prints nothing. Logs: `run-01.log` .. `run-10.log`; ledger: `LEDGER.txt`.
+This was written as "the final source tree" and then the first 08.5-08 capture
+found two things in it (`../capture-8e29d6d/README.md`): five cppcheck
+findings in the modal loops (dead stores, one shadowed local) and the window
+manager's own name published one byte short. Commit `2a94cbb` fixed both, so
+the tree under test here differs from the capture tree by exactly that commit;
+`git diff --stat 70fbd8f..2a94cbb -- src include tests` names the three source
+files and one test file. The store deletions and the rename cannot change
+behaviour; the name fix changes one property's length. A third series at the
+capture tree itself is recorded in its own section below, added after it ran.
+Logs: `run-01.log` .. `run-10.log`; ledger: `LEDGER.txt`.
 
 | Run | Start (UTC) | End (UTC) | Exit | load1 at start | MemAvailable (MiB) | ctest summary |
 |---|---|---|---|---|---|---|
@@ -99,5 +105,6 @@ commit hashes is not read as a hidden red run.
   exactly three font-metric geometry cases regardless of the flake (issue #1);
   the suite is not portable across font packages yet, so this table says nothing
   about other hosts.
-- **Nothing re-runs it.** A later commit that touches the source invalidates the
-  no-drift statement above, and no hook or gate re-runs the ten.
+- **Nothing re-runs it.** A later commit that touches the source moves the tree
+  away from the one measured, as `2a94cbb` did to the `70fbd8f` series, and no
+  hook or gate re-runs the ten.
