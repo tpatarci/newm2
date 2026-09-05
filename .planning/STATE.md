@@ -55,6 +55,14 @@ and is recorded in those terms so it can be reversed as a recorded decision.
    reasons) — commits `ce43d5c` (ledger 11, 12; 5 recorded fixed), `ed5b11b`
    (ledger 8 modal loops interruptible with a RED/GREEN case; ledger 13
    verified menu open), `5ffee20` (waivers).
+5b. **PR #5 merged** (`main` = `8c060fd`, 2026-09-05 11:59Z) on the local
+   CodeRabbit CLI gate; the CodeRabbit GitHub App is not installed on this
+   repository (no response to `@coderabbitai review`). **Codex review** of the
+   PR returned four real findings, all fixed with RED→GREEN cases (two review-fix commits, see `git log`)
+   (frameless managed path for rule-no-decorate windows -- issue #3; submenu
+   overflow clamped to the screen with edge scrolling; frameless reflow no
+   longer configures root; explicit skip-taskbar=false published). Record:
+   `evidence/gates/review-fixes/README.md`. These land in the closeout PR.
 6. **In progress at the time of this edit**: the ten consecutive
    `build-all.sh debug` runs at commit `5ffee20` (`evidence/gates/fix-measurement/`,
    ledger `LEDGER.txt`), then 08.5-08 (criterion-7 capture), then 08.5-05
