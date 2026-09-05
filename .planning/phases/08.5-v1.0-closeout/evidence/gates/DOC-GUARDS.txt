@@ -31,3 +31,10 @@ release notes' migration note (D-8.5-01: renamed, not aliased) and is deliberate
    multi-byte titles and an exact-mode rule against a longer title can never match. Not fixed here.
 3. A guard reading is a snapshot bound to this commit. Nothing in this repository re-runs it when a
    later commit lands.
+
+## Parity verdict (appended after the capture; same commands re-run at HEAD 7f67bc6, 2026-09-05T15:04:04Z;
+## 'git diff --name-only d08b6e5..HEAD -- src include tests scripts CMakeLists.txt docs/RELEASE-NOTES.md' lists 0 paths)
+exact shipped-set check:  [ "$SHIPPED" = "rule-match-class rule-match-instance rule-match-mode rule-match-title rule-match-type " ]  -> PASS
+exact difference check:   [ "$ONLY_DOC" = "rule-match-name " ] && [ -z "$ONLY_SRC" ]  -> PASS
+Any reading other than PASS/PASS on these two lines is a guard failure; the size and difference lines above
+remain the diagnostic detail, these two lines are the pass/fail.

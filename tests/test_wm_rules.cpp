@@ -184,15 +184,22 @@ std::vector<Atom> wmState(Display* d, Window w)
     unsigned long nItems = 0, bytesAfter = 0;
     unsigned char* raw = nullptr;
 
-    if (XGetWindowProperty(d, w, prop, 0, 64, False, XA_ATOM, &actualType,
-                           &actualFormat, &nItems, &bytesAfter, &raw) != Success) {
-        return out;
-    }
-    if (raw && actualType == XA_ATOM && actualFormat == 32) {
-        Atom* vals = reinterpret_cast<Atom*>(raw);
-        out.assign(vals, vals + nItems);
-    }
-    if (raw) XFree(raw);
+    // The whole property, however long: a negative assertion against a
+    // 64-atom prefix would pass vacuously for an atom past it (the 256-atom
+    // cap case puts SKIP_PAGER last on purpose).
+    long offset = 0;
+    do {
+        if (XGetWindowProperty(d, w, prop, offset, 256, False, XA_ATOM, &actualType,
+                               &actualFormat, &nItems, &bytesAfter, &raw) != Success) {
+            return out;
+        }
+        if (raw && actualType == XA_ATOM && actualFormat == 32) {
+            Atom* vals = reinterpret_cast<Atom*>(raw);
+            out.insert(out.end(), vals, vals + nItems);
+        }
+        if (raw) { XFree(raw); raw = nullptr; }
+        offset += static_cast<long>(nItems);
+    } while (bytesAfter > 0 && nItems > 0);
     return out;
 }
 

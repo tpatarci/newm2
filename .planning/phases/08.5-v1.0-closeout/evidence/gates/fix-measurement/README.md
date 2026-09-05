@@ -2,8 +2,13 @@
 
 **This directory is not the success-criterion-7 gate bundle**, and it is not a
 proof that the flake is gone. It is the operational record that the debug gate
-is green in one shot, ten times in a row with no run omitted and none retried,
-at the source tree the criterion-7 capture (plan 08.5-08) then ran against.
+is green in one shot, ten times in a row with no run omitted and none retried.
+The first two series below are the **pre-capture precondition** for plan
+08.5-08 (ten green at `5ffee20`, then ten green at `70fbd8f`); the capture
+itself then found and fixed two things in the source, so those series are not
+final-tree evidence. The final-tree series, at the capture commit `d08b6e5`, is
+the third section, added after it ran; until that section exists, nothing here
+speaks for the tree that shipped.
 The gate bundle itself sits at the top level of `evidence/gates/`; the
 diagnosis is under `attribution/` and `wakeup/`; the fixes and their
 RED-before / GREEN-after records are under `eventloop/` (08.5-11),

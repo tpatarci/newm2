@@ -101,3 +101,23 @@ No findings: "The added guard correctly enforces the 256-atom processing limit
 after the widened re-read and frees the Xlib allocation before returning. The
 project builds successfully, and no regression was identified." The series
 ends on a clean pass rather than on a stopping rule.
+
+## CodeRabbit CLI pre-flight over the whole branch (`cr review --agent -t committed --base main`), 2026-09-05
+
+Eight findings, read as data and each verified against the tree before acting.
+
+| # | Severity | Finding | Verified? | Disposition |
+|---|---|---|---|---|
+| 1 | minor | `src/Border.cpp` tab-button loop: on `ModalWait::Interrupted` the loop breaks with `action` still 1 (hide) or 2 (kill), and the code after the loop acts on it | **Yes — a real defect from the ledger-8 rewrite.** A signal during a tab-button press would hide, or after a long in-bounds hold close, the client on the way out | Fixed: `action = 0` before the break. By reading; the observable (a hide or a WM_DELETE_WINDOW during the manager's own shutdown) has no clean assertion point from a client, so no case was added. The two `[wm_button]` cases still pass |
+| 2 | minor | `tests/test_wm_rules.cpp` `wmState()` read only the first 64 atoms, so a `REQUIRE_FALSE(hasState(...))` for an atom past the prefix would pass vacuously | Yes — the 256-atom cap case puts `SKIP_PAGER` last, where a 64-atom read cannot see it (the case's count-and-order check would still have caught a survivor, but the helper was misleading) | Fixed: the helper reads the whole property in 256-atom chunks until `bytesAfter` is zero. Both skip cases pass |
+| 3 | minor | `tests/test_eventloop.cpp` child wait: on a `waitpid` error other than `EINTR` the loop set `killed` and broke without signalling the child | Yes — a child holding its X connection open could outlive the case | Fixed: `kill(pid, SIGKILL)` on that branch, the explicit pid `fork()` returned, never a scan |
+| 4 | major | `DOC-GUARDS.txt` reports set sizes and the symmetric difference but does not assert exact membership | Yes as a strengthening; the plan's design was sizes plus difference with the expectation stated | Appended a verdict section: exact shipped-set check PASS, exact difference check PASS, same commands re-run at HEAD with zero source or release-notes drift from the capture commit |
+| 5 | major | `fix-measurement/README.md` opening presented the `70fbd8f` series as the final tree | Yes — stale after the capture's two source fixes | Opening rewritten: the first two series are the pre-capture precondition; the final-tree series is a third section added after it runs |
+| 6 | major | `STATE.md` PR #5 entries still say "under remote review" | Yes | Fixed in the closeout STATE update (PR #5 merged 11:59Z; PR #6 recorded separately) |
+| 7 | major | `STATE.md` cursor fields still show 08.5-08 pending | Yes | Fixed in the closeout STATE update |
+| 8 | major | `ROADMAP.md` line 298 status paragraph carries pre-ruling and held-chain statements and stale counts | Yes | Rewritten with the current statuses and recomputed counts |
+
+Finding 1 changes `src/`, findings 2 and 3 change `tests/`, so the bundle at
+`d08b6e5` no longer describes the shipping tree; the capture is re-run at the
+commit that carries these fixes and the Codex pass over the whole branch diff,
+and the ten-run series at that final commit follows it.

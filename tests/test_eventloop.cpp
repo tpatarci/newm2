@@ -652,7 +652,13 @@ TEST_CASE("timestamp-is-bounded: the wait must return within its deadline when "
     for (;;) {
         const pid_t w = waitpid(pid, &status, WNOHANG);
         if (w == pid) break;
-        if (w < 0 && errno != EINTR) { killed = true; break; }
+        if (w < 0 && errno != EINTR) {
+            // waitpid itself failed; the child may still be alive holding its
+            // connection. Same explicit pid as below, never a scan.
+            kill(pid, SIGKILL);
+            killed = true;
+            break;
+        }
         if (waitedMs >= childBoundMs) {
             kill(pid, SIGKILL);        // the pid fork() returned, never a scan
             waitpid(pid, &status, 0);  // reap, or it holds its connection open

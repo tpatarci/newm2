@@ -1506,7 +1506,15 @@ void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
             const WindowManager::ModalWait wait = windowManager()->modalWait(
                 ButtonPressMask | ButtonReleaseMask | ButtonMotionMask | ExposureMask,
                 &event, 50);
-            if (wait == WindowManager::ModalWait::Interrupted) break;
+            if (wait == WindowManager::ModalWait::Interrupted) {
+                // "No action is taken" has to be made true here: action starts
+                // at 1 (hide) and a long in-bounds hold turns it into 2 (kill),
+                // and the code after the loop acts on whichever is set. Left
+                // alone, a signal during a press would hide -- or close -- the
+                // client on the way out (CodeRabbit pre-flight, 2026-09-05).
+                action = 0;
+                break;
+            }
             if (wait == WindowManager::ModalWait::Timeout) { tdiff += 50; continue; }
         }
 
