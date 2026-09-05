@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 08.5
 current_phase_name: v1.0 Closeout
 status: executing
-stopped_at: "Completed 08.5-13-PLAN.md -- discriminator ran 30/30 pass, bucket: all thirty passed"
-last_updated: "2026-09-01T07:39:45.305Z"
-last_activity: 2026-08-31
-last_activity_desc: Phase 08.5 execution started
+stopped_at: "08.5-12 complete, 08.5-10 ruled ATTRIBUTED/FIX-PLAN, ledger closed; ten-run measurement then 08.5-08 and 08.5-05 pending"
+last_updated: "2026-09-05T11:29:25Z"
+last_activity: 2026-09-05
+last_activity_desc: 08.5-12 complete (5 tasks, two decisions taken by the delegated project lead); 08.5-10 ruled ATTRIBUTED/FIX-PLAN; WINDOWS.md ledger closed (open_count 0)
 state_head: 5a418206824065ab01d647835a34c71e78cb1ecd
 progress:
   total_phases: 10
   completed_phases: 4
   total_plans: 49
-  completed_plans: 44
+  completed_plans: 46
 milestone_name: milestone
 ---
 
@@ -27,6 +27,46 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 **Current focus:** Phase 08.5 — v1.0 Closeout
 
 ## Current Position
+
+Phase: 08.5 (v1.0 Closeout) — EXECUTING
+
+**Position as of 2026-09-05.** On 2026-09-05 the operator instructed the delegated
+project lead to finish everything planned without stopping for per-item
+confirmation; every decision below was taken under that standing instruction
+and is recorded in those terms so it can be reversed as a recorded decision.
+
+1. **08.5-10 Task 3 checkpoint RULED**: Attribution outcome `ATTRIBUTED`,
+   terminal disposition `FIX-PLAN`, recorded in `evidence/gates/wakeup/README.md`
+   and appended to `evidence/gates/attribution/README.md` (commit `e05f07f`).
+   The FIX-PLAN is 08.5-11 (already executed).
+2. **08.5-11: complete** (4 tasks, commits `98efcf5`..`efba0a2` on 2026-09-01);
+   summary written 2026-09-05 (`3f098a6`).
+3. **08.5-12: complete** (5 tasks). Task 3 fix `57d5581`, Task 4 record
+   `a9ae0cd`, summary `fb33506`. Task 5's two decisions taken by the delegated
+   lead: **Decision A** — 08.5-07 SUPERSEDED and retired (its subject fixed by
+   08.5-12 Task 3 plus the startup-fatal defect it never named; its
+   ten-consecutive-green operational-validation measurement is carried into
+   the criterion-7 capture as `evidence/gates/fix-measurement/` at the final
+   tree); 08.5-08 RELEASED with its precondition re-planned onto that ten-run
+   table produced by the closeout itself; 08.5-05 RELEASED to run last as
+   written. **Decision B** — the 08.5-10 ruling in item 1.
+4. **08.5-13: complete** (already recorded).
+5. **WINDOWS.md ledger closed**: `open_count` 0 (6 fixed, 8 waived with
+   reasons) — commits `ce43d5c` (ledger 11, 12; 5 recorded fixed), `ed5b11b`
+   (ledger 8 modal loops interruptible with a RED/GREEN case; ledger 13
+   verified menu open), `5ffee20` (waivers).
+6. **In progress at the time of this edit**: the ten consecutive
+   `build-all.sh debug` runs at commit `5ffee20` (`evidence/gates/fix-measurement/`,
+   ledger `LEDGER.txt`), then 08.5-08 (criterion-7 capture), then 08.5-05
+   (checklist), then phase verification and `/gsd-ship`.
+7. **Also**: PR #5 (branch `modernize/wm2-born-again` → `main`) is in remote
+   review; this worktree's commits will follow it as the next PR.
+
+### History (superseded 2026-09-05)
+
+The RE-PLAN hold on 08.5-05/07/08 described in this history section was lifted
+2026-09-05 by 08.5-12 Task 5 Decision A — 08.5-07 superseded, 08.5-08 and
+08.5-05 released — per item 3 above.
 
 Phase: 08.5 (v1.0 Closeout) — EXECUTING
   "Ready to execute" here means **08.5-10 and nothing else**. 08.5-07, 08.5-08 and
