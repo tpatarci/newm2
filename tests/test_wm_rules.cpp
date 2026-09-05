@@ -443,6 +443,66 @@ TEST_CASE("An explicit skip-taskbar=false rule removes a client's own skip state
 }
 
 
+// Codex re-review 4, P2: the bounded re-read compared (count + retry slack)
+// against the 256-atom cap, so a property of 249..256 atoms -- inside the
+// documented limit -- was left untouched. This case sits exactly AT the cap.
+TEST_CASE("An explicit skip-taskbar=false rule still strips at the 256-atom cap",
+          "[wm_rules]")
+{
+    WmFixture fx(rulesFixture(
+        "rule-match-class=WmRulesUnskipCap\n"
+        "rule-skip-taskbar=false\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+
+    Window win = createClient(d, 120, 120, 260, 200, "wmrulesunskipcap", "WmRulesUnskipCap");
+    const Atom state = XInternAtom(d, "_NET_WM_STATE", False);
+    constexpr int kCap = 256;
+    {
+        // Skip-taskbar first, skip-pager LAST (past the first 64-atom chunk),
+        // and 254 distinct unrelated atoms in between that must all survive.
+        std::vector<Atom> vals;
+        vals.push_back(XInternAtom(d, "_NET_WM_STATE_SKIP_TASKBAR", False));
+        for (int i = 0; i < kCap - 2; ++i) {
+            const std::string name = "WM2_TEST_STATE_" + std::to_string(i);
+            vals.push_back(XInternAtom(d, name.c_str(), False));
+        }
+        vals.push_back(XInternAtom(d, "_NET_WM_STATE_SKIP_PAGER", False));
+        REQUIRE(vals.size() == static_cast<size_t>(kCap));
+        XChangeProperty(d, win, state, XA_ATOM, 32, PropModeReplace,
+                        reinterpret_cast<unsigned char*>(vals.data()),
+                        static_cast<int>(vals.size()));
+        XSync(d, False);
+    }
+    REQUIRE(mapAndAwait(d, win));
+    INFO("wm stderr:\n" << fx.wmStderr());
+
+    REQUIRE_FALSE(hasState(d, win, "_NET_WM_STATE_SKIP_TASKBAR"));
+    REQUIRE_FALSE(hasState(d, win, "_NET_WM_STATE_SKIP_PAGER"));
+
+    // Exactly the 254 unrelated atoms remain, in order, nothing dropped.
+    Atom actualType = None; int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0; unsigned char* raw = nullptr;
+    REQUIRE(XGetWindowProperty(d, win, state, 0L, 1024L, False, XA_ATOM,
+                               &actualType, &actualFormat, &nItems, &bytesAfter,
+                               &raw) == Success);
+    REQUIRE(raw != nullptr);
+    CHECK(bytesAfter == 0);
+    CHECK(actualFormat == 32);
+    CHECK(nItems == static_cast<unsigned long>(kCap - 2));
+    const Atom* atoms = reinterpret_cast<const Atom*>(raw);
+    bool ordered = true;
+    for (unsigned long i = 0; i < nItems && ordered; ++i) {
+        const std::string name = "WM2_TEST_STATE_" + std::to_string(i);
+        ordered = (atoms[i] == XInternAtom(d, name.c_str(), False));
+    }
+    XFree(raw);
+    CHECK(ordered);
+}
+
+
 // ===========================================================================
 // Behaviour 2: position and size
 // ===========================================================================

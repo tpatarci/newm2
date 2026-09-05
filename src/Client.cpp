@@ -782,9 +782,13 @@ void Client::stripNetWmStates(Atom a, Atom b)
         }
         if (bytesAfter == 0) break;
         XFree(raw); raw = nullptr;
-        const unsigned long wanted = nItems + bytesAfter / 4 + 8;
-        if (attempt >= 1 || wanted > static_cast<unsigned long>(kMaxStateAtoms)) return;
-        length = static_cast<long>(wanted);
+        // The cap applies to what the property HOLDS; the eight atoms of slack
+        // only widen the re-read against a client appending between the two
+        // requests (re-review 4, P2: comparing count+slack left a property of
+        // 249..256 atoms, inside the documented cap, untouched).
+        const unsigned long present = nItems + bytesAfter / 4;
+        if (attempt >= 1 || present > static_cast<unsigned long>(kMaxStateAtoms)) return;
+        length = static_cast<long>(present + 8);
     }
     std::vector<Atom> kept;
     if (actualType == XA_ATOM && actualFormat == 32) {
