@@ -541,3 +541,39 @@ this plan's Task 3.
   state words plus integers, and its protocol-error lines carry window ids in
   hex, never titles. The absolute repository path appears exactly as it does in
   this project's other committed logs.
+
+## Ruling — 2026-09-05
+
+**Attribution outcome:** ATTRIBUTED
+**Terminal disposition:** FIX-PLAN
+
+Taken on 2026-09-05 by the delegated project lead under the operator's standing
+instruction of the same date to finish every planned item without stopping for
+per-item confirmation. The operator did not type the word; that fact is recorded
+here so it can be reversed as a recorded decision rather than discovered.
+
+**Reason, recorded verbatim.** The measurement meets the three pre-registered
+criteria in Mode R on the criterion-conformant table: 20 confirmed-issued
+intervening-arm trips against 20 do-nothing-arm trips, perfectly separated,
+exact one-sided p = 1/C(40,20) ≈ 7.3e-12 against the 0.05 threshold and the
+floor of four per arm. The path it names — the readiness check before the
+blocking poll at `src/Events.cpp:195` and `:205` — was subsequently reproduced
+deterministically by `08.5-11` in a forty-line probe (`evidence/gates/eventloop/
+wedge-probe.c`), which also corrected the layer diagnosis this record declined to
+make: the undelivered event sat in Xlib's own queue after `XFlush()`, not in the
+transport's. `08.5-11` is the FIX-PLAN this disposition binds the chain to; it
+has been executed, its four cases went RED at its Task 1 tip and GREEN after its
+Task 3, and its record is at `evidence/gates/eventloop/README.md`.
+
+**Limits carried forward, not softened.** The adversarial review taken before
+this ruling stands as read: the alternating-parity arm assignment is not a
+randomisation, so the exact test's p-value is a description of the separation
+rather than a randomisation inference; the family-wise bound stated above is not
+supported by an independence argument; 89 of 129 trips have no per-trip
+confirmation of delivery and are excluded from the ruled table; and one sentence
+in the channel-absence discussion above was found factually wrong and is
+corrected by this note rather than edited in place. None of these changes the
+reading that produced the ruling — twenty confirmed interventions each released
+a client the paired control did not — and the deterministic reproduction, not
+the p-value, is what the fix rests on. This ruling names a path and never a
+rate.

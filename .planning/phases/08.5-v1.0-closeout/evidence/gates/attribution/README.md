@@ -602,3 +602,27 @@ one interpretive reading about the geometry site; finding 4 corrects how the
 8.23 s / 8.35 s figures should be read; finding 5 narrows what the
 `foreign=5` reading is entitled to claim. The measured facts those readings were
 drawn from are not disturbed.
+
+### Round 4 — the wake-up intervention, and where the attribution effort ended
+
+A fourth round ran. Its measurement, its arm table and its outcome have their
+own address: `evidence/gates/wakeup/README.md`. The outcome recorded there on
+2026-09-05 is ATTRIBUTED, with the terminal disposition FIX-PLAN, and the fix
+plan it binds the chain to is `08.5-11`, whose record is at
+`evidence/gates/eventloop/README.md`.
+
+This round neither re-opened nor amended the verdict above, which stands as the
+previous operator ruled it. The attribution effort ends here under a terminal
+rule fixed before the round ran.
+
+Four items this round left out of scope, each with its reason, cited by the
+token a mechanical check reads: the fix itself, which is a separate plan's
+subject and is recorded at `evidence/gates/wakeup/README.md` as the path it must
+justify itself on; the annotation-ordering fix across the frame assertions, with
+`tests/test_wm_geometry.cpp:1490` as the already-correct counter-example a
+mechanical rewrite must not "fix"; the display-reservation socket recheck at
+`tests/support/WmFixture.h:190`, a latent harness bug unrelated to the path
+named here; and the held criterion-7 gate capture from `08.5-04`, which waits on
+the fix rounds and not on this ruling.
+
+### End of the round-4 note; nothing above this line was altered by round 4
