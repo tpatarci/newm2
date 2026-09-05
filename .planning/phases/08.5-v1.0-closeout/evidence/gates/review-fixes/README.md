@@ -180,3 +180,15 @@ Three minor documentation findings, all fixed by wording: the review-fixes READM
 named the fifth capture as the final one (now: fifth at `2781664`, sixth at `39de548`); the 08.5-08
 summary's smoke display was `:135` where PROVENANCE records `:136` for the final capture; and one
 sentence in that summary still called `f54de6e` the final capture commit.
+
+## Codex, fourth pass (`codex review --commit 39de548`), 2026-09-05
+
+Run after the ten-run series at `39de548` finished, because the review sandbox builds and runs
+`test_config` in this worktree. Model `gpt-5.6-sol`. Verdict on the code: "The test implementation
+change works." One finding, P2, on the documentation carried in the same commit:
+
+| # | Finding | Verification | Disposition |
+|---|---|---|---|
+| 1 | `evidence/README.md:3` at `39de548` names the snapshot `2781664`, which predates the warning fix in that commit and whose release log carried the four warnings; the index therefore "falsely certifies zero warning lines" at that commit. | True of the commit in isolation: `git show 39de548:...evidence/README.md` line 3 says `2781664`. Also already resolved: the sixth capture was taken at `39de548` (`25aaf5d`, `PROVENANCE.txt` line 2) and every record was repointed at it (`32c25d0`); at HEAD `compiler-release.log` has zero warning lines and `evidence/README.md:3` names `39de548`. | Already addressed by `25aaf5d` and `32c25d0`. The chronology (fix commit first, capture second) is the rule "commit nothing during a capture" applied; the interval in which the index named the superseded snapshot is the two commits between them and is recorded in `capture-attempts/README.md` attempt 5. |
+
+No source, test, script or CMake change results; the no-drift check at HEAD still prints nothing.
