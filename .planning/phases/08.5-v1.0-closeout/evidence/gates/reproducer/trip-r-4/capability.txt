@@ -1,0 +1,6 @@
+wm-alive: PRESENT pid=69518
+wm-stderr: PRESENT bytes=1088
+xvfb-log: ABSENT log file empty or not present
+wchan: PRESENT do_poll.constprop.0
+backtrace: PRESENT frames=5
+proc-state: S

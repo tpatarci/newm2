@@ -1,0 +1,12 @@
+
+wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+  Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+  Copying and redistribution encouraged.  No warranty.
+
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients only on menu.
+
+  Shape extension available.
+  Xrandr extension available.
+  XRender extension available.
+wm2: timestamp: entering blocking property wait
+wm2: warning: timestamp: property wait matched a foreign event

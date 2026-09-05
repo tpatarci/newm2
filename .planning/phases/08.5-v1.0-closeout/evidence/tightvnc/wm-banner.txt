@@ -1,0 +1,20 @@
+# wm2-born-again startup banner -- tightvnc -- :93 -- 2026-08-30T08:39:07Z
+# commit 9869aea
+# server: TightVNC-1.3.10
+#
+# THIS IS THE DEGRADED-SERVER TRANSCRIPT. TightVNC 1.3.10 advertises
+# SHAPE but neither RANDR nor RENDER, so both fallback ladders announce
+# themselves here. Rung 1 of the tab-font ladder is the silent one; any
+# other rung prints, which is what makes this transcript evidence rather
+# than something to be inferred from a screenshot.
+
+
+wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+  Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+  Copying and redistribution encouraged.  No warranty.
+
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients only on menu.
+
+  Shape extension available.
+wm2: warning: no xrandr extension, screen geometry will track resolution changes via the root window only
+wm2: warning: no xrender extension, tab labels will be drawn through the core X11 glyph path

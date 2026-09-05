@@ -1,0 +1,313 @@
+wm2-repro measurement run -- plan 08.5-09 Task 2
+started-utc: 2026-08-31T10:04:15Z
+commit: 3b0fd37778b46b043ccdeb13f287835f5b7a5979
+branch: main
+uncommitted under src/ include/ tests/ scripts/ CMakeLists.txt: []
+budget (stated before the run): mode S 200 fixtures, one post-readiness map each, hard stop at 200 or 600000 ms; mode R 5 fixtures x 400 maps, hard stop at 2000 maps or 600000 ms; at most 20 bundles per mode; diagnostic threshold 500 ms inside the hard 8000 ms reparent deadline
+host:  12:04:15 up 16 days, 18:58, 10 users,  load average: 2,47, 3,25, 3,76
+               total        used        free      shared  buff/cache   available
+Mem:           32012       10717        2084        4850       19210       15972
+in-pool survivors before the run: 0
+exe-anchored processes OUTSIDE the pool, deliberately not touched: 2 (pid 1541961 on :10.0, pid 2346022 on :11)
+--- capability probe ---
+gdb: PRESENT /usr/bin/gdb GNU gdb (Ubuntu 12.1-0ubuntu1~22.04.2) 12.1
+ptrace-scope: PRESENT 1
+wchan: PRESENT self=0
+--- run ---
+Filters: [wm_repro]
+Randomness seeded to: 1881334834
+wm2-repro: mode-s fixtures-s=200 startfail-s=0 maps-s=200 trips-s=0 bundles-s=0 capped-s=0 unframed-s=0 wallms-s=36618
+wm2-repro: mode-r fixtures-r=5 startfail-r=0 maps-r=2000 trips-r=5 bundles-r=5 capped-r=0 unframed-r=5 wallms-r=83206
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_wm_repro is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+The post-readiness reparent is sampled to a stated budget in two modes
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:734
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:768: PASSED:
+  REQUIRE( totalMaps >= 1 )
+with expansion:
+  2200 (0x898) >= 1
+with messages:
+  mode s: fixtures-s=200 startfail-s=0 maps-s=200 trips-s=0 bundles-s=0 capped-
+  s=0 unframed-s=0 wallms-s=36618
+  mode r: fixtures-r=5 startfail-r=0 maps-r=2000 trips-r=5 bundles-r=5 capped-
+  r=0 unframed-r=5 wallms-r=83206
+  bundle root: /home/tomislav/development/wm2-born-again/.planning/phases/08.5-
+  v1.0-closeout/evidence/gates/reproducer
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:774: PASSED:
+  REQUIRE( sReadable )
+with expansion:
+  true
+with messages:
+  mode s: fixtures-s=200 startfail-s=0 maps-s=200 trips-s=0 bundles-s=0 capped-
+  s=0 unframed-s=0 wallms-s=36618
+  mode r: fixtures-r=5 startfail-r=0 maps-r=2000 trips-r=5 bundles-r=5 capped-
+  r=0 unframed-r=5 wallms-r=83206
+  bundle root: /home/tomislav/development/wm2-born-again/.planning/phases/08.5-
+  v1.0-closeout/evidence/gates/reproducer
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:775: PASSED:
+  REQUIRE( rReadable )
+with expansion:
+  true
+with messages:
+  mode s: fixtures-s=200 startfail-s=0 maps-s=200 trips-s=0 bundles-s=0 capped-
+  s=0 unframed-s=0 wallms-s=36618
+  mode r: fixtures-r=5 startfail-r=0 maps-r=2000 trips-r=5 bundles-r=5 capped-
+  r=0 unframed-r=5 wallms-r=83206
+  bundle root: /home/tomislav/development/wm2-born-again/.planning/phases/08.5-
+  v1.0-closeout/evidence/gates/reproducer
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:780: PASSED:
+  REQUIRE( totalFiveVerdict == totalBundles )
+with expansion:
+  5 == 5
+with messages:
+  mode s: fixtures-s=200 startfail-s=0 maps-s=200 trips-s=0 bundles-s=0 capped-
+  s=0 unframed-s=0 wallms-s=36618
+  mode r: fixtures-r=5 startfail-r=0 maps-r=2000 trips-r=5 bundles-r=5 capped-
+  r=0 unframed-r=5 wallms-r=83206
+  bundle root: /home/tomislav/development/wm2-born-again/.planning/phases/08.5-
+  v1.0-closeout/evidence/gates/reproducer
+
+-------------------------------------------------------------------------------
+The hang-time capture path yields a five-channel bundle from a healthy window
+manager
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:660
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:668: PASSED:
+  REQUIRE( conn != nullptr )
+with expansion:
+  {?} != nullptr
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:711: PASSED:
+  REQUIRE( outcome.wrote )
+with expansion:
+  true
+with messages:
+  bundle dir: /home/tomislav/development/wm2-born-again/build/debug/wm-process-
+  tests/repro-control--120
+  elapsed ms: 20, framed: yes
+  capture tool status: 0
+  capability.txt:
+  wm-alive: PRESENT pid=69809
+  wm-stderr: PRESENT bytes=474
+  xvfb-log: ABSENT log file empty or not present
+  wchan: PRESENT do_poll.constprop.0
+  backtrace: PRESENT frames=5
+  proc-state: S
+  capture-tool.log:
+  wm stderr: 
+  wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: warning: timestamp: property wait matched a foreign event
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:712: PASSED:
+  REQUIRE( bundleExists )
+with expansion:
+  true
+with messages:
+  bundle dir: /home/tomislav/development/wm2-born-again/build/debug/wm-process-
+  tests/repro-control--120
+  elapsed ms: 20, framed: yes
+  capture tool status: 0
+  capability.txt:
+  wm-alive: PRESENT pid=69809
+  wm-stderr: PRESENT bytes=474
+  xvfb-log: ABSENT log file empty or not present
+  wchan: PRESENT do_poll.constprop.0
+  backtrace: PRESENT frames=5
+  proc-state: S
+  capture-tool.log:
+  wm stderr: 
+  wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: warning: timestamp: property wait matched a foreign event
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:715: PASSED:
+  REQUIRE( channelsWithOneVerdict == kChannelCount )
+with expansion:
+  5 == 5
+with messages:
+  bundle dir: /home/tomislav/development/wm2-born-again/build/debug/wm-process-
+  tests/repro-control--120
+  elapsed ms: 20, framed: yes
+  capture tool status: 0
+  capability.txt:
+  wm-alive: PRESENT pid=69809
+  wm-stderr: PRESENT bytes=474
+  xvfb-log: ABSENT log file empty or not present
+  wchan: PRESENT do_poll.constprop.0
+  backtrace: PRESENT frames=5
+  proc-state: S
+  capture-tool.log:
+  wm stderr: 
+  wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: warning: timestamp: property wait matched a foreign event
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:723: PASSED:
+  REQUIRE( stillAlive )
+with expansion:
+  true
+with messages:
+  bundle dir: /home/tomislav/development/wm2-born-again/build/debug/wm-process-
+  tests/repro-control--120
+  elapsed ms: 20, framed: yes
+  capture tool status: 0
+  capability.txt:
+  wm-alive: PRESENT pid=69809
+  wm-stderr: PRESENT bytes=474
+  xvfb-log: ABSENT log file empty or not present
+  wchan: PRESENT do_poll.constprop.0
+  backtrace: PRESENT frames=5
+  proc-state: S
+  capture-tool.log:
+  wm stderr: 
+  wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: warning: timestamp: property wait matched a foreign event
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:724: PASSED:
+  REQUIRE_FALSE( procState.empty() )
+with expansion:
+  !false
+with messages:
+  bundle dir: /home/tomislav/development/wm2-born-again/build/debug/wm-process-
+  tests/repro-control--120
+  elapsed ms: 20, framed: yes
+  capture tool status: 0
+  capability.txt:
+  wm-alive: PRESENT pid=69809
+  wm-stderr: PRESENT bytes=474
+  xvfb-log: ABSENT log file empty or not present
+  wchan: PRESENT do_poll.constprop.0
+  backtrace: PRESENT frames=5
+  proc-state: S
+  capture-tool.log:
+  wm stderr: 
+  wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: warning: timestamp: property wait matched a foreign event
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:725: PASSED:
+  REQUIRE( procState != "T" )
+with expansion:
+  "S" != "T"
+with messages:
+  bundle dir: /home/tomislav/development/wm2-born-again/build/debug/wm-process-
+  tests/repro-control--120
+  elapsed ms: 20, framed: yes
+  capture tool status: 0
+  capability.txt:
+  wm-alive: PRESENT pid=69809
+  wm-stderr: PRESENT bytes=474
+  xvfb-log: ABSENT log file empty or not present
+  wchan: PRESENT do_poll.constprop.0
+  backtrace: PRESENT frames=5
+  proc-state: S
+  capture-tool.log:
+  wm stderr: 
+  wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: warning: timestamp: property wait matched a foreign event
+
+/home/tomislav/development/wm2-born-again/tests/test_wm_repro.cpp:726: PASSED:
+  REQUIRE( procState != "t" )
+with expansion:
+  "S" != "t"
+with messages:
+  bundle dir: /home/tomislav/development/wm2-born-again/build/debug/wm-process-
+  tests/repro-control--120
+  elapsed ms: 20, framed: yes
+  capture tool status: 0
+  capability.txt:
+  wm-alive: PRESENT pid=69809
+  wm-stderr: PRESENT bytes=474
+  xvfb-log: ABSENT log file empty or not present
+  wchan: PRESENT do_poll.constprop.0
+  backtrace: PRESENT frames=5
+  proc-state: S
+  capture-tool.log:
+  wm stderr: 
+  wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: warning: timestamp: property wait matched a foreign event
+
+===============================================================================
+All tests passed (12 assertions in 2 test cases)
+
+MEASUREMENT EXIT=0
+finished-utc: 2026-08-31T10:06:15Z

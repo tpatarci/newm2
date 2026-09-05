@@ -1,0 +1,6 @@
+=== commit: c61cb4bdb0a81084957d26c2d93b8e599735b55a  branch: main ===
+=== date: 2026-08-30T00:51:31+02:00 ===
+debug exit=0
+release exit=0
+asan exit=0
+static-analysis exit=0

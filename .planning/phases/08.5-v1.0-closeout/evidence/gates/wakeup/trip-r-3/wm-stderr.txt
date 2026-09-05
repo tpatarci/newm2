@@ -1,0 +1,47 @@
+
+wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+  Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+  Copying and redistribution encouraged.  No warranty.
+
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients only on menu.
+
+  Shape extension available.
+  Xrandr extension available.
+  XRender extension available.
+wm2: timestamp: entering blocking property wait
+wm2: warning: timestamp: property wait matched a foreign event
+wm2: X_UnmapWindow (0x60038f): BadWindow (invalid Window parameter)
+wm2: X_SetInputFocus (0x80006e): BadWindow (invalid Window parameter)
+wm2: X_UnmapWindow (0x6005bf): BadWindow (invalid Window parameter)
+wm2: X_GetWindowAttributes (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_ChangeWindowAttributes (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetWindowAttributes (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_CreateWindow (0x8000e4): BadWindow (invalid Window parameter)
+wm2: <request-code-129> (0x600747): BadWindow (invalid Window parameter)
+wm2: <request-code-129> (0x600747): BadWindow (invalid Window parameter)
+wm2: <request-code-129> (0x600747): BadWindow (invalid Window parameter)
+wm2: X_ChangeWindowAttributes (0x600747): BadWindow (invalid Window parameter)
+wm2: X_ChangeWindowAttributes (0x600747): BadWindow (invalid Window parameter)
+wm2: X_ConfigureWindow (0x600747): BadWindow (invalid Window parameter)
+wm2: X_UnmapWindow (0x600747): BadWindow (invalid Window parameter)
+wm2: X_ConfigureWindow (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_ConfigureWindow (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_ReparentWindow (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_ChangeSaveSet (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_MapWindow (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_MapWindow (0x600747): BadWindow (invalid Window parameter)
+wm2: X_ChangeProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetProperty (0x8000e4): BadWindow (invalid Window parameter)
+wm2: X_GetWindowAttributes (0x600744): BadWindow (invalid Window parameter)

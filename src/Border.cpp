@@ -2,6 +2,7 @@
 #include "Client.h"
 #include "Manager.h"
 #include <X11/Xft/Xft.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -11,7 +12,11 @@
 int FRAME_WIDTH = 7;  // Default, overwritten in constructor from config
 int Border::m_tabWidth = -1;
 XftFont *Border::m_tabFont = nullptr;
+Border::TabFontRung Border::m_tabFontRung = Border::TabFontRung::NoFont;
+bool Border::m_staticsInitialised = false;
 x11::GCPtr Border::m_drawGC;
+x11::GCPtr Border::m_bevelLightGC;
+x11::GCPtr Border::m_bevelShadowGC;
 unsigned long Border::m_frameBackgroundPixel = 0;
 unsigned long Border::m_buttonBackgroundPixel = 0;
 unsigned long Border::m_borderPixel = 0;
@@ -32,37 +37,15 @@ Border::Border(Client *client, Window child)
     , m_prevH(-1)
     , m_tabHeight(-1)
 {
-    if (m_tabFont == nullptr) {
+    if (!m_staticsInitialised) {
+        m_staticsInitialised = true;
+
         // Initialize FRAME_WIDTH from config (runtime, replaces constexpr)
         FRAME_WIDTH = windowManager()->config().frameThickness;
 
-        // Load rotated tab font via FcMatrix (D-04) with fallback chain (D-02)
-        x11::XftFontPtr rotatedFont = x11::make_xft_font_rotated(
-            display(), "Noto Sans,DejaVu Sans,Sans:bold:size=12");
-
-        if (!rotatedFont) {
-            // Fallback to generic sans-serif
-            rotatedFont = x11::make_xft_font_rotated(
-                display(), "sans-serif:bold:size=12");
-        }
-        if (!rotatedFont) {
-            windowManager()->fatal("couldn't load default rotated font, bailing out");
-        }
-
-        // Transfer ownership from RAII to raw static pointer
-        // (managed via m_borderCount refcount in destructor)
-        m_tabFont = rotatedFont.release();
-
-        // Rotated Xft fonts have zero height (Plan 01 finding).
-        // Use XftTextExtentsUtf8 to measure the actual glyph extent.
-        XGlyphInfo extents;
-        const char* sample = "M";
-        XftTextExtentsUtf8(display(), m_tabFont,
-            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
-        m_tabWidth = extents.height + 4;
-        if (m_tabWidth < TAB_TOP_HEIGHT * 2 + 8) {
-            m_tabWidth = TAB_TOP_HEIGHT * 2 + 8;
-        }
+        // XDIS-04: the tab font is loaded through a degradation ladder that
+        // cannot terminate the process. See loadTabFont().
+        loadTabFont();
 
         m_frameBackgroundPixel = windowManager()->allocateColour(windowManager()->config().frameBackground.c_str(), "frame background");
         m_buttonBackgroundPixel = windowManager()->allocateColour(windowManager()->config().buttonBackground.c_str(), "button background");
@@ -86,6 +69,39 @@ Border::Border(Client *client, Window child)
         if (!m_drawGC) {
             windowManager()->fatal("couldn't allocate border GC");
         }
+
+        // Bevel GCs (plan 08.5-02). The shades are DERIVED from the configured
+        // tab background, so a user who sets a dark palette gets bevels that
+        // belong to it rather than a fixed near-white line that would read as a
+        // rendering fault. The fractions reproduce the shipped silver's
+        // #F2F4F6 / #898C8F against a #C8CACC body.
+        const char *tabBg = windowManager()->config().tabBackground.c_str();
+        const unsigned long lightPixel =
+            windowManager()->allocateShadeOf(tabBg,  0.76, "bevel highlight");
+        const unsigned long shadowPixel =
+            windowManager()->allocateShadeOf(tabBg, -0.315, "bevel shadow");
+
+        // A zero pixel means the allocation failed and the GC stays null, which
+        // every draw site treats as "no bevel". Decoration must not be able to
+        // stop the window manager starting.
+        if (lightPixel != 0) {
+            XGCValues bv;
+            bv.foreground = lightPixel;
+            bv.line_width = 0;
+            bv.function = GXcopy;
+            bv.subwindow_mode = IncludeInferiors;
+            m_bevelLightGC = x11::make_gc(display(), root(),
+                GCForeground | GCLineWidth | GCFunction | GCSubwindowMode, &bv);
+        }
+        if (shadowPixel != 0) {
+            XGCValues bv;
+            bv.foreground = shadowPixel;
+            bv.line_width = 0;
+            bv.function = GXcopy;
+            bv.subwindow_mode = IncludeInferiors;
+            m_bevelShadowGC = x11::make_gc(display(), root(),
+                GCForeground | GCLineWidth | GCFunction | GCSubwindowMode, &bv);
+        }
     }
 
     ++m_borderCount;
@@ -94,6 +110,17 @@ Border::Border(Client *client, Window child)
 
 Border::~Border()
 {
+    // The per-instance XftDraw is released FIRST, before the windows below.
+    //
+    // It is created bound to m_tab (see drawLabel), and XftDrawDestroy frees the
+    // RENDER Picture it holds for that drawable. Destroying m_tab first destroys
+    // the Picture along with it, so the subsequent free names an id the server no
+    // longer knows -- `RenderBadPicture (invalid Picture parameter)` on stderr for
+    // every single managed window that is ever closed. Found by the destroy
+    // lifecycle cases in tests/test_wm_lifecycle.cpp (plan 08-11) and reproduced
+    // against a bare WM with one client, so it is not a test artefact.
+    m_tabDraw.reset();  // destroy per-instance XftDraw (Pitfall 2)
+
     if (m_parent != root()) {
         if (!m_parent) {
             std::fprintf(stderr, "wm2: zero parent in Border::~Border\n");
@@ -105,15 +132,25 @@ Border::~Border()
         }
     }
 
-    m_tabDraw.reset();  // destroy per-instance XftDraw (Pitfall 2)
-
     if (--m_borderCount == 0) {
         m_drawGC.reset();
+        // Released with the other statics rather than leaked for the process
+        // lifetime; either may already be null when the colormap was full.
+        m_bevelLightGC.reset();
+        m_bevelShadowGC.reset();
 
+        // Null is a legitimate outcome of the ladder's last rung, so the
+        // teardown asks rather than assumes.
         if (m_tabFont) {
             XftFontClose(display(), m_tabFont);
             m_tabFont = nullptr;
         }
+        m_tabFontRung = TabFontRung::NoFont;
+
+        // Every static the constructor established has now been released, so
+        // the next Border must build them again. Without this the block would
+        // be skipped forever and the WM would run with a destroyed GC.
+        m_staticsInitialised = false;
 
         if (m_xftColorsAllocated) {
             Display* d = display();
@@ -123,6 +160,157 @@ Border::~Border()
             XftColorFree(d, visual, cmap, &m_xftBackground);
             m_xftColorsAllocated = false;
         }
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// XDIS-04 / XDIS-05: the tab-font degradation ladder
+//
+// No rung here may terminate the process. Before this existed, a failure to
+// produce the rotated tab font took the unrecoverable-initialisation exit path
+// -- which on a degraded remote display means the user gets no window manager
+// at all rather than one with plainer labels. That is precisely the outcome
+// XDIS-04 and XDIS-05 exist to forbid, so the rungs below cover every failure
+// with something still usable.
+//
+// XDIS-04 is satisfied at the FONTCONFIG-FALLBACK level, deliberately: the
+// preferred chain already names three families and fontconfig substitutes
+// further, the generic sans chain is a second net under it, and an unrotated
+// face is a third. Reviving core X server fonts as a fourth would undo Phase 4,
+// which removed them and the bundled rotation library by decision, and would
+// reintroduce a font model that modern remote servers ship without. The 08-06
+// spike ([xft_norender_spike]) measured the reason that trade is safe: with
+// XRender absent, libXft renders the rotated face through its core X11 glyph
+// path with identical metrics, so a RENDER-less remote server still gets the
+// sideways tab.
+//
+// The two levers read below are internal test levers in the same shape as the
+// extension levers in src/Manager.cpp -- read exactly once, never documented
+// for users, no config key and no command-line flag. They exist because rungs
+// 3 and 4 cannot otherwise be reached on any host where fontconfig resolves a
+// font, which would leave them as untested code claiming to be a fallback.
+// ---------------------------------------------------------------------------
+
+void Border::loadTabFont()
+{
+    const char *forceNoFont = std::getenv("WM2_FORCE_NO_TAB_FONT");
+    const char *forceNoRotated = std::getenv("WM2_FORCE_NO_ROTATED_TAB_FONT");
+
+    const bool skipEveryRung =
+        (forceNoFont != nullptr && std::strcmp(forceNoFont, "1") == 0);
+    const bool skipRotatedRungs = skipEveryRung ||
+        (forceNoRotated != nullptr && std::strcmp(forceNoRotated, "1") == 0);
+
+    // Worded distinctly from the genuine-degradation lines further down, so a
+    // captured transcript can tell "we forced it" apart from "this display
+    // could not produce it" -- the same discrimination the Shape and RANDR
+    // levers provide.
+    if (skipEveryRung) {
+        std::fprintf(stderr, "wm2: warning: tab font forced off, "
+                             "frames will be drawn without labels\n");
+    } else if (skipRotatedRungs) {
+        std::fprintf(stderr, "wm2: warning: rotated tab font forced off, "
+                             "tab labels will read horizontally\n");
+    }
+
+    x11::XftFontPtr font;
+
+    // Rung 1 -- the normal path (D-04 rotation, D-02 preferred chain). Silent
+    // on success: this is what every healthy display does.
+    if (!skipRotatedRungs) {
+        font = x11::make_xft_font_rotated(
+            display(), "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12");
+        if (font) m_tabFontRung = TabFontRung::RotatedPreferred;
+    }
+
+    // Rung 2 -- still sideways, but from the generic sans chain.
+    if (!font && !skipRotatedRungs) {
+        font = x11::make_xft_font_rotated(display(), "sans-serif:bold:size=12");
+        if (font) {
+            m_tabFontRung = TabFontRung::RotatedGeneric;
+            std::fprintf(stderr, "wm2: warning: preferred rotated tab font "
+                                 "unavailable, using the generic sans chain\n");
+        }
+    }
+
+    // Rung 3 -- an unrotated face from the same preferred chain. Labels read
+    // horizontally across the tab instead of running down it: degraded, but
+    // present and readable.
+    if (!font && !skipEveryRung) {
+        font = x11::make_xft_font_name(
+            display(), "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12");
+        if (font) {
+            m_tabFontRung = TabFontRung::Unrotated;
+            std::fprintf(stderr, "wm2: warning: no rotated tab font on this "
+                                 "display, tab labels will read horizontally\n");
+        }
+    }
+
+    // Rung 4 -- no font at all. The WM keeps running with unlabelled tabs.
+    if (!font) {
+        m_tabFontRung = TabFontRung::NoFont;
+        std::fprintf(stderr, "wm2: warning: no usable tab font on this display, "
+                             "frames will be drawn without labels\n");
+    }
+
+    // Transfer ownership from RAII to the raw static pointer
+    // (managed via m_borderCount refcount in the destructor). Releasing a null
+    // holder yields a null pointer, which is exactly rung 4's state.
+    m_tabFont = font.release();
+
+    if (!hasTabFont()) {
+        // Nothing to measure. Fall back to the minimum width the code already
+        // derives from the tab-top-height constant, so frames still get a
+        // sensibly proportioned tab.
+        m_tabWidth = TAB_TOP_HEIGHT * 2 + 8;
+        return;
+    }
+
+    XGlyphInfo extents;
+    if (tabFontRotated()) {
+        // Rotated Xft fonts have zero height (Plan 01 finding).
+        // Use XftTextExtentsUtf8 to measure the actual glyph extent.
+        //
+        // AXIS (deferred item 11, fixed in plan 08-14). For a 90-degree rotated
+        // face the string runs along XGlyphInfo::height and its THICKNESS is
+        // XGlyphInfo::width. MEASURED on this host at size 12:
+        //
+        //     "M"        width 12   height  13
+        //     "Hello"    width 12   height  39
+        //     35 chars   width 16   height 286
+        //
+        // m_tabWidth is the thickness of the tab strip, so it comes from
+        // `width`. It previously read `height`, which for a ONE-CHARACTER
+        // sample is numerically almost the same (13 against 12) -- which is
+        // exactly why this read survived: it is wrong by one pixel and looks
+        // right. Its sibling reads, measuring the whole LABEL on the same wrong
+        // axis, were wrong by an order of magnitude.
+        const char* sample = "M";
+        XftTextExtentsUtf8(display(), m_tabFont,
+            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
+        m_tabWidth = extents.width + 4;
+    } else {
+        // Rung 3: an unrotated face has its advance on the other axis, so
+        // measuring a glyph the rotated way would size the tab from the
+        // string direction instead of the line direction. Use the face's own
+        // line height, which is the unrotated equivalent of what the rotated
+        // branch above is reaching for.
+        //
+        // Deliberately NOT sized from a multi-character sample, tempting as
+        // that is for readability: m_tabWidth is shared by every frame and by
+        // the tab's shape geometry, and a tab several times wider than normal
+        // overflows small windows badly. Legibility is bought back by
+        // truncation in drawLabelHorizontal(), not by a wider tab.
+        const char* sample = "M";
+        XftTextExtentsUtf8(display(), m_tabFont,
+            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
+        m_tabWidth = m_tabFont->ascent + m_tabFont->descent + 4;
+        if (m_tabWidth < extents.height + 4) m_tabWidth = extents.height + 4;
+    }
+
+    if (m_tabWidth < TAB_TOP_HEIGHT * 2 + 8) {
+        m_tabWidth = TAB_TOP_HEIGHT * 2 + 8;
     }
 }
 
@@ -152,6 +340,49 @@ bool Border::shapeAvailable()
 }
 
 
+// D-11: every rectangle-combining Shape request the window manager issues is
+// funnelled through this one function. The early return below IS the XDIS-03
+// fallback -- on a server that lacks the extension (or with the capability
+// forced off for testing) the WM emits no Shape protocol traffic at all,
+// instead of sending requests the server cannot answer.
+//
+// The rectangle array is taken as pointer-to-const for the callers' benefit;
+// the constness is cast away at the Xlib boundary, which does not annotate it.
+//
+// NOTE: a ctest case (tests/test_wm_fallbacks.cpp, tag [shape_invariant])
+// asserts that this file names the Xlib rectangle-combining entry point exactly
+// ONCE. Keep that literal token out of comment prose here, or the comment
+// defeats the guard it documents (same failure mode recorded in 08-01/08-02).
+void Border::combineShape(Window dest, int destKind, int xOff, int yOff,
+                          const XRectangle *rects, int nRects,
+                          int op, int ordering)
+{
+    if (!windowManager()->hasShapeExtension()) return;
+
+    XShapeCombineRectangles(display(), dest, destKind, xOff, yOff,
+                            const_cast<XRectangle *>(rects), nRects,
+                            op, ordering);
+}
+
+
+void Border::combineShapeSorted(Window dest, int destKind, int xOff, int yOff,
+                                std::vector<XRectangle> rects, int op)
+{
+    // See the declaration in include/Border.h for why this exists. The sort is
+    // STABLE so a list that already satisfies the promise -- which is every list
+    // at the shipped frame thickness -- is passed through byte for byte, and the
+    // fix cannot change any rendering that was already correct.
+    std::stable_sort(rects.begin(), rects.end(),
+                     [](const XRectangle& a, const XRectangle& b) {
+                         if (a.y != b.y) return a.y < b.y;
+                         return a.x < b.x;
+                     });
+
+    combineShape(dest, destKind, xOff, yOff, rects.data(),
+                 static_cast<int>(rects.size()), op, YXSorted);
+}
+
+
 void Border::shapeParentRectangular(int w, int h)
 {
     // Simple rectangular frame: full width/height, no fancy shaping
@@ -160,11 +391,11 @@ void Border::shapeParentRectangular(int w, int h)
     frame.y = 0;
     frame.width = w + m_tabWidth + FRAME_WIDTH + 1;
     frame.height = h + FRAME_WIDTH + 1;
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
+    combineShape(m_parent, ShapeBounding,
         0, 0, &frame, 1, ShapeSet, YXBanded);
 
     frame.x++; frame.y++; frame.width -= 2; frame.height -= 2;
-    XShapeCombineRectangles(display(), m_parent, ShapeClip,
+    combineShape(m_parent, ShapeClip,
         0, 0, &frame, 1, ShapeSet, YXBanded);
 }
 
@@ -177,7 +408,7 @@ void Border::shapeTabRectangular(int w, int h)
     tabBounding.y = 0;
     tabBounding.width = m_tabWidth + 2;
     tabBounding.height = m_tabHeight + m_tabWidth + 2;
-    XShapeCombineRectangles(display(), m_tab, ShapeBounding,
+    combineShape(m_tab, ShapeBounding,
         0, 0, &tabBounding, 1, ShapeSet, YXBanded);
 
     XRectangle tabClip;
@@ -185,7 +416,7 @@ void Border::shapeTabRectangular(int w, int h)
     tabClip.y = 1;
     tabClip.width = m_tabWidth;
     tabClip.height = m_tabHeight + m_tabWidth;
-    XShapeCombineRectangles(display(), m_tab, ShapeClip,
+    combineShape(m_tab, ShapeClip,
         0, 0, &tabClip, 1, ShapeSet, YXBanded);
 }
 
@@ -229,13 +460,105 @@ Window Border::root() const
 
 void Border::expose(XExposeEvent *e)
 {
+    if (e->window == m_button) {
+        drawButtonBevel(m_client->isActive());
+        return;
+    }
     if (e->window != m_tab) return;
-    drawLabel();
+    drawLabel(m_client->isActive());
 }
 
 
-void Border::drawLabel()
+// The 1 px raised bevel down the tab (plan 08.5-02). Active windows only.
+//
+// GEOMETRY. The tab window is L-shaped: a band across the top of the frame and
+// a column down its left side, joined at the corner, with a stair-stepped
+// diagonal closing the bottom (see shapeTab). Three lines describe it as a
+// raised surface:
+//
+//   - highlight along y=1, across the top band      (lit from above)
+//   - highlight down x=1, the column's left edge    (lit from the left)
+//   - shadow down the column's right inner edge     (the far side falls away)
+//
+// THE DIAGONAL IS DELIBERATELY LEFT PLAIN. It is drawn as a stack of one-pixel
+// rectangles, so a bevel following it would be a stair of isolated pixels --
+// jaggies, not a highlight. The black outline already defines that edge, and
+// leaving it alone is what keeps this "discrete" rather than busy.
+//
+// Cost is two XDrawSegments per redraw, which is nothing over VNC. Both GCs may
+// be null if the colormap was full; that is a frame without bevels, which is
+// exactly the old look and not an error.
+void Border::drawBevel(bool active)
 {
+    if (isTransient()) return;   // transients have no tab to bevel
+    if (!active) return;         // the active window is the one that lifts
+
+    const int bottom = m_tabHeight;     // where the diagonal begins
+    const int right  = m_tabWidth - 1;
+
+    if (m_bevelLightGC) {
+        XSegment light[2];
+        // Across the top band. Stops at the tab column's width rather than
+        // running the full band: past that point the band is one pixel below
+        // the frame's own top edge and a line there reads as a seam.
+        light[0].x1 = 1;  light[0].y1 = 1;
+        light[0].x2 = right; light[0].y2 = 1;
+        // Down the column's left edge, stopping short of the diagonal.
+        light[1].x1 = 1;  light[1].y1 = 1;
+        light[1].x2 = 1;  light[1].y2 = bottom;
+        XDrawSegments(display(), m_tab, m_bevelLightGC.get(), light, 2);
+    }
+
+    if (m_bevelShadowGC) {
+        XSegment shadow[1];
+        // The column's right inner edge, from below the button notch down to
+        // the diagonal. Starting at m_tabWidth rather than at the top avoids
+        // drawing across the notch the button sits in.
+        shadow[0].x1 = right; shadow[0].y1 = m_tabWidth;
+        shadow[0].x2 = right; shadow[0].y2 = bottom;
+        XDrawSegments(display(), m_tab, m_bevelShadowGC.get(), shadow, 1);
+    }
+}
+
+
+// The same treatment for the small square button at the tab's top, so it reads
+// as a raised key rather than a painted patch. Same active-only rule: on an
+// inactive client the button is not even mapped.
+void Border::drawButtonBevel(bool active)
+{
+    if (isTransient()) return;
+    if (!active) return;
+
+    const int size = buttonDrawSize();
+    if (size <= 2) return;   // too small to bevel legibly; leave it flat
+
+    if (m_bevelLightGC) {
+        XSegment light[2];
+        light[0].x1 = 0; light[0].y1 = 0; light[0].x2 = size - 1; light[0].y2 = 0;
+        light[1].x1 = 0; light[1].y1 = 0; light[1].x2 = 0;        light[1].y2 = size - 1;
+        XDrawSegments(display(), m_button, m_bevelLightGC.get(), light, 2);
+    }
+
+    if (m_bevelShadowGC) {
+        XSegment shadow[2];
+        shadow[0].x1 = 0;        shadow[0].y1 = size - 1;
+        shadow[0].x2 = size - 1; shadow[0].y2 = size - 1;
+        shadow[1].x1 = size - 1; shadow[1].y1 = 0;
+        shadow[1].x2 = size - 1; shadow[1].y2 = size - 1;
+        XDrawSegments(display(), m_button, m_bevelShadowGC.get(), shadow, 2);
+    }
+}
+
+
+void Border::drawLabel(bool active)
+{
+    // Rung 4: there is nothing to draw the label WITH. Return before anything
+    // touches the font, leaving the tab itself drawn but blank -- the tab
+    // window carries the label background as its own background pixel, so the
+    // server keeps it painted. The surrounding frame drawing is not on this
+    // path and is unaffected.
+    if (!hasTabFont()) return;
+
     if (m_label.empty()) return;
 
     // Create XftDraw lazily on first use, bound to this tab window (Pitfall 2)
@@ -251,6 +574,18 @@ void Border::drawLabel()
     XftDrawRect(m_tabDraw.get(), &m_xftBackground, 0, 0,
                 m_tabWidth, m_tabHeight + m_tabWidth);
 
+    // The bevel goes on after the background fill and BEFORE the label, so text
+    // is never drawn under a line. Active windows only.
+    drawBevel(active);
+
+    // Rung 3: an unrotated face cannot be drawn down the tab, so it is drawn
+    // across it instead. Split out rather than branched inline so the rotated
+    // path below stays byte-for-byte what it was.
+    if (!tabFontRotated()) {
+        drawLabelHorizontal();
+        return;
+    }
+
     // Rotated fonts have zero ascent -- use extent-based measurement for x offset
     XGlyphInfo extents;
     XftTextExtentsUtf8(display(), m_tabFont,
@@ -258,11 +593,57 @@ void Border::drawLabel()
         static_cast<int>(m_label.size()), &extents);
 
     // Draw rotated label text (UTF-8 natively via XftDrawStringUtf8)
+    //
+    // AXIS (deferred item 11, fixed in plan 08-14). The x offset positions the
+    // string ACROSS the tab, so it is the thickness -- `width` -- not the
+    // along-string advance. THIS read is what made the defect invisible rather
+    // than merely ugly: reading `height` put the origin at 2 + 286 = 288 px for
+    // a thirty-five-character title, far outside a ~20 px tab, where the server
+    // clipped the entire label away. 08-06 predicted the label would overhang
+    // its tab; MEASURED, it did not render at all. For a short title the two
+    // axes are close enough that the label landed inside the tab by luck, which
+    // is why only long titles were ever affected -- and why nobody caught it,
+    // since a test window is usually called something short.
     XftDrawStringUtf8(m_tabDraw.get(), &m_xftForeground,
                        m_tabFont,
-                       2 + extents.height, m_tabHeight - 1,
+                       2 + extents.width, m_tabHeight - 1,
                        reinterpret_cast<const FcChar8*>(m_label.c_str()),
                        static_cast<int>(m_label.size()));
+}
+
+
+// Rung 3 only. The label reads across the tab, so it is trimmed to what fits
+// in the tab's width -- on a UTF-8 character boundary, never mid-sequence.
+void Border::drawLabelHorizontal()
+{
+    if (!hasTabFont()) return;
+
+    const int available = m_tabWidth - 4;
+    if (available <= 0) return;
+
+    std::string::size_type bytes = m_label.size();
+    XGlyphInfo extents;
+
+    while (bytes > 0) {
+        XftTextExtentsUtf8(display(), m_tabFont,
+            reinterpret_cast<const FcChar8*>(m_label.c_str()),
+            static_cast<int>(bytes), &extents);
+        if (static_cast<int>(extents.width) <= available) break;
+
+        --bytes;
+        while (bytes > 0 &&
+               (static_cast<unsigned char>(m_label[bytes]) & 0xC0) == 0x80) {
+            --bytes;
+        }
+    }
+
+    if (bytes == 0) return;
+
+    XftDrawStringUtf8(m_tabDraw.get(), &m_xftForeground,
+                      m_tabFont,
+                      2, m_tabFont->ascent + 2,
+                      reinterpret_cast<const FcChar8*>(m_label.c_str()),
+                      static_cast<int>(bytes));
 }
 
 
@@ -299,12 +680,67 @@ void Border::fixTabHeight(int maxHeight)
 
     m_label = m_client->label();
 
+    // Rung 4: nothing to measure with. Keep a stub tab of the same order as the
+    // transient tab (configure() pins that one at a fixed 10) so the frame
+    // still has a grabbable tab, and blank the label so drawLabel() has nothing
+    // to draw. No Xft call is reachable from here.
+    if (!hasTabFont()) {
+        m_label.clear();
+        m_tabHeight = m_tabWidth * 2;
+        if (m_tabHeight > maxHeight) m_tabHeight = maxHeight;
+        // The floor is m_tabWidth, not an arbitrary small number: shapeTab()
+        // builds rectangles of height (m_tabHeight - m_tabWidth + ...), and a
+        // shorter tab makes those negative. XRectangle fields are unsigned, so
+        // a negative height wraps to ~65535, the rectangle list stops being
+        // YXSorted, and the server answers BadMatch -- which aborts framing
+        // entirely. Measured on a 60x40 window before this floor was added.
+        if (m_tabHeight < m_tabWidth) m_tabHeight = m_tabWidth;
+        return;
+    }
+
+    // Rung 3: a horizontal label does not run DOWN the tab, so the shortening
+    // loop below -- which trims the title until it fits the tab's length -- is
+    // measuring the wrong axis. The tab keeps a fixed length here and
+    // drawLabelHorizontal() trims to the tab's width instead.
+    if (!tabFontRotated()) {
+        if (m_label.empty()) {
+            m_label = m_client->iconName().empty() ? std::string("incognito")
+                                                   : m_client->iconName();
+        }
+        m_tabHeight = m_tabWidth * 2;
+        if (m_tabHeight > maxHeight) m_tabHeight = maxHeight;
+        // The floor is m_tabWidth, not an arbitrary small number: shapeTab()
+        // builds rectangles of height (m_tabHeight - m_tabWidth + ...), and a
+        // shorter tab makes those negative. XRectangle fields are unsigned, so
+        // a negative height wraps to ~65535, the rectangle list stops being
+        // YXSorted, and the server answers BadMatch -- which aborts framing
+        // entirely. Measured on a 60x40 window before this floor was added.
+        if (m_tabHeight < m_tabWidth) m_tabHeight = m_tabWidth;
+        return;
+    }
+
+    // AXIS (deferred item 11, fixed in plan 08-14). m_tabHeight is the LENGTH of
+    // the tab, down which the rotated label runs, so it is bounded below by the
+    // along-string advance -- XGlyphInfo::height for a rotated face, not
+    // ::width, which is the constant thickness across the string.
+    //
+    // This is the read that made the tab "very nearly the same length whatever
+    // the title is": MEASURED 54 px for a one-character title against 58 px for
+    // a thirty-four-character one, four pixels apart for a 34-fold difference in
+    // length. All three sites in this function had it the same way round.
+    //
+    // CONSEQUENCE FOR THE CODE BELOW, and it is not incidental: the
+    // icon-name-then-ellipsis shortening path that follows was effectively DEAD,
+    // because m_tabHeight almost always came out under maxHeight on the first
+    // try. With the length now tracking the title it fires for the first time
+    // whenever a long title meets a short window, which is the case it was
+    // written for.
     if (!m_label.empty()) {
         XGlyphInfo extents;
         XftTextExtentsUtf8(display(), m_tabFont,
             reinterpret_cast<const FcChar8*>(m_label.c_str()),
             static_cast<int>(m_label.size()), &extents);
-        m_tabHeight = extents.width + 6 + m_tabWidth;
+        m_tabHeight = extents.height + 6 + m_tabWidth;
     }
 
     if (m_tabHeight <= maxHeight) return;
@@ -316,7 +752,7 @@ void Border::fixTabHeight(int maxHeight)
         XGlyphInfo extents;
         XftTextExtentsUtf8(display(), m_tabFont,
             reinterpret_cast<const FcChar8*>(m_label.c_str()), len, &extents);
-        m_tabHeight = extents.width + 6 + m_tabWidth;
+        m_tabHeight = extents.height + 6 + m_tabWidth;   // along-string advance
     }
     if (m_tabHeight <= maxHeight) return;
 
@@ -327,7 +763,7 @@ void Border::fixTabHeight(int maxHeight)
         XftTextExtentsUtf8(display(), m_tabFont,
             reinterpret_cast<const FcChar8*>(newLabel.c_str()),
             static_cast<int>(newLabel.size()), &extents);
-        m_tabHeight = extents.width + 6 + m_tabWidth;
+        m_tabHeight = extents.height + 6 + m_tabWidth;   // along-string advance
         --len;
     } while (m_tabHeight > maxHeight && len > 2);
 
@@ -343,14 +779,14 @@ void Border::shapeTransientParent(int w, int h)
     r.x = xIndent() - 1; r.y = yIndent() - 1;
     r.width = w + 2; r.height = h + 2;
 
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding, 0, 0,
-                            &r, 1, ShapeSet, YXBanded);
+    combineShape(m_parent, ShapeBounding, 0, 0,
+                 &r, 1, ShapeSet, YXBanded);
 
     r.x = xIndent(); r.y = yIndent();
     r.width = w; r.height = h;
 
-    XShapeCombineRectangles(display(), m_parent, ShapeClip, 0, 0,
-                            &r, 1, ShapeSet, YXBanded);
+    combineShape(m_parent, ShapeClip, 0, 0,
+                 &r, 1, ShapeSet, YXBanded);
 }
 
 
@@ -373,9 +809,8 @@ void Border::setTransientFrameVisibility(bool visible, int w, int h)
         appendRect(i - 1, h, 1, i + 2);
     }
 
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            visible ? ShapeUnion : ShapeSubtract, YXSorted);
+    combineShapeSorted(m_parent, ShapeBounding, 0, 0, rects,
+                       visible ? ShapeUnion : ShapeSubtract);
 
     rects.clear();
 
@@ -388,9 +823,8 @@ void Border::setTransientFrameVisibility(bool visible, int w, int h)
         appendRect(i - 1, h, 1, i + 1);
     }
 
-    XShapeCombineRectangles(display(), m_parent, ShapeClip,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            visible ? ShapeUnion : ShapeSubtract, YXSorted);
+    combineShapeSorted(m_parent, ShapeClip, 0, 0, rects,
+                       visible ? ShapeUnion : ShapeSubtract);
 }
 
 
@@ -435,18 +869,16 @@ void Border::shapeParent(int w, int h)
         appendRect(i, m_tabHeight + i - 1, m_tabWidth - i + 2, 1);
     }
 
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSet, YXSorted);
+    combineShapeSorted(m_parent, ShapeBounding, 0, 0, rects, ShapeSet);
 
+    // mainRect indexes the UNSORTED list, which is exactly why
+    // combineShapeSorted() takes its copy by value.
     rects[mainRect].x++;
     rects[mainRect].y++;
     rects[mainRect].width -= 2;
     rects[mainRect].height -= 2;
 
-    XShapeCombineRectangles(display(), m_parent, ShapeClip,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSet, YXSorted);
+    combineShapeSorted(m_parent, ShapeClip, 0, 0, rects, ShapeSet);
 }
 
 
@@ -480,9 +912,7 @@ void Border::shapeTab(int w, int h)
         appendRect(i, m_tabHeight + i - 1, m_tabWidth - i + 2, 1);
     }
 
-    XShapeCombineRectangles(display(), m_tab, ShapeBounding,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSet, YXSorted);
+    combineShapeSorted(m_tab, ShapeBounding, 0, 0, rects, ShapeSet);
 
     rects.clear();
 
@@ -499,9 +929,7 @@ void Border::shapeTab(int w, int h)
         appendRect(i + 1, m_tabHeight + i - 1, m_tabWidth - i, 1);
     }
 
-    XShapeCombineRectangles(display(), m_tab, ShapeClip,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSet, YXSorted);
+    combineShapeSorted(m_tab, ShapeClip, 0, 0, rects, ShapeSet);
 }
 
 
@@ -535,23 +963,23 @@ void Border::resizeTab(int h)
     r.x = 0; r.y = shorter;
     r.width = m_tabWidth + 2; r.height = longer - shorter;
 
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
-                            0, 0, &r, 1, operation, YXBanded);
-    XShapeCombineRectangles(display(), m_parent, ShapeClip,
-                            0, 0, &r, 1, operation, YXBanded);
-    XShapeCombineRectangles(display(), m_tab, ShapeBounding,
-                            0, 0, &r, 1, operation, YXBanded);
+    combineShape(m_parent, ShapeBounding,
+                 0, 0, &r, 1, operation, YXBanded);
+    combineShape(m_parent, ShapeClip,
+                 0, 0, &r, 1, operation, YXBanded);
+    combineShape(m_tab, ShapeBounding,
+                 0, 0, &r, 1, operation, YXBanded);
 
     r.x++; r.width -= 2;
 
-    XShapeCombineRectangles(display(), m_tab, ShapeClip,
-                            0, 0, &r, 1, operation, YXBanded);
+    combineShape(m_tab, ShapeClip,
+                 0, 0, &r, 1, operation, YXBanded);
 
     if (m_client->isActive()) {
         r.x = m_tabWidth + 1; r.y = shorter;
         r.width = FRAME_WIDTH - 1; r.height = longer - shorter;
-        XShapeCombineRectangles(display(), m_parent, ShapeBounding,
-                                0, 0, &r, 1, ShapeUnion, YXBanded);
+        combineShape(m_parent, ShapeBounding,
+                     0, 0, &r, 1, ShapeUnion, YXBanded);
     }
 
     std::vector<XRectangle> diagRects;
@@ -562,27 +990,27 @@ void Border::resizeTab(int h)
         diagRects.push_back(dr);
     }
 
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
-                            0, 0, diagRects.data(),
-                            static_cast<unsigned int>(diagRects.size()),
-                            ShapeUnion, YXBanded);
-    XShapeCombineRectangles(display(), m_parent, ShapeClip,
-                            0, 0, diagRects.data(),
-                            static_cast<unsigned int>(diagRects.size()),
-                            ShapeUnion, YXBanded);
-    XShapeCombineRectangles(display(), m_tab, ShapeBounding,
-                            0, 0, diagRects.data(),
-                            static_cast<unsigned int>(diagRects.size()),
-                            ShapeUnion, YXBanded);
+    combineShape(m_parent, ShapeBounding,
+                 0, 0, diagRects.data(),
+                 static_cast<unsigned int>(diagRects.size()),
+                 ShapeUnion, YXBanded);
+    combineShape(m_parent, ShapeClip,
+                 0, 0, diagRects.data(),
+                 static_cast<unsigned int>(diagRects.size()),
+                 ShapeUnion, YXBanded);
+    combineShape(m_tab, ShapeBounding,
+                 0, 0, diagRects.data(),
+                 static_cast<unsigned int>(diagRects.size()),
+                 ShapeUnion, YXBanded);
 
     if (diagRects.size() >= 2) {
         for (size_t i = 0; i < diagRects.size() - 1; ++i) {
             diagRects[i].x++; diagRects[i].width -= 2;
         }
-        XShapeCombineRectangles(display(), m_tab, ShapeClip,
-                                0, 0, diagRects.data(),
-                                static_cast<unsigned int>(diagRects.size() - 1),
-                                ShapeUnion, YXBanded);
+        combineShape(m_tab, ShapeClip,
+                     0, 0, diagRects.data(),
+                     static_cast<unsigned int>(diagRects.size() - 1),
+                     ShapeUnion, YXBanded);
     }
 }
 
@@ -598,9 +1026,9 @@ void Border::shapeResize()
         rects.push_back(r);
     }
 
-    XShapeCombineRectangles(display(), m_resize, ShapeBounding, 0, 0,
-                            rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSet, YXBanded);
+    combineShape(m_resize, ShapeBounding, 0, 0,
+                 rects.data(), static_cast<unsigned int>(rects.size()),
+                 ShapeSet, YXBanded);
 
     rects.clear();
 
@@ -611,9 +1039,9 @@ void Border::shapeResize()
         rects.push_back(r);
     }
 
-    XShapeCombineRectangles(display(), m_resize, ShapeClip, 0, 0,
-                            rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSet, YXBanded);
+    combineShape(m_resize, ShapeClip, 0, 0,
+                 rects.data(), static_cast<unsigned int>(rects.size()),
+                 ShapeSet, YXBanded);
 
     rects.clear();
 
@@ -624,9 +1052,9 @@ void Border::shapeResize()
         rects.push_back(r);
     }
 
-    XShapeCombineRectangles(display(), m_resize, ShapeClip, 0, 0,
-                            rects.data(), static_cast<unsigned int>(rects.size()),
-                            ShapeSubtract, YXBanded);
+    combineShape(m_resize, ShapeClip, 0, 0,
+                 rects.data(), static_cast<unsigned int>(rects.size()),
+                 ShapeSubtract, YXBanded);
 
     // Install down-right cursor on resize handle
     windowManager()->installCursorOnWindow(WindowManager::RootCursor::DownRight, m_resize);
@@ -676,9 +1104,8 @@ void Border::setFrameVisibility(bool visible, int w, int h)
     rects[finalIdx].width += 1;
     rects[finalIdx].height = h - rects[finalIdx].height + 2;
 
-    XShapeCombineRectangles(display(), m_parent, ShapeBounding,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            visible ? ShapeUnion : ShapeSubtract, YXSorted);
+    combineShapeSorted(m_parent, ShapeBounding, 0, 0, rects,
+                       visible ? ShapeUnion : ShapeSubtract);
     rects.clear();
 
     // Clip rectangles
@@ -699,9 +1126,8 @@ void Border::setFrameVisibility(bool visible, int w, int h)
 
     appendRect(m_tabWidth + 2, h, FRAME_WIDTH - 2, FRAME_WIDTH + 1);
 
-    XShapeCombineRectangles(display(), m_parent, ShapeClip,
-                            0, 0, rects.data(), static_cast<unsigned int>(rects.size()),
-                            visible ? ShapeUnion : ShapeSubtract, YXSorted);
+    combineShapeSorted(m_parent, ShapeClip, 0, 0, rects,
+                       visible ? ShapeUnion : ShapeSubtract);
 
     if (visible && !isFixedSize()) {
         XMapRaised(display(), m_resize);
@@ -741,8 +1167,14 @@ void Border::configure(int x, int y, int w, int h,
                          EnterWindowMask);
         }
 
+        // ExposureMask added in plan 08.5-02. The button was previously drawn
+        // entirely by the server from its background pixel, so it never needed
+        // to hear about exposure. Now it carries a bevel this code draws, and
+        // anything the server repaints from the background -- an unobscure, a
+        // resize, a VNC client reconnecting -- would wipe that bevel with no
+        // event to put it back.
         XSelectInput(display(), m_button,
-                     ButtonPressMask | ButtonReleaseMask);
+                     ExposureMask | ButtonPressMask | ButtonReleaseMask);
         XSelectInput(display(), m_resize, ButtonPressMask | ButtonReleaseMask);
         mask |= CWX | CWY | CWWidth | CWHeight | CWBorderWidth;
     }
@@ -793,11 +1225,13 @@ void Border::configure(int x, int y, int w, int h,
         resizeTab(h);
     }
 
-    wc.x = TAB_TOP_HEIGHT + 2;
+    wc.x = buttonDrawInset();
     wc.y = wc.x;
-    wc.width = wc.height = m_tabWidth - TAB_TOP_HEIGHT * 2 - 4;
+    wc.width = wc.height = buttonDrawSize();
     XConfigureWindow(display(), m_button, mask, &wc);
 }
+
+
 
 
 void Border::moveTo(int x, int y)
@@ -865,6 +1299,16 @@ void Border::unmap()
 void Border::decorate(bool active, int w, int h)
 {
     setFrameVisibility(active, w, h);
+
+    // Activity is what decides whether this window wears bevels at all, and
+    // this is the one place that learns activity changed -- so both surfaces
+    // are repainted here. drawLabel() redraws the tab background before the
+    // bevel, so a window losing focus loses its highlight rather than keeping a
+    // stale one.
+    if (!isTransient()) {
+        drawLabel(active);
+        drawButtonBevel(active);
+    }
 }
 
 
@@ -905,8 +1349,21 @@ void Border::restoreFromFullscreen(int x, int y, int w, int h)
     wc.height = h + yIndent() + 1;
     XConfigureWindow(display(), m_parent, CWX | CWY | CWWidth | CWHeight, &wc);
 
-    // Resize child to saved size
-    XMoveResizeWindow(display(), m_child, 0, 0, w, h);
+    // Resize child to saved size, AT THE FRAME'S CONTENT OFFSET.
+    //
+    // Not (0, 0): the reparent two statements above deliberately places the
+    // child at (xIndent, yIndent), and moving it to the frame's origin here
+    // undid that -- putting the client underneath the sideways tab and the top
+    // border, and leaving it xIndent pixels left and yIndent pixels above where
+    // the window manager's own m_x/m_y say it is.
+    //
+    // MEASURED before this fix (plan 08-12): a client the WM had placed at
+    // (175,128 300x220) came back from fullscreen at (150,120 300x220) -- off
+    // by exactly the indent, every single round trip. Fixed alongside the two
+    // identical spellings in Client::setMaximized(); this window manager has
+    // exactly one convention for where a client sits inside its frame, and
+    // these three call sites were the only places that did not follow it.
+    XMoveResizeWindow(display(), m_child, xIndent(), yIndent(), w, h);
 
     // Map all frame components
     map();
@@ -925,6 +1382,17 @@ void Border::eventButton(XButtonEvent *e)
                 return;
             }
         }
+        // The frame owns a thin part of the button's target square too -- the
+        // notch's inner edge. Same routing as the tab branch below, so a miss
+        // that lands there presses the button instead of starting a drag.
+        if (e->type == ButtonPress &&
+            e->x >= 0 && e->x < buttonHitSize() &&
+            e->y >= 0 && e->y < buttonHitSize()) {
+            runButtonPress(e, e->x - buttonDrawInset(),
+                              e->y - buttonDrawInset());
+            return;
+        }
+
         m_client->moveOrResize(e);
         return;
 
@@ -934,6 +1402,23 @@ void Border::eventButton(XButtonEvent *e)
             m_client->toggleMaximized();
             return;
         }
+
+        // A press in the tab's top square was aimed at the button. The tab and
+        // the button share an origin, so the tab's coordinates ARE the frame's
+        // here, and shifting by the inset puts them in the button's.
+        //
+        // Gated on isActive() for the same reason the frame branch above is:
+        // setFrameVisibility() subtracts the button's square from an inactive
+        // client's frame and unmaps the button, so there is no button to aim at,
+        // and a press here is a plain click on an unfocused window.
+        if (e->type == ButtonPress && m_client->isActive() &&
+            e->x >= 0 && e->x < buttonHitSize() &&
+            e->y >= 0 && e->y < buttonHitSize()) {
+            runButtonPress(e, e->x - buttonDrawInset(),
+                              e->y - buttonDrawInset());
+            return;
+        }
+
         m_client->move(e);
         return;
     }
@@ -945,6 +1430,31 @@ void Border::eventButton(XButtonEvent *e)
 
     if (e->window != m_button || e->type == ButtonRelease) return;
 
+    runButtonPress(e, e->x, e->y);
+}
+
+
+// The button's target square is the tab's whole top square, while the square it
+// PAINTS stays the small one it has always been.
+//
+// It has to work this way round. The obvious approach -- grow the button window,
+// or give it a large input shape and a small bounding shape -- cannot work here,
+// and both were built and measured before this was written: the TAB is stacked
+// ABOVE the button and is shaped with a hole exactly the size of the painted
+// square, so every press outside that hole is delivered to the tab no matter how
+// large the button window is. Widening the hole instead would stop the tab
+// painting its struts there, which changes the frame's appearance.
+//
+// So the presses the tab already receives are interpreted here instead, and not
+// one window, shape or pixel moves.
+//
+// What this fixes, MEASURED with a hit probe on a 16px tab: the target was 8x8,
+// 64 square pixels, and a near-miss did not merely fail. Four pixels to any side
+// hit the tab and started a DRAG; one or two to the right or below fell through
+// the frame's shaped hole to the ROOT WINDOW and opened the menu. Both are worse
+// than nothing happening.
+void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
+{
     int menuGrabMask = ButtonPressMask | ButtonReleaseMask |
                        ButtonMotionMask | StructureNotifyMask;
     if (windowManager()->attemptGrab(m_button, None, menuGrabMask, e->time)
@@ -957,12 +1467,21 @@ void Border::eventButton(XButtonEvent *e)
     bool done = false;
     struct timeval sleepval;
     unsigned long tdiff = 0L;
-    int x = e->x;
-    int y = e->y;
+    int x = startX;
+    int y = startY;
     int action = 1;
-    int buttonSize = m_tabWidth - TAB_TOP_HEIGHT * 2 - 4;
 
-    XFillRectangle(display(), m_button, m_drawGC.get(), 0, 0, buttonSize, buttonSize);
+    // Two spans, and they must not be conflated. drawSize is what gets painted,
+    // in button-window coordinates. The bounds below are the TARGET, expressed
+    // in the same button-window coordinates but covering the tab's whole top
+    // square -- which starts one inset ABOVE and LEFT of the button, hence the
+    // negative lower bound. They are what give the pointer room to wander during
+    // a press without silently cancelling the action.
+    const int drawSize = buttonDrawSize();
+    const int lo = -buttonDrawInset();
+    const int hi = buttonHitSize() - buttonDrawInset();
+
+    XFillRectangle(display(), m_button, m_drawGC.get(), 0, 0, drawSize, drawSize);
 
     while (!done) {
 
@@ -1009,7 +1528,7 @@ void Border::eventButton(XButtonEvent *e)
                     action = 0;
                 }
             }
-            if (x < 0 || y < 0 || x >= buttonSize || y >= buttonSize) {
+            if (x < lo || y < lo || x >= hi || y >= hi) {
                 action = 0;
             }
             windowManager()->releaseGrab(&event.xbutton);
@@ -1024,7 +1543,7 @@ void Border::eventButton(XButtonEvent *e)
             y = event.xmotion.y;
 
             if (action == 0 || action == 2) {
-                if (x < 0 || y < 0 || x >= buttonSize || y >= buttonSize) {
+                if (x < lo || y < lo || x >= hi || y >= hi) {
                     windowManager()->installCursor(WindowManager::RootCursor::Normal);
                     action = 0;
                 } else {
@@ -1036,7 +1555,13 @@ void Border::eventButton(XButtonEvent *e)
         }
     }
 
+    // The clear wipes the press feedback AND the bevel with it, so the bevel is
+    // put back. Without this the button silently goes flat after its first
+    // press and stays flat for the window's whole life -- a decoration bug that
+    // only appears after an interaction, which is the kind nobody notices in a
+    // screenshot.
     XClearWindow(display(), m_button);
+    drawButtonBevel(m_client->isActive());
     windowManager()->installCursor(WindowManager::RootCursor::Normal);
 
     if (tdiff > 5000L) return;  // dithered too long

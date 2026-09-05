@@ -1,0 +1,37 @@
+# window tree -- tigervnc -- :11 -- 2026-08-29T16:46:33Z
+# commit dba2f30
+
+
+xwininfo: Window id: 0x519 (the root window) (has no name)
+
+  Root window id: 0x519 (the root window) (has no name)
+  Parent window id: 0x0 (none)
+     10 children:
+     0x4000df (has no name): ()  1235x955+681+64  +681+64
+        3 children:
+        0x4000e1 (has no name): ()  8x8+4+4  +685+68
+        0x600010 "Scribus 1.5.8": ("scribus" "scribus")  1210x946+24+8  +705+72
+           2 children:
+           0x4000e2 (has no name): ()  14x14+1196+932  +1901+1004
+           0x600012 "Qt NET_WM User Time Window": ()  1x1+-1+-1  +704+71
+        0x4000e0 (has no name): ()  1234x132+0+0  +681+64
+     0x40001a (has no name): ()  60x31+929+457  +929+457
+     0x800003 (has no name): ()  1x1+-1+-1  +-1+-1
+     0x600008 "scribus": ()  1x1+0+0  +0+0
+     0x800001 "scribus": ("scribus" "Scribus")  10x10+10+10  +10+10
+     0x600004 "Qt Selection Owner for scribus": ()  3x3+0+0  +0+0
+     0x40001b (has no name): ()  110x67+951+400  +951+400
+     0x400020 (has no name): ()  325x109+0+0  +0+0
+        3 children:
+        0x200008 "VNC config": ("VNC config" "Vncconfig")  300x100+24+8  +24+8
+           5 children:
+           0x400023 (has no name): ()  14x14+286+86  +310+94
+           0x20000f (has no name): ()  225x19+13+60  +37+68
+           0x20000d (has no name): ()  177x19+3+41  +27+49
+           0x20000b (has no name): ()  183x19+13+22  +37+30
+           0x200009 (has no name): ()  201x19+3+3  +27+11
+        0x400022 (has no name): ()  8x8+4+4  +4+4
+        0x400021 (has no name): ()  324x95+0+0  +0+0
+     0x40001d (has no name): ()  1x1+0+0  +0+0
+     0x40001c "wm2-born-agai": ()  1x1+-1+-1  +-1+-1
+

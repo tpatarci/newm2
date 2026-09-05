@@ -1,7 +1,9 @@
 #pragma once
 
 #include "x11wrap.h"
+#include "Rules.h"
 #include <X11/Xutil.h>
+#include <X11/Xatom.h>
 #include <string>
 #include <memory>
 #include <vector>
@@ -62,6 +64,10 @@ public:
     const std::string& name() const { return m_name; }
     const std::string& iconName() const { return m_iconName; }
     const std::string& label() const { return m_label; }
+    // RULES-01 (plan 08-10): the two WM_CLASS fields, read once at manage time.
+    // Empty for a window that sets no class hint, which is entirely normal.
+    const std::string& resName() const { return m_resName; }
+    const std::string& resClass() const { return m_resClass; }
     int x() const { return m_x; }
     int y() const { return m_y; }
     int width() const { return m_w; }
@@ -94,6 +100,29 @@ public:
     void toggleMaximized();
     void applyWmState(int action, Atom prop1, Atom prop2);
     void updateNetWmState();
+
+    // Deferred item 8: arm the self-reparent guard before a reparent this
+    // window manager performs itself, so eventUnmap() does not mistake the
+    // server's implicit unmap for a client withdrawing its own window. Only
+    // arms when the window is actually mapped -- see the definition.
+    void markReparenting();
+
+    // FOCUS-01 (plan 08-08): the map-time half of focus-stealing prevention.
+    //
+    // shouldFocusOnMap() answers whether this newly mapped window may take the
+    // input focus, by comparing the timestamp the client published against the
+    // WM's last real user interaction. The activation-message path in
+    // src/Events.cpp arbitrates the same question through the same shared
+    // WindowManager::isUserTimeRecent() helper -- deliberately, because a
+    // mitigation implemented at only one of its two entry points is not a
+    // mitigation, it is a speed bump.
+    //
+    // demandAttention() is the visible half. A refused window is mapped and
+    // fully managed, just not focused, and it advertises that it wants the user
+    // via _NET_WM_STATE_DEMANDS_ATTENTION and the ICCCM urgency hint. Refusing
+    // silently would trade focus stealing for lost windows.
+    bool shouldFocusOnMap();
+    void demandAttention();
 
     // Client messages
     void sendMessage(Atom a, long data);
@@ -156,10 +185,37 @@ private:
     int m_preMaximizedX{0}, m_preMaximizedY{0};
     int m_preMaximizedW{0}, m_preMaximizedH{0};
 
+    // FOCUS-01: set when this window was refused focus, cleared once it gets
+    // the attention it asked for. Published through updateNetWmState() and
+    // nowhere else -- plan 08-10 extends that same publisher with the
+    // skip-taskbar/skip-pager states and must preserve this one.
+    bool m_demandsAttention{false};
+
+    // Clears the attention state and the ICCCM urgency hint together. Private
+    // because the only correct trigger is activation: the EWMH says the WM
+    // should unset the state once the window has had the attention it wanted.
+    void clearAttentionState();
+
     std::string m_name;
     std::string m_iconName;
     std::string m_label;
     static const char* const m_defaultLabel;
+
+    // RULES-01: WM_CLASS, read once when the window is taken under management.
+    // Client-supplied and untrusted (threat T-8-PROP), so the copy is bounded.
+    std::string m_resName;
+    std::string m_resClass;
+
+    // RULES-02 (plan 08-10): the resolved later-wins fold for THIS window, and
+    // the two flags derived from it that outlive manage().
+    //
+    // m_ruleNoDecorate is kept distinct from isDock() on purpose: both end up on
+    // the same unframed code path, but only a dock may recompute the workarea,
+    // and collapsing the two would let any no-decorate rule shrink every other
+    // window's usable screen.
+    RuleOutcome m_ruleOutcome;
+    bool m_ruleNoDecorate{false};
+    bool m_skipTaskbar{false};
 
     Colormap m_colormap;
     std::vector<Window> m_colormapWindows;
@@ -167,8 +223,20 @@ private:
 
     WindowManager *const m_windowManager;
 
-    // Property access
-    std::string getProperty(Atom atom);
+    // Property access.
+    //
+    // The type argument defaults to XA_STRING, which is what every caller but
+    // one wants and what this function requested unconditionally before plan
+    // 08.5-01. It has to be a parameter because _NET_WM_NAME is UTF8_STRING:
+    // asking for it as XA_STRING does not fail loudly, it returns EMPTY through
+    // a silent type mismatch -- which is how a title rule keyed on it would have
+    // become a config key that never fires.
+    std::string getProperty(Atom atom, Atom type = XA_STRING);
+
+    // The window's title, EWMH first (D-8.5-02). See the definition for why the
+    // order is not negotiable.
+    std::string getWindowTitle();
+
     bool getState(int *state);
     void setState(ClientState state);
     void setState(int state);
@@ -179,6 +247,16 @@ private:
     void getProtocols();
     void getTransient();
     void getWindowType();
+    void getClassHint();
+    void applyWindowRules();
+    void clampGeometryToScreen();
+
+    // Bound a frame origin so the sideways tab -- the only thing a pointer can
+    // grab -- stays on screen. Unlike clampGeometryToScreen() and
+    // ensureVisible(), which pull the whole window into view, this constrains
+    // ONLY the handle and lets the body hang off any edge.
+    void clampToKeepHandleOnScreen(int &x, int &y);
+
     void decorate(bool active);
 
     // Gesture detection

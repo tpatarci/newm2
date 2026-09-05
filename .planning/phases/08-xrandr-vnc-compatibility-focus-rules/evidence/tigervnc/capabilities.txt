@@ -1,0 +1,168 @@
+wm2-born-again display capability capture
+=========================================
+
+
+== provenance ==
+  label:        tigervnc
+  display:      :11
+  timestamp:    2026-08-29T16:46:33Z (UTC)
+  host:         tomislav-HP-Z440-Workstation
+  kernel:       Linux 6.8.0-124-generic
+  distro:       Ubuntu 22.04.5 LTS
+  commit:       dba2f30647ad950c7332711a5000219e0da74f4b
+  commit-short: dba2f30
+  branch:       main
+  tree-state:   DIRTY
+
+== tool versions ==
+  cmake         cmake version 3.22.1
+  c++           c++ (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+  pkg-config    0.29.2
+  xdpyinfo     /usr/bin/xdpyinfo
+  xprop        /usr/bin/xprop
+  xwininfo     /usr/bin/xwininfo
+  xrandr       /usr/bin/xrandr
+  fc-match      fontconfig version 2.13.1
+
+== X library versions (pkg-config) ==
+  x11          1.7.5
+  xext         1.3.4
+  xft          2.3.4
+  fontconfig   2.13.1
+  xrandr       1.5.2
+  xrender      0.9.10
+
+== extension matrix (XDIS-05) ==
+  EXTENSION SHAPE:  present
+  EXTENSION RANDR:  present
+  EXTENSION RENDER: present
+
+  What each absence costs this window manager:
+    SHAPE absent  -> rectangular frame fallback; no Shape requests are issued
+                     (src/Border.cpp combineShape funnel, plan 08-03)
+    RANDR absent  -> no resolution-change reflow; geometry is read once at startup
+                     (src/Manager.cpp, plan 08-05)
+    RENDER absent -> libXft falls back to core X11 glyphs; the sideways tab still
+                     renders rotated (proved in plan 08-06)
+
+== full extension list (24 advertised) ==
+  BIG-REQUESTS
+  Composite
+  DAMAGE
+  DOUBLE-BUFFER
+  GLX
+  Generic Event Extension
+  MIT-SCREEN-SAVER
+  MIT-SHM
+  Present
+  RANDR
+  RECORD
+  RENDER
+  SECURITY
+  SHAPE
+  SYNC
+  VNC-EXTENSION
+  X-Resource
+  XC-MISC
+  XFIXES
+  XINERAMA
+  XInputExtension
+  XKEYBOARD
+  XTEST
+  XVideo
+
+== geometry, resolution and root depth ==
+  name of display:    :11
+  version number:    11.0
+  vendor string:    The X.Org Foundation
+  vendor release number:    12101004
+  default screen number:    0
+  number of screens:    1
+  dimensions:    1920x946 pixels (508x250 millimeters)
+  resolution:    96x96 dots per inch
+  depth of root window:    24 planes
+
+  --- per-screen block ---
+  screen #0:
+    dimensions:    1920x946 pixels (508x250 millimeters)
+    resolution:    96x96 dots per inch
+    depths (7):    1, 4, 8, 16, 24, 32, 24
+    root window id:    0x519
+    depth of root window:    24 planes
+    number of colormaps:    minimum 1, maximum 1
+    default colormap:    0x20
+    default number of colormap cells:    256
+    preallocated pixels:    black 0, white 16777215
+    options:    backing-store WHEN MAPPED, save-unders NO
+    largest cursor:    1920x946
+    current input event mask:    0xda003c
+      ButtonPressMask          ButtonReleaseMask        EnterWindowMask          
+      LeaveWindowMask          StructureNotifyMask      SubstructureNotifyMask   
+      SubstructureRedirectMask PropertyChangeMask       ColormapChangeMask       
+    number of visuals:    390
+
+== RANDR state ==
+  --- xrandr --query ---
+  Screen 0: minimum 32 x 32, current 1920 x 946, maximum 32768 x 32768
+  VNC-0 connected 1920x946+0+0 0mm x 0mm
+     1920x946      60.00*+
+     1920x1200     60.00  
+     1920x1080     60.00  
+     1600x1200     60.00  
+     1680x1050     60.00  
+     1400x1050     60.00  
+     1360x768      60.00  
+     1280x1024     60.00  
+     1280x960      60.00  
+     1280x800      60.00  
+     1280x720      60.00  
+     1024x768      60.00  
+     800x600       60.00  
+     640x480       60.00  
+
+  --- xrandr --listmonitors ---
+  Monitors: 1
+   0: +VNC-0 1920/508x946/250+0+0  VNC-0
+
+== fontconfig resolution (the patterns the WM actually requests) ==
+  menu font (src/Manager.cpp:626):
+    'Noto Sans,DejaVu Sans,Sans:size=12'
+      -> Noto Sans,Noto Sans SemiCondensed :: /usr/share/fonts/truetype/noto/NotoSans-SemiCondensed.ttf
+  tab font, rotated (src/Border.cpp:184):
+    'Noto Sans,DejaVu Sans,Sans:bold:size=12'
+      -> Noto Sans,Noto Sans SemiCondensed :: /usr/share/fonts/truetype/noto/NotoSans-SemiCondensedBold.ttf
+  generic fallback rungs (src/Manager.cpp:628, src/Border.cpp:190):
+    'sans-serif:size=12'
+      -> DejaVu Sans :: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+    'sans-serif:bold:size=12'
+      -> DejaVu Sans :: /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
+
+== root EWMH properties (summary; full dump in root-properties.txt) ==
+  _NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x40001c
+  _NET_SUPPORTED(ATOM) = _NET_SUPPORTED, _NET_SUPPORTING_WM_CHECK, _NET_CLIENT_LIST, _NET_ACTIVE_WINDOW, _NET_WM_WINDOW_TYPE, _NET_WM_STATE, _NET_WM_NAME, _NET_WM_WINDOW_TYPE_DOCK, _NET_WM_WINDOW_TYPE_DIALOG, _NET_WM_WINDOW_TYPE_NOTIFICATION, _NET_WM_WINDOW_TYPE_NORMAL, _NET_WM_WINDOW_TYPE_UTILITY, _NET_WM_WINDOW_TYPE_SPLASH, _NET_WM_WINDOW_TYPE_TOOLBAR, _NET_WM_STATE_FULLSCREEN, _NET_WM_STATE_MAXIMIZED_VERT, _NET_WM_STATE_MAXIMIZED_HORZ, _NET_WM_STATE_HIDDEN, _NET_WM_STRUT, _NET_WM_STRUT_PARTIAL, _NET_NUMBER_OF_DESKTOPS, _NET_CURRENT_DESKTOP, _NET_WORKAREA, _NET_WM_USER_TIME, _NET_WM_USER_TIME_WINDOW, _NET_WM_STATE_DEMANDS_ATTENTION, _NET_WM_STATE_SKIP_TASKBAR, _NET_WM_STATE_SKIP_PAGER
+  _NET_NUMBER_OF_DESKTOPS(CARDINAL) = 1
+  _NET_CURRENT_DESKTOP(CARDINAL) = 0
+  _NET_WORKAREA(CARDINAL) = 0, 0, 1920, 946
+  _NET_CLIENT_LIST(WINDOW): window id # 0x200008, 0x40001b, 0x40001c, 0x40001a, 0x600004, 0x800001, 0x600008, 0x600010
+  _NET_ACTIVE_WINDOW(WINDOW): window id # 0x0
+
+== window tree (summary; full dump in window-tree.txt) ==
+  
+  xwininfo: Window id: 0x519 (the root window) (has no name)
+  
+    Root window id: 0x519 (the root window) (has no name)
+    Parent window id: 0x0 (none)
+       10 children:
+       0x4000df (has no name): ()  1235x955+681+64  +681+64
+       0x40001a (has no name): ()  60x31+929+457  +929+457
+       0x800003 (has no name): ()  1x1+-1+-1  +-1+-1
+       0x600008 "scribus": ()  1x1+0+0  +0+0
+       0x800001 "scribus": ("scribus" "Scribus")  10x10+10+10  +10+10
+       0x600004 "Qt Selection Owner for scribus": ()  3x3+0+0  +0+0
+       0x40001b (has no name): ()  110x67+951+400  +951+400
+       0x400020 (has no name): ()  325x109+0+0  +0+0
+       0x40001d (has no name): ()  1x1+0+0  +0+0
+       0x40001c "wm2-born-agai": ()  1x1+-1+-1  +-1+-1
+  
+
+== end of capture ==

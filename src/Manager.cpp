@@ -10,7 +10,11 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <X11/Xproto.h>
+#include <X11/extensions/Xrandr.h>
+#include <X11/extensions/Xrender.h>
 #include <algorithm>
+#include <cstdint>
+#include <map>
 #include "Cursors.h"
 
 // Static member definitions
@@ -47,6 +51,11 @@ Atom Atoms::net_numberOfDesktops = None;
 Atom Atoms::net_currentDesktop = None;
 Atom Atoms::net_workarea = None;
 Atom Atoms::utf8_string = None;
+Atom Atoms::net_wmUserTime = None;
+Atom Atoms::net_wmUserTimeWindow = None;
+Atom Atoms::net_wmStateDemandsAttention = None;
+Atom Atoms::net_wmStateSkipTaskbar = None;
+Atom Atoms::net_wmStateSkipPager = None;
 
 volatile std::sig_atomic_t WindowManager::m_signalled = 0;
 int  WindowManager::s_pipeWriteFd = -1;
@@ -56,19 +65,29 @@ bool ignoreBadWindowErrors = false;
 const char *const WindowManager::m_menuCreateLabel = "New";
 
 
-WindowManager::WindowManager(const Config& config)
+WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& apps)
     : m_config(config)
     , m_screenNumber(0)
     , m_root(None)
     , m_defaultColormap(None)
     , m_activeClient(nullptr)
+    , m_apps(apps)
     , m_shapeEvent(0)
+    , m_randrEventBase(-1)
+    , m_lastKnownScreenW(0)
+    , m_lastKnownScreenH(0)
     , m_currentTime(-1)
+    , m_timestampColdEntries(0)
+    , m_timestampBlockedWaits(0)
+    , m_timestampForeignMatches(0)
+    , m_timestampLongestWaitMs(0)
     , m_looping(false)
     , m_returnCode(0)
     , m_menuWindow(None)
     , m_menuFont(nullptr)
     , m_menuBorderPixel(0)
+    , m_submenuWindow(None)
+    , m_geometryWindow(None)
     , m_wmCheckWindow(None)
     , m_focusChanging(false)
     , m_focusCandidate(nullptr)
@@ -85,7 +104,19 @@ WindowManager::WindowManager(const Config& config)
                  "  Parts derived from 9wm Copyright (c) 1994-96 David Hogan\n"
                  "  Copying and redistribution encouraged.  No warranty.\n\n");
 
-    std::fprintf(stderr, "  Focus follows pointer.  Hidden clients only on menu.\n\n");
+    // FOCUS-02: the banner used to claim "Focus follows pointer" unconditionally.
+    // That was true of every build until this plan wired the booleans up, and is
+    // a lie the moment a user sets click-to-focus. The startup transcript is the
+    // per-target evidence artefact for XDIS-05, so it has to describe the policy
+    // this process is actually running, not the one the source once hardcoded.
+    std::fprintf(stderr, "  %s  %s  %s  Hidden clients only on menu.\n\n",
+                 m_config.clickToFocus ? "Click to focus." : "Focus follows pointer.",
+                 m_config.autoRaise    ? "Auto-raise on."   : "Auto-raise off.",
+                 m_config.raiseOnFocus ? "Raise on focus."  : "No raise on focus.");
+
+    // Group the merged AppEntry list into category buckets for menu rendering.
+    // Pure data grouping, no X11 dependency -- safe to run before the display opens.
+    buildAppCategories();
 
     // Open display via RAII
     m_display.reset(XOpenDisplay(nullptr));
@@ -153,15 +184,102 @@ WindowManager::WindowManager(const Config& config)
     Atoms::net_numberOfDesktops   = XInternAtom(display(), "_NET_NUMBER_OF_DESKTOPS", false);
     Atoms::net_currentDesktop     = XInternAtom(display(), "_NET_CURRENT_DESKTOP", false);
     Atoms::net_workarea           = XInternAtom(display(), "_NET_WORKAREA", false);
+
+    // FOCUS-01 (plan 08-08): focus-stealing prevention reads the first two and
+    // publishes the third on refusal; the last two are 08-10's skip states.
+    Atoms::net_wmUserTime         = XInternAtom(display(), "_NET_WM_USER_TIME", false);
+    Atoms::net_wmUserTimeWindow   = XInternAtom(display(), "_NET_WM_USER_TIME_WINDOW", false);
+    Atoms::net_wmStateDemandsAttention = XInternAtom(display(), "_NET_WM_STATE_DEMANDS_ATTENTION", false);
+    Atoms::net_wmStateSkipTaskbar = XInternAtom(display(), "_NET_WM_STATE_SKIP_TASKBAR", false);
+    Atoms::net_wmStateSkipPager   = XInternAtom(display(), "_NET_WM_STATE_SKIP_PAGER", false);
     Atoms::utf8_string            = XInternAtom(display(), "UTF8_STRING", false);
 
     // Check Shape extension -- warn but continue if missing (graceful fallback)
+    //
+    // D-12: the capability can additionally be forced unavailable from the
+    // environment. This is an INTERNAL TEST LEVER only: there is deliberately no
+    // user-facing CLI flag (a --no-shape option is deferred beyond this phase)
+    // and the variable is kept out of user documentation. It exists because the
+    // X server refuses to turn SHAPE off at run time -- it answers
+    // `Extension "SHAPE" can not be disabled` and lists the toggleable
+    // extensions, which do not include it -- so this is the only way to drive
+    // the rectangular fallback end-to-end against the real binary.
+    //
+    // Read exactly once, here, and never re-read: extension availability is
+    // fixed for the lifetime of an X connection. Forcing the sentinel at this
+    // one point rather than at each consumer makes every hasShapeExtension()
+    // caller correct at once.
     int dummy;
-    if (XShapeQueryExtension(display(), &m_shapeEvent, &dummy)) {
+    const char *forceNoShape = std::getenv("WM2_FORCE_NO_SHAPE");
+    if (forceNoShape != nullptr && std::strcmp(forceNoShape, "1") == 0) {
+        // Deliberately worded differently from the genuine-absence warning
+        // below, so a captured transcript proves the forced path was actually
+        // taken rather than the server merely happening to lack the extension.
+        std::fprintf(stderr, "wm2: warning: shape extension forced off, frames will be rectangular\n");
+        m_shapeEvent = -1;
+    } else if (XShapeQueryExtension(display(), &m_shapeEvent, &dummy)) {
         std::fprintf(stderr, "  Shape extension available.\n");
     } else {
         std::fprintf(stderr, "wm2: warning: no shape extension, frames will be rectangular\n");
         m_shapeEvent = -1;
+    }
+
+    // D-24/D-26: RANDR, queried in exactly the Shape block's style. libxrandr is
+    // a hard BUILD dependency (see CMakeLists.txt) but its runtime availability
+    // is optional: a server without it gets a warning and the root-ConfigureNotify
+    // fallback, never a hard stop. That split is XDIS-02.
+    //
+    // The env lever read below is the same kind of internal test lever as the
+    // Shape one -- read exactly once, never documented for users, no CLI flag.
+    // Unlike SHAPE, this server CAN be started with `-extension RANDR`, so the
+    // lever is not the only way to exercise the degraded path (the [wm_norandr]
+    // tests use a genuinely RANDR-less server). It exists so the fallback can
+    // also be forced on a server that does have the extension.
+    //
+    // Event selection is deliberately NOT done here: m_root is still None at
+    // this point -- initialiseScreen() below is what establishes it -- and a
+    // select-input against None would raise BadWindow, which errorHandler turns
+    // into exit(1) while m_initialising. The subscription therefore happens in
+    // initialiseScreen(), immediately after the root window exists, guarded by
+    // the predicate this block sets up.
+    //
+    // Token discipline: the acceptance gates for this file are line-counting
+    // greps, so the env-var name and the select-input call are each spelled
+    // exactly once in code and never repeated in prose.
+    int randrErrorBase = 0;
+    const char *forceNoRandr = std::getenv("WM2_FORCE_NO_RANDR");
+    if (forceNoRandr != nullptr && std::strcmp(forceNoRandr, "1") == 0) {
+        // Worded distinctly from the genuine-absence line below, so a captured
+        // transcript proves which path was taken (same rationale as Shape).
+        std::fprintf(stderr, "wm2: warning: xrandr extension forced off, "
+                             "screen geometry will track resolution changes via the root window only\n");
+        m_randrEventBase = -1;
+    } else if (XRRQueryExtension(display(), &m_randrEventBase, &randrErrorBase)) {
+        std::fprintf(stderr, "  Xrandr extension available.\n");
+    } else {
+        std::fprintf(stderr, "wm2: warning: no xrandr extension, "
+                             "screen geometry will track resolution changes via the root window only\n");
+        m_randrEventBase = -1;
+    }
+
+    // XDIS-04/XDIS-05: XRender, queried in the same style as the two blocks
+    // above but WITHOUT a sentinel, because unlike Shape and RANDR nothing in
+    // the WM branches on it. 08-06's spike measured why: with the extension
+    // absent, libXft renders the rotated tab face through its core X11 glyph
+    // path with identical metrics and no protocol error, so there is no
+    // behaviour to degrade -- the tab-font ladder in src/Border.cpp keys on
+    // whether a FONT could be produced, which is the thing that can actually
+    // fail. The probe is here because the capability is a fact the release
+    // evidence for XDIS-05 has to state per target, and because it is what
+    // lets a RENDER-less end-to-end run prove it really was RENDER-less rather
+    // than passing for the ordinary reason.
+    int renderEventBase = 0;
+    int renderErrorBase = 0;
+    if (XRenderQueryExtension(display(), &renderEventBase, &renderErrorBase)) {
+        std::fprintf(stderr, "  XRender extension available.\n");
+    } else {
+        std::fprintf(stderr, "wm2: warning: no xrender extension, "
+                             "tab labels will be drawn through the core X11 glyph path\n");
     }
 
     initialiseScreen();
@@ -184,6 +302,29 @@ WindowManager::~WindowManager()
 }
 
 
+void WindowManager::buildAppCategories()
+{
+    // std::map keys sort alphabetically, giving us the base ordering for free;
+    // "Custom" (D-07: manual/uncategorized entries) is special-cased to always
+    // be appended last, matching conventional WM root-menu UX.
+    std::map<std::string, std::vector<AppEntry>> buckets;
+    for (const AppEntry& entry : m_apps) {
+        buckets[entry.category].push_back(entry);
+    }
+
+    m_appCategories.clear();
+    for (auto& kv : buckets) {
+        if (kv.first == "Custom") continue;
+        m_appCategories.emplace_back(kv.first, std::move(kv.second));
+    }
+
+    auto customIt = buckets.find("Custom");
+    if (customIt != buckets.end()) {
+        m_appCategories.emplace_back(customIt->first, std::move(customIt->second));
+    }
+}
+
+
 void WindowManager::release()
 {
     if (m_returnCode != 0) return;
@@ -202,8 +343,13 @@ void WindowManager::release()
     XSetInputFocus(display(), PointerRoot, RevertToPointerRoot, timestamp(false));
     installColormap(None);
 
-    // Clean up Xft menu resources
+    // Clean up Xft menu resources. Every XftDraw goes before the window it is
+    // bound to is destroyed: XftDrawDestroy touches its drawable, and getting
+    // this order wrong is exactly the RenderBadPicture-on-every-close defect
+    // 08-11 found in Border::~Border.
     m_menuDraw.reset();
+    m_submenuDraw.reset();
+    m_geometryDraw.reset();
     // m_menuFgColor, m_menuBgColor, m_menuHlColor auto-freed by RAII
 
     if (m_menuFont) {
@@ -215,6 +361,18 @@ void WindowManager::release()
     if (m_menuWindow != None) {
         XDestroyWindow(display(), m_menuWindow);
         m_menuWindow = None;
+    }
+
+    // Destroy submenu window (Phase 7), same pattern as m_menuWindow
+    if (m_submenuWindow != None) {
+        XDestroyWindow(display(), m_submenuWindow);
+        m_submenuWindow = None;
+    }
+
+    // Destroy the geometry readout window (D-34), same pattern again.
+    if (m_geometryWindow != None) {
+        XDestroyWindow(display(), m_geometryWindow);
+        m_geometryWindow = None;
     }
 
     // Destroy EWMH WM check window
@@ -294,6 +452,101 @@ static Cursor makeCursor(Display *d, Window w,
 }
 
 
+// D-27: these two accessors are the single source of truth for screen geometry
+// in this codebase. Every menu placement, window clamp, fullscreen geometry and
+// workarea computation goes through them, and no other translation unit is
+// permitted to read Xlib's cached screen dimensions directly.
+//
+// The cache they return is seeded once from Xlib in initialiseScreen() below.
+// Plan 08-05 of this phase refreshes it from a live root-geometry query, driven
+// by either a RANDR screen-change notification or a root ConfigureNotify.
+// Direct reads elsewhere are forbidden precisely because Xlib's own cache does
+// not self-update: on a server without RANDR nothing can refresh it at all, so
+// a direct reader would keep returning the pre-resize size forever.
+//
+// This deliberately mirrors the Shape funnel (Border::combineShape()): one
+// place to consult, one owner of the state, one place a later plan has to
+// change to make every consumer correct at once.
+int WindowManager::screenWidth() const
+{
+    return m_lastKnownScreenW;
+}
+
+
+int WindowManager::screenHeight() const
+{
+    return m_lastKnownScreenH;
+}
+
+
+// XDIS-01 / D-25: everything the WM does about a resolution change happens here,
+// and it happens exactly once per distinct geometry.
+//
+// Both entry points in src/Events.cpp converge on this function -- the RANDR
+// screen-change notification and, on a server with no RANDR at all, the root
+// window's own ConfigureNotify. On a RANDR-capable server BOTH fire for the same
+// logical resize, which is not a bug to be routed around but the reason the
+// coalescing guard below is written the way it is.
+//
+// The geometry is re-read from the server and never taken from the event.
+// That is not defensive style, it is required. The probe transcript in
+// 08-RESEARCH.md shows this server delivering FOUR events for one `--fb`
+// resize, and the first two of them carry the PRE-resize dimensions:
+//
+//     [0] RRScreenChangeNotify ev=1280x1024   <- stale
+//     [1] root ConfigureNotify  ev=1280x1024  <- stale
+//     [2] RRScreenChangeNotify ev=1024x768    <- the real change
+//     [3] root ConfigureNotify  ev=1024x768   <- duplicate
+//
+// A handler that trusted event fields would reflow twice against the old size
+// before ever seeing the new one. Reading the root window's attributes costs one
+// round trip and is correct on every path, including the one where there is no
+// RANDR event to consult in the first place.
+//
+// Note that screenWidth()/screenHeight() are NOT re-read here to discover the
+// new size: since plan 08-04 they return this manager's own cache, so asking
+// them after a resize would return the value this function is about to replace.
+// They are the readers; this is the one writer.
+void WindowManager::handleScreenGeometryChange()
+{
+    XWindowAttributes attrs;
+    if (!XGetWindowAttributes(display(), m_root, &attrs)) {
+        std::fprintf(stderr, "wm2: warning: could not read root geometry after a "
+                             "screen change, keeping %dx%d\n",
+                     m_lastKnownScreenW, m_lastKnownScreenH);
+        return;
+    }
+
+    // The coalescing guard. Duplicate delivery, stale intermediates and a
+    // replayed resize at the same geometry all land here and all return
+    // without touching a single client. It is also the mitigation for threat
+    // T-8-GEO: a client that drives the desktop size in a loop cannot make the
+    // WM do more than one reflow pass per DISTINCT geometry.
+    if (attrs.width == m_lastKnownScreenW && attrs.height == m_lastKnownScreenH) {
+        return;
+    }
+
+    m_lastKnownScreenW = attrs.width;
+    m_lastKnownScreenH = attrs.height;
+
+    // D-25: move windows that the new screen has left hanging off an edge, and
+    // leave every other window exactly where the user put it. ensureVisible()
+    // is the existing primitive for this -- it moves, never resizes, and it
+    // declines to touch fullscreen or maximized clients.
+    //
+    // The hidden list is iterated too: a client unhidden after the resize would
+    // otherwise be restored to coordinates that no longer exist on this screen.
+    for (const auto& c : m_clients)       c->ensureVisible();
+    for (const auto& c : m_hiddenClients) c->ensureVisible();
+
+    // Republish _NET_WORKAREA against the new rectangle. This also re-clamps any
+    // dock strut that was sized for the old screen (threat T-8-STRUT): the
+    // clamp inside updateWorkarea() now runs against the refreshed geometry
+    // rather than a stale cache, so an oversized strut cannot outlive a shrink.
+    updateWorkarea();
+}
+
+
 void WindowManager::initialiseScreen()
 {
     int i = 0;
@@ -301,6 +554,13 @@ void WindowManager::initialiseScreen()
 
     m_root = RootWindow(display(), i);
     m_defaultColormap = DefaultColormap(display(), i);
+
+    // D-27: seed the manager-owned geometry cache immediately after the root
+    // window is established, and BEFORE setupEwmhProperties() -- called at the
+    // end of this function -- publishes the initial workarea from it. This is
+    // the only place in the codebase that reads Xlib's cached screen size.
+    m_lastKnownScreenW = DisplayWidth(display(), m_screenNumber);
+    m_lastKnownScreenH = DisplayHeight(display(), m_screenNumber);
 
     XColor black, white, temp;
 
@@ -335,27 +595,87 @@ void WindowManager::initialiseScreen()
 
     XSetWindowAttributes attr;
     attr.cursor = m_cursor.get();
+    // XDIS-02 / RESEARCH Pitfall 2: the last bit is the no-RANDR fallback's only
+    // event source. SubstructureNotifyMask delivers notifications about root's
+    // CHILDREN; a resolution change arrives as a ConfigureNotify on ROOT ITSELF,
+    // which requires the structure bit. Without it the fallback path in
+    // src/Events.cpp has literally nothing to hook and can never fire.
     attr.event_mask = SubstructureRedirectMask | SubstructureNotifyMask |
         ColormapChangeMask | ButtonPressMask | ButtonReleaseMask |
-        PropertyChangeMask;
+        PropertyChangeMask | StructureNotifyMask;
     XChangeWindowAttributes(display(), m_root, CWCursor | CWEventMask, &attr);
     XSync(display(), false);
 
+    // D-24: subscribe to RANDR screen-change notifications now that m_root
+    // exists. Deferred to here from the capability query in the constructor for
+    // exactly that reason -- see the comment beside that query.
+    if (hasRandrExtension()) {
+        XRRSelectInput(display(), m_root, RRScreenChangeNotifyMask);
+    }
+
     m_menuBorderPixel     = allocateColour(m_config.menuBorders.c_str(), "menu border");
 
-    m_menuWindow = XCreateSimpleWindow(display(), m_root, 0, 0, 1, 1, 1,
-                                       m_menuBorderPixel, 0);
+    // The WM's own popups are OVERRIDE-REDIRECT, and that flag is load-bearing
+    // rather than decorative.
+    //
+    // Without it these are ordinary top-level children of the root, so the WM's
+    // own CreateNotify/MapRequest handlers adopt them as clients: the menu, the
+    // submenu and the WM-check window were all appearing in _NET_CLIENT_LIST,
+    // observed live on an XRDP and a TigerVNC session. That is deferred item 7,
+    // and it is not merely untidy. Once a popup is a client, every client
+    // lifecycle path -- adopt, reparent, unmanage, destroy -- can act on the
+    // very window menu() is about to XMoveResizeWindow/XMapRaised, which is the
+    // BadWindow-then-no-menu failure recorded as deferred item 17. It also gave
+    // circulate() a non-empty client list with nothing in Normal state, which is
+    // how deferred item 6's 100% CPU spin was reachable on a freshly started WM.
+    //
+    // override_redirect is the X idiom that says "this window is not for a
+    // window manager to manage" -- including the window manager that made it.
+    // Setting it at creation, before the window is ever mapped, means no
+    // CreateNotify handler can adopt it in the first place.
+    // The flag MUST be set at creation, not patched on afterwards. CreateNotify
+    // carries the value the window had when it was created, and eventCreate()
+    // (src/Events.cpp) reads it off that event. XCreateSimpleWindow followed by
+    // XChangeWindowAttributes therefore adopts the window anyway: the event is
+    // already queued with override_redirect False by the time the change lands.
+    // That is why createPopupWindow() uses XCreateWindow with the flag in the
+    // creation valuemask -- measured, after the patch-afterwards version left
+    // all four windows still sitting in _NET_CLIENT_LIST.
+    const bool saveUnders = DoesSaveUnders(ScreenOfDisplay(display(), m_screenNumber));
 
-    if (DoesSaveUnders(ScreenOfDisplay(display(), m_screenNumber))) {
-        XSetWindowAttributes suAttr;
-        suAttr.save_under = true;
-        XChangeWindowAttributes(display(), m_menuWindow, CWSaveUnder, &suAttr);
-    }
+    auto createPopupWindow = [&]() -> Window {
+        XSetWindowAttributes attr;
+        attr.override_redirect = True;
+        attr.border_pixel      = m_menuBorderPixel;
+        attr.background_pixel  = 0;
+        unsigned long mask = CWOverrideRedirect | CWBorderPixel | CWBackPixel;
+        if (saveUnders) {
+            attr.save_under = True;
+            mask |= CWSaveUnder;
+        }
+        return XCreateWindow(display(), m_root, 0, 0, 1, 1, 1,
+                             CopyFromParent, InputOutput,
+                             CopyFromParent, mask, &attr);
+    };
+
+    m_menuWindow = createPopupWindow();
+
+    // Submenu popup window (Phase 7): app-category flyout, provisioned the same
+    // way as m_menuWindow. Reuses m_menuFont/m_menuFgColor/m_menuBgColor/m_menuHlColor.
+    m_submenuWindow = createPopupWindow();
+
+    // The drag geometry readout gets its OWN window (D-34). It used to borrow
+    // m_menuWindow, which meant one window served two unrelated purposes, each
+    // of which maps, resizes and draws into it: a menu opened after a drag
+    // inherited the indicator's size and contents until its first Expose, and
+    // the two features could not be reasoned about independently. Separate
+    // windows cost one XID and remove the whole class of interaction.
+    m_geometryWindow = createPopupWindow();
 
     // Load menu font via Xft with fontconfig fallback chain (D-02)
     // Font size 12 matches Lucida Bold 14pt visual footprint (D-03)
     x11::XftFontPtr menuFont = x11::make_xft_font_name(display(),
-        "Noto Sans,DejaVu Sans,Sans:size=12");
+        "Ubuntu,Noto Sans,DejaVu Sans,Sans:size=12");
     if (!menuFont) {
         menuFont = x11::make_xft_font_name(display(), "sans-serif:size=12");
     }
@@ -378,6 +698,9 @@ void WindowManager::initialiseScreen()
     // m_menuWindow background needs to match Xft background color pixel
     XSetWindowBackground(display(), m_menuWindow, m_menuBgColor->pixel);
 
+    // m_submenuWindow reuses the same background color as m_menuWindow
+    XSetWindowBackground(display(), m_submenuWindow, m_menuBgColor->pixel);
+
     // Set up EWMH root window properties (per EWMH spec)
     setupEwmhProperties();
 }
@@ -398,10 +721,72 @@ unsigned long WindowManager::allocateColour(const char *name, const char *desc)
 }
 
 
+unsigned long WindowManager::allocateShadeOf(const char *name, double fraction,
+                                             const char *desc)
+{
+    XColor nearest, ideal;
+
+    if (!XAllocNamedColor(display(), DefaultColormap(display(), m_screenNumber),
+                          name, &nearest, &ideal)) {
+        char error[100];
+        std::snprintf(error, sizeof error, "couldn't load %s colour", desc);
+        fatal(error);
+    }
+
+    // Blend from the IDEAL values, not the nearest ones. `nearest` is what the
+    // colormap could actually give us and may already have been rounded; on an
+    // 8-bit visual, deriving a shade from an already-rounded value compounds
+    // the error and can collapse the highlight into the body colour.
+    auto blend = [fraction](unsigned short c) -> unsigned short {
+        const double v = static_cast<double>(c);
+        const double out = (fraction >= 0.0)
+            ? v + (65535.0 - v) * fraction   // toward white
+            : v * (1.0 + fraction);          // toward black
+        if (out < 0.0) return 0;
+        if (out > 65535.0) return 65535;
+        return static_cast<unsigned short>(out);
+    };
+
+    XColor shade;
+    shade.red   = blend(ideal.red);
+    shade.green = blend(ideal.green);
+    shade.blue  = blend(ideal.blue);
+    shade.flags = DoRed | DoGreen | DoBlue;
+
+    // A failed allocation here is NOT fatal, unlike the named-colour path
+    // above. This is decoration: on a display whose colormap is full, the
+    // correct outcome is a frame without bevels, not a window manager that
+    // refuses to start. The caller treats 0 as "no bevel".
+    if (!XAllocColor(display(), DefaultColormap(display(), m_screenNumber),
+                     &shade)) {
+        std::fprintf(stderr, "wm2: warning: could not allocate the %s shade, "
+                             "frames will be drawn without bevels\n", desc);
+        return 0;
+    }
+
+    return shade.pixel;
+}
+
+
 void WindowManager::setupEwmhProperties()
 {
-    // Create WM check child window (per EWMH spec)
-    m_wmCheckWindow = XCreateSimpleWindow(display(), m_root, -1, -1, 1, 1, 0, 0, 0);
+    // Create WM check child window (per EWMH spec).
+    //
+    // Override-redirect for the same reason as the menu popups: this is the WM's
+    // own bookkeeping window, not a client, and without the flag the WM adopts it
+    // into m_clients and publishes it in _NET_CLIENT_LIST (deferred item 7,
+    // observed live on XRDP and TigerVNC). It is never mapped, but it is still a
+    // top-level child of the root and the CreateNotify path does not care.
+    // Set at creation, for the same reason as the popups above: CreateNotify
+    // carries the creation-time value, so patching the flag on afterwards is
+    // always too late to stop eventCreate() adopting the window.
+    {
+        XSetWindowAttributes checkAttr;
+        checkAttr.override_redirect = True;
+        m_wmCheckWindow = XCreateWindow(display(), m_root, -1, -1, 1, 1, 0,
+                                        CopyFromParent, InputOutput,
+                                        CopyFromParent, CWOverrideRedirect, &checkAttr);
+    }
 
     // Set _NET_SUPPORTING_WM_CHECK on root pointing to check window
     XChangeProperty(display(), m_root, Atoms::net_supportingWmCheck,
@@ -434,6 +819,15 @@ void WindowManager::setupEwmhProperties()
         Atoms::net_wmStrut, Atoms::net_wmStrutPartial,
         Atoms::net_numberOfDesktops, Atoms::net_currentDesktop,
         Atoms::net_workarea,
+        // FOCUS-01 (plan 08-08). Skipping this advertisement would be fatal to
+        // the feature rather than merely untidy: a compliant client checks
+        // _NET_SUPPORTED before setting _NET_WM_USER_TIME, so an unadvertised
+        // atom means the property is never written, the arbitration always sees
+        // "absent", and focus-stealing prevention silently degrades to the
+        // always-grant behaviour it exists to replace.
+        Atoms::net_wmUserTime, Atoms::net_wmUserTimeWindow,
+        Atoms::net_wmStateDemandsAttention,
+        Atoms::net_wmStateSkipTaskbar, Atoms::net_wmStateSkipPager,
     };
     XChangeProperty(display(), m_root, Atoms::net_supported,
                     XA_ATOM, 32, PropModeReplace,
@@ -452,8 +846,8 @@ void WindowManager::setupEwmhProperties()
 
     // Set _NET_WORKAREA to full screen geometry initially (docks not yet known)
     long workarea[4] = { 0, 0,
-        static_cast<long>(DisplayWidth(display(), m_screenNumber)),
-        static_cast<long>(DisplayHeight(display(), m_screenNumber)) };
+        static_cast<long>(screenWidth()),
+        static_cast<long>(screenHeight()) };
     XChangeProperty(display(), m_root, Atoms::net_workarea,
                     XA_CARDINAL, 32, PropModeReplace,
                     reinterpret_cast<unsigned char*>(workarea), 4);
@@ -492,6 +886,34 @@ void WindowManager::installCursorOnWindow(RootCursor c, Window w)
 }
 
 
+// FOCUS-01 (plan 08-08), threat T-8-WRAP. The one timestamp comparison both
+// arbitration entry points share -- Client::shouldFocusOnMap() for the map-time
+// path and the _NET_ACTIVE_WINDOW branch in src/Events.cpp for the activation
+// path. Neither may reimplement it, because getting it wrong in one place and
+// not the other is exactly how a security decision drifts apart.
+//
+// X server timestamps are 32-bit millisecond counters that wrap roughly every
+// 49.7 days. The naive `userTime >= m_lastUserInteraction` is wrong across a
+// wrap: after the counter rolls over, every fresh client timestamp compares as
+// smaller than the stored one and the WM refuses focus to EVERYTHING until the
+// user clicks something -- a total focus outage, once per wrap.
+//
+// The fix is the standard X idiom: subtract in unsigned 32-bit arithmetic, then
+// reinterpret the result as signed. The subtraction is exact modulo 2^32, so it
+// yields the true difference for any pair of timestamps less than ~24.85 days
+// apart, wrap or no wrap. Both operands are narrowed to uint32_t first because
+// Xlib's `Time` is an unsigned long -- 64-bit on this target -- and subtracting
+// at 64 bits would NOT wrap and would reintroduce the bug the cast exists to
+// avoid.
+bool WindowManager::isUserTimeRecent(Time userTime) const
+{
+    const std::uint32_t a = static_cast<std::uint32_t>(userTime);
+    const std::uint32_t b = static_cast<std::uint32_t>(m_lastUserInteraction);
+    const std::int32_t delta = static_cast<std::int32_t>(a - b);
+    return delta >= 0;
+}
+
+
 Time WindowManager::timestamp(bool reset)
 {
     if (reset) m_currentTime = CurrentTime;
@@ -501,7 +923,74 @@ Time WindowManager::timestamp(bool reset)
         XChangeProperty(display(), m_root, Atoms::wm2_running,
                         Atoms::wm2_running, 8, PropModeAppend,
                         reinterpret_cast<unsigned char*>(const_cast<char*>("")), 0);
-        XMaskEvent(display(), PropertyChangeMask, &event);
+
+        // 08.5-06 attribution instrumentation. BEHAVIOUR-PRESERVING, and
+        // deliberately so: no deadline, no predicate narrowing, no fallback.
+        // Those are the fix (08.5-07); installing any of them here would make
+        // the measurement this instrumentation exists to take unattributable.
+        //
+        // The check form is taken first only to make two cases separable. It
+        // removes a matching event that is already queued and returns without
+        // blocking when there is none -- semantically identical to what the
+        // blocking call below would have done with an already-queued event.
+        // The same idiom is already used at src/Events.cpp:539.
+        //
+        // SECURITY (threat T-8-TRACE-01): every line printed below is a fixed
+        // ASCII state word plus an integer. No window id, atom name, window
+        // title, host name or environment value. These transcripts are
+        // committed to a public repository.
+        ++m_timestampColdEntries;
+
+        if (XCheckMaskEvent(display(), PropertyChangeMask, &event) == False) {
+            ++m_timestampBlockedWaits;
+
+            if (m_timestampBlockedWaits == 1) {
+                // Written on the way IN, not on the way out. A window manager
+                // blocked in a mask wait burns no CPU and is indistinguishable
+                // from a healthy idle loop when observed from outside, so a
+                // wait that never returns has to leave its record before it
+                // starts rather than after it ends.
+                std::fprintf(stderr,
+                             "wm2: timestamp: entering blocking property wait\n");
+                std::fflush(stderr);
+            }
+
+            const auto waitStart = std::chrono::steady_clock::now();
+            XMaskEvent(display(), PropertyChangeMask, &event);
+            const long elapsedMs = static_cast<long>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - waitStart).count());
+
+            if (elapsedMs > m_timestampLongestWaitMs) {
+                m_timestampLongestWaitMs = elapsedMs;
+            }
+            if (elapsedMs > 100) {
+                // A warning, per the project's error-handling convention.
+                // Never fatal(): a slow wait is a diagnosis, not a reason to
+                // take the user's session down.
+                std::fprintf(stderr,
+                             "wm2: warning: timestamp: blocking property wait %ld ms\n",
+                             elapsedMs);
+                std::fflush(stderr);
+            }
+        }
+
+        // Classification, on both paths. PropertyChangeMask is selected on the
+        // root (initialiseScreen) AND on every managed client (Client.cpp),
+        // so the wait can be satisfied by a client's own PropertyNotify --
+        // which is then consumed here and never reaches eventProperty(). That
+        // the possibility exists is a fact about the event masks; whether it
+        // actually happens is what this counter answers.
+        if (event.xproperty.window != m_root ||
+            event.xproperty.atom != Atoms::wm2_running) {
+            ++m_timestampForeignMatches;
+            if (m_timestampForeignMatches == 1) {
+                std::fprintf(stderr,
+                             "wm2: warning: timestamp: property wait matched a foreign event\n");
+                std::fflush(stderr);
+            }
+        }
+
         m_currentTime = event.xproperty.time;
     }
 
@@ -519,7 +1008,15 @@ void WindowManager::scanInitialWindows()
 
     for (unsigned int i = 0; i < n; ++i) {
         XGetWindowAttributes(display(), wins[i], &attr);
-        if (attr.override_redirect || wins[i] == m_menuWindow) continue;
+        // The explicit `wins[i] == m_menuWindow` exclusion that used to sit here
+        // is gone: it was a partial workaround for the popups not being
+        // override-redirect, and it named only ONE of the four WM-owned windows
+        // -- the submenu, geometry and WM-check windows were adopted regardless,
+        // which is what put them in _NET_CLIENT_LIST. Now that all four are
+        // created override-redirect, this single check covers every one of them,
+        // and covers any popup added later without anyone remembering to extend
+        // a list.
+        if (attr.override_redirect) continue;
 
         (void)windowToClient(wins[i], true);
     }
@@ -595,9 +1092,39 @@ void WindowManager::updateActiveWindow(Window w)
 
 void WindowManager::updateWorkarea()
 {
-    int screenW = DisplayWidth(display(), m_screenNumber);
-    int screenH = DisplayHeight(display(), m_screenNumber);
+    int screenW = screenWidth();
+    int screenH = screenHeight();
     int left = 0, right = 0, top = 0, bottom = 0;
+
+    if (screenW < 0) screenW = 0;
+    if (screenH < 0) screenH = 0;
+
+    // T-8-STRUT (plan 08-12): clamp in the WIDE type, before the narrowing
+    // conversion, not after it.
+    //
+    // Stated precisely, because the imprecise version of this claim is
+    // tempting and wrong: Xlib SIGN-EXTENDS format-32 property data into `long`
+    // (_XRead32 reads it through an INT32*), so every strut value that reaches
+    // this function is already representable in an int and `static_cast<int>`
+    // on it is exact TODAY. Measured, not assumed -- a dock declaring
+    // 0xffffff00 arrives here as -256, not as 4294967040.
+    //
+    // The clamp is kept anyway, and not as ceremony. It puts the [0, limit]
+    // invariant at the point where the untrusted value ENTERS the arithmetic,
+    // rather than leaving the code correct only for as long as that Xlib detail
+    // holds -- and it makes the two guards below (which are load-bearing)
+    // readable as one policy instead of three scattered conversions. A future
+    // reader adding a 64-bit property, or a wider strut source, inherits the
+    // invariant instead of having to rediscover it.
+    //
+    // Recorded in the plan summary as an equivalent mutant rather than covered
+    // by a contrived test: no observation from outside the WM can distinguish
+    // it, and a test claiming otherwise would not test its own name.
+    auto clampStrut = [](long value, int limit) -> int {
+        if (value <= 0) return 0;
+        if (value >= static_cast<long>(limit)) return limit;
+        return static_cast<int>(value);
+    };
 
     // Iterate all clients (both normal and hidden) for dock struts
     auto checkStruts = [&](const auto& clients) {
@@ -609,34 +1136,37 @@ void WindowManager::updateWorkarea()
             unsigned long nItems, bytesAfter;
             unsigned char *data = nullptr;
 
-            // Try _NET_WM_STRUT_PARTIAL first (12 values)
-            bool found = false;
-            if (XGetWindowProperty(display(), client->window(),
-                    Atoms::net_wmStrutPartial, 0, 12, false, XA_CARDINAL,
-                    &actualType, &actualFormat, &nItems, &bytesAfter, &data) == Success
-                && data && nItems >= 4) {
-                long *struts = reinterpret_cast<long*>(data);
-                left   = std::max(left,   static_cast<int>(struts[0]));
-                right  = std::max(right,  static_cast<int>(struts[1]));
-                top    = std::max(top,    static_cast<int>(struts[2]));
-                bottom = std::max(bottom, static_cast<int>(struts[3]));
-                found = true;
-            }
-            if (data) { XFree(data); data = nullptr; }
-
-            // Fallback to _NET_WM_STRUT (4 values)
-            if (!found) {
-                if (XGetWindowProperty(display(), client->window(),
-                        Atoms::net_wmStrut, 0, 4, false, XA_CARDINAL,
-                        &actualType, &actualFormat, &nItems, &bytesAfter, &data) == Success
-                    && data && nItems >= 4) {
+            // T-8-PROP: the returned type, format and item count are all
+            // checked before the reinterpret_cast. A dock is a client, and a
+            // client may write _NET_WM_STRUT_PARTIAL with type CARDINAL and
+            // format 8 -- twelve BYTES, which the cast below would read as
+            // ninety-six.
+            auto accumulate = [&](Atom prop, long len) -> bool {
+                if (XGetWindowProperty(display(), client->window(), prop, 0, len,
+                        false, XA_CARDINAL, &actualType, &actualFormat,
+                        &nItems, &bytesAfter, &data) != Success) {
+                    data = nullptr;
+                    return false;
+                }
+                bool used = false;
+                if (data && actualType == XA_CARDINAL && actualFormat == 32 && nItems >= 4) {
                     long *struts = reinterpret_cast<long*>(data);
-                    left   = std::max(left,   static_cast<int>(struts[0]));
-                    right  = std::max(right,  static_cast<int>(struts[1]));
-                    top    = std::max(top,    static_cast<int>(struts[2]));
-                    bottom = std::max(bottom, static_cast<int>(struts[3]));
+                    left   = std::max(left,   clampStrut(struts[0], screenW));
+                    right  = std::max(right,  clampStrut(struts[1], screenW));
+                    top    = std::max(top,    clampStrut(struts[2], screenH));
+                    bottom = std::max(bottom, clampStrut(struts[3], screenH));
+                    used = true;
                 }
                 if (data) { XFree(data); data = nullptr; }
+                return used;
+            };
+
+            // _NET_WM_STRUT_PARTIAL (12 values) first, _NET_WM_STRUT (4) as the
+            // fallback -- and the fallback runs whenever the partial form was
+            // absent OR unusable, so a malformed partial strut does not shadow
+            // a well-formed simple one.
+            if (!accumulate(Atoms::net_wmStrutPartial, 12)) {
+                accumulate(Atoms::net_wmStrut, 4);
             }
         }
     };
@@ -644,11 +1174,28 @@ void WindowManager::updateWorkarea()
     checkStruts(m_clients);
     checkStruts(m_hiddenClients);
 
-    // Clamp strut values to screen dimensions (security: prevent absurd values)
-    left   = std::min(left,   screenW);
-    right  = std::min(right,  screenW);
-    top    = std::min(top,    screenH);
-    bottom = std::min(bottom, screenH);
+    // Cap the COMBINED struts, not just each one individually.
+    //
+    // Clamping each edge to the screen dimension leaves left == right ==
+    // screenW perfectly reachable, and the published width is then
+    // screenW - left - right == -screenW. MEASURED on the shipped binary from a
+    // single dock declaring 100000 on all four edges:
+    //
+    //     _NET_WORKAREA = (1024, 768, -1024, -768)
+    //
+    // An inverted workarea is not a cosmetic wrong number. Client::setMaximized
+    // reads it and hands the result to XConfigureWindow, whose width and height
+    // parameters are UNSIGNED -- the same arithmetic that bought a 64536-pixel
+    // window in plan 08-11, reachable here by any client that can map a dock.
+    //
+    // Ordering matters: `right` is capped against what is LEFT after `left`, so
+    // the two can never together exceed the screen and the published width and
+    // height are non-negative by construction rather than by a trailing floor
+    // that would hide which edge was unreasonable.
+    if (left  > screenW)         left   = screenW;
+    if (right > screenW - left)  right  = screenW - left;
+    if (top    > screenH)        top    = screenH;
+    if (bottom > screenH - top)  bottom = screenH - top;
 
     long workarea[4] = {
         static_cast<long>(left),
@@ -790,20 +1337,112 @@ void WindowManager::spawn()
             }
             std::fprintf(stderr, "wm2: exec %s failed", m_config.newWindowCommand.c_str());
             perror(" ");
-            std::exit(1);
+            // _exit(), not std::exit(): this is a forked copy of the WM, and
+            // running its atexit handlers and static destructors here would
+            // tear down state the real process still owns. Under ASan it also
+            // triggers a leak check in the child, which reports allocations
+            // that belong to the parent.
+            _exit(1);
         }
-        std::exit(0);
+        // Same reasoning as above -- the intermediate child must not run the
+        // forked copy's atexit handlers or static destructors.
+        _exit(0);
     }
 
+    // Reaps only the intermediate child, which exits immediately. The
+    // grandchild is orphaned to init on purpose, so it can never be a zombie.
     int status;
     wait(&status);
 }
 
 
-const char* WindowManager::menuLabel(int i)
+void WindowManager::spawnArgv(const std::vector<std::string>& argv)
 {
-    // Stub -- Buttons.cpp will use a different approach
-    return m_menuCreateLabel;
+    // Double-fork to avoid zombies (from 9wm), generalized from spawn() to take
+    // an arbitrary pre-tokenized argv instead of a single command string.
+    // Never routes through a shell -- always execvp() directly (T-7-06).
+    char *displayName = DisplayString(display());
+
+    if (fork() == 0) {
+        if (fork() == 0) {
+            close(ConnectionNumber(display()));
+
+            if (displayName && displayName[0] != '\0') {
+                setenv("DISPLAY", displayName, 1);
+            }
+
+            if (argv.empty()) {
+                // No-op guard: avoids execvp(nullptr, ...) undefined behavior.
+                // _exit(), not std::exit(): a forked copy must not run the
+                // atexit handlers or static destructors it inherited.
+                _exit(1);
+            }
+
+            std::vector<char*> argvPointers;
+            argvPointers.reserve(argv.size() + 1);
+            for (const std::string& arg : argv) {
+                argvPointers.push_back(const_cast<char*>(arg.c_str()));
+            }
+            argvPointers.push_back(nullptr);
+
+            execvp(argv[0].c_str(), argvPointers.data());
+
+            std::fprintf(stderr, "wm2: exec %s failed", argv[0].c_str());
+            perror(" ");
+            // _exit(): forked copy, see spawn().
+            _exit(1);
+        }
+        // _exit(): forked copy, see spawn().
+        _exit(0);
+    }
+
+    // Reaps only the intermediate child; the grandchild is orphaned to init.
+    int status;
+    wait(&status);
+}
+
+
+void WindowManager::launchApp(const AppEntry& entry)
+{
+    // T-7-06: Desktop- and BinaryScan-sourced entries can never reach the shell
+    // path below -- only Manual (config-authored) entries may opt into it, and
+    // only via the pre-existing execUsingShell config flag (Phase 5 precedent).
+    if (entry.source == AppEntry::Source::Manual && m_config.execUsingShell) {
+        std::string joined;
+        for (std::size_t i = 0; i < entry.execArgv.size(); ++i) {
+            if (i > 0) joined += ' ';
+            joined += entry.execArgv[i];
+        }
+
+        char *displayName = DisplayString(display());
+
+        if (fork() == 0) {
+            if (fork() == 0) {
+                close(ConnectionNumber(display()));
+
+                if (displayName && displayName[0] != '\0') {
+                    setenv("DISPLAY", displayName, 1);
+                }
+
+                execl("/bin/sh", "sh", "-c", joined.c_str(),
+                      static_cast<char*>(nullptr));
+
+                std::fprintf(stderr, "wm2: exec %s failed", joined.c_str());
+                perror(" ");
+                // _exit(): forked copy, see spawn().
+                _exit(1);
+            }
+            // _exit(): forked copy, see spawn().
+            _exit(0);
+        }
+
+        // Reaps only the intermediate child; the grandchild is orphaned to init.
+        int status;
+        wait(&status);
+        return;
+    }
+
+    spawnArgv(entry.execArgv);
 }
 
 
@@ -820,10 +1459,31 @@ void WindowManager::considerFocusChange(Client *c, Window w, Time ts)
     m_focusPointerMoved = false;
     m_focusPointerNowStill = false;
 
-    // Start the auto-raise deadline per D-03
-    m_autoRaiseDeadline = std::chrono::steady_clock::now() +
-        std::chrono::milliseconds(m_config.autoRaiseDelay);
-    m_autoRaiseDeadlineActive = true;
+    // Start the auto-raise deadline per D-03 -- but only when the user asked
+    // for auto-raise.
+    //
+    // FOCUS-02 / D-15: the auto-raise gate. Until this branch existed the
+    // boolean had no runtime consumer and the deadline was armed
+    // unconditionally. The gate belongs HERE, where the deadline is armed,
+    // rather than in checkDelaysForFocus()'s expiry branches: with nothing
+    // armed, computePollTimeout() already reports no active deadline and the
+    // event loop blocks indefinitely instead of waking every autoRaiseDelay
+    // milliseconds. That is both the behaviour the user asked for and the
+    // no-idle-CPU-spin item on the compiled-behaviour checklist. Gating the
+    // expiry instead would have left the loop waking on a timer whose only
+    // effect was to do nothing.
+    //
+    // Deliberately NOT touched: the timer arithmetic (this decides WHETHER the
+    // machinery runs, not how long it runs), and the pointer-stopped deadline
+    // below, which serves a different purpose and is armed by the first
+    // MotionNotify.
+    if (m_config.autoRaise) {
+        m_autoRaiseDeadline = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(m_config.autoRaiseDelay);
+        m_autoRaiseDeadlineActive = true;
+    } else {
+        m_autoRaiseDeadlineActive = false;
+    }
     // Pointer-stopped timer starts after first MotionNotify per D-04
     m_pointerStoppedDeadlineActive = false;
 

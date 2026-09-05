@@ -1,0 +1,48 @@
+Consolidate compiler generated dependencies of target wm2-born-again
+[  8%] Built target wm2-born-again
+Consolidate compiler generated dependencies of target Catch2
+[ 70%] Built target Catch2
+Consolidate compiler generated dependencies of target Catch2WithMain
+[ 71%] Built target Catch2WithMain
+Consolidate compiler generated dependencies of target test_raii
+Consolidate compiler generated dependencies of target test_smoke
+Consolidate compiler generated dependencies of target test_autoraise
+Consolidate compiler generated dependencies of target test_client
+Consolidate compiler generated dependencies of target test_eventloop
+Consolidate compiler generated dependencies of target test_xft_poc
+Consolidate compiler generated dependencies of target test_wm_process
+Consolidate compiler generated dependencies of target test_wm_focus
+Consolidate compiler generated dependencies of target test_wm_fallbacks
+Consolidate compiler generated dependencies of target test_ewmh
+Consolidate compiler generated dependencies of target test_wm_rules
+Consolidate compiler generated dependencies of target test_wm_geometry
+Consolidate compiler generated dependencies of target test_wm_lifecycle
+Consolidate compiler generated dependencies of target test_wm_state
+Consolidate compiler generated dependencies of target test_wm_resource
+Consolidate compiler generated dependencies of target test_wm_runtime
+Consolidate compiler generated dependencies of target test_config
+Consolidate compiler generated dependencies of target test_rules
+Consolidate compiler generated dependencies of target test_binaryscanner
+Consolidate compiler generated dependencies of target test_desktopentry
+[ 72%] Built target test_smoke
+[ 73%] Built target test_autoraise
+[ 74%] Built target test_raii
+[ 75%] Built target test_eventloop
+[ 76%] Built target test_client
+[ 77%] Built target test_xft_poc
+[ 78%] Built target test_ewmh
+[ 79%] Built target test_wm_rules
+[ 81%] Built target test_wm_state
+[ 80%] Built target test_wm_geometry
+[ 82%] Built target test_wm_fallbacks
+[ 84%] Built target test_wm_process
+[ 86%] Built target test_config
+[ 87%] Built target test_wm_focus
+[ 88%] Built target test_wm_lifecycle
+[ 91%] Built target test_rules
+[ 92%] Built target test_wm_resource
+[ 93%] Built target test_wm_runtime
+[ 95%] Built target test_desktopentry
+[ 97%] Built target test_binaryscanner
+Consolidate compiler generated dependencies of target test_appcache
+[100%] Built target test_appcache

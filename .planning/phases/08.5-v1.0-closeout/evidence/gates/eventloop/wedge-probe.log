@@ -1,0 +1,24 @@
+# Deterministic proof of the Events.cpp:195/201/205 ordering defect.
+# Captured 2026-08-31T21:35:55Z on Linux 6.8.0-124-generic, libX11 
+# Sources committed beside this file. Rebuild: gcc -o p wedge-probe.c -lX11
+
+=== wedge-probe.c (replays wm2 nextEvent lines 195/201/205) ===
+wm2 line 195  -> QLength=0  (0 means the branch is NOT taken)
+              -> fd readable=1
+wm2 line 201  -> XFlush() called
+wm2 line 205  -> QLength=1, fd readable=0
+
+*** WEDGE CONFIRMED ***
+XFlush() moved the event into Xlib's queue and drained the socket.
+wm2 does not re-test QLength after line 201, so poll() at line 205
+blocks indefinitely on an event the process is already holding.
+exit=1
+
+=== wedge-probe-both-shapes.c (old shape vs proposed fix) ===
+OLD (wm2 today):
+  line195 saw QLength=0, fell through to XFlush
+  line205 poll() -> TIMED OUT: would block forever with timeout=-1 (QLength is now 1)
+
+NEW (proposed fix):
+  XPending()=1 -> event delivered immediately (type=28)
+  poll() never reached; no wedge possible

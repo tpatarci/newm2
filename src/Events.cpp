@@ -1,5 +1,7 @@
 #include "Manager.h"
 #include "Client.h"
+#include "EventPump.h"
+#include <X11/extensions/Xrandr.h>
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
@@ -106,14 +108,53 @@ int WindowManager::loop()
             }
             break;
 
-        case FocusOut:
         case ConfigureNotify:
+            // XDIS-02: the no-RANDR fallback. Split out of the no-op group above
+            // for exactly one window -- root itself. A resolution change reaches
+            // a plain X client as root's own ConfigureNotify, which is why
+            // StructureNotifyMask was added to the root mask in
+            // initialiseScreen(); SubstructureNotifyMask covers root's children
+            // and would never deliver this.
+            //
+            // The RANDR cache-update call in the default arm below is
+            // deliberately NOT made here. A ConfigureNotify is not an
+            // XRRScreenChangeNotifyEvent, and on the server this branch exists
+            // for there is no RANDR extension to update anything in. The common
+            // handler re-reads the root geometry from the server, so this path
+            // needs nothing from Xlib's cache.
+            //
+            // (Spelled as prose rather than by name on purpose: this file's
+            // acceptance gate is a line-counting grep for that call, and it must
+            // count exactly one -- the real one.)
+            //
+            // Every other ConfigureNotify is discarded exactly as before.
+            if (ev.xconfigure.window == m_root) {
+                handleScreenGeometryChange();
+            }
+            break;
+
+        case FocusOut:
         case MapNotify:
         case MappingNotify:
             break;
 
         default:
-            if (ev.type == m_shapeEvent) {
+            // XDIS-01: the RANDR path. Guarded on the sentinel being
+            // non-negative FIRST, so a forced-off or absent extension can never
+            // match: with the sentinel at -1 the sum below is negative and no
+            // real event type is.
+            if (m_randrEventBase >= 0 &&
+                ev.type == m_randrEventBase + RRScreenChangeNotify) {
+                // Mandatory, and it must come first (RESEARCH Pitfall 1). Xlib
+                // caches the screen dimensions inside the Display struct and
+                // never updates them behind the client's back; this is the call
+                // that keeps that cache coherent for any remaining Xlib
+                // consumer. The WM's own geometry does not depend on it -- the
+                // handler asks the server directly -- but leaving Xlib's view
+                // stale would quietly break anything that ever reads it.
+                XRRUpdateConfiguration(&ev);
+                handleScreenGeometryChange();
+            } else if (ev.type == m_shapeEvent) {
                 std::fprintf(stderr, "wm2: shaped windows are not supported\n");
             } else {
                 std::fprintf(stderr, "wm2: unsupported event type %d\n", ev.type);
@@ -121,6 +162,20 @@ int WindowManager::loop()
             break;
         }
     }
+
+    // 08.5-06: the window manager's own report of the cold-cache property wait
+    // in timestamp(). This is the line that makes a REFUTATION checkable: a run
+    // that prints cold=0 is positive evidence that the cold-cache branch is not
+    // the mechanism, and the Negative-Result Contract requires that outcome to
+    // be as recordable as a confirmation. Spelled so that "never entered the
+    // branch" and "entered it and never had to block" are distinguishable.
+    //
+    // Fixed ASCII state words and integers only (threat T-8-TRACE-01).
+    std::fprintf(stderr,
+                 "wm2: timestamp: cold=%lu blocked=%lu foreign=%lu longestms=%ld\n",
+                 m_timestampColdEntries, m_timestampBlockedWaits,
+                 m_timestampForeignMatches, m_timestampLongestWaitMs);
+    std::fflush(stderr);
 
     release();
     return m_returnCode;
@@ -137,51 +192,102 @@ void WindowManager::nextEvent(XEvent *e)
 
     while (m_looping) {
 
-        // Check Xlib's internal queue first (Xlib may have buffered events)
-        if (QLength(display()) > 0) {
+        // The exit flag, observed independently of queue depth: a sustained
+        // event stream must not be able to starve shutdown.
+        if (m_signalled) {
+            shutdownOnSignal();
+            return;
+        }
+
+        // The pump: one operation that both tests and flushes. Delivery
+        // happens HERE and nowhere else -- the post-poll decision never
+        // answers "deliver", because descriptor readability does not imply an
+        // event is available.
+        if (eventPumpPending(display()) > 0) {
             XNextEvent(display(), e);
             return;
         }
 
-        // Flush pending X output before blocking
-        XFlush(display());
+        // Checked again: a signal can arrive while the flush is in progress.
+        if (m_signalled) {
+            shutdownOnSignal();
+            return;
+        }
 
+        // Nothing may go between the zero pump result above and the poll()
+        // below except this call, which reads local state only.
         int timeout = computePollTimeout();
 
-        int r = poll(fds, 2, timeout);
+        // Never trust the previous iteration's revents.
+        fds[0].revents = 0;
+        fds[1].revents = 0;
 
-        if (r < 0) {
-            if (errno == EINTR) continue;  // signal interrupted, re-check m_looping
-            std::perror("wm2: poll failed");
+        int r = poll(fds, 2, timeout);
+        int pollErrno = errno;
+
+        // The post-poll decision, likewise extracted. Everything it is
+        // allowed to look at is gathered here and nowhere else.
+        EventPumpPollResult state;
+        state.pollResult    = r;
+        state.pollErrno     = pollErrno;
+        state.xRevents      = fds[0].revents;
+        state.pipeRevents   = fds[1].revents;
+        state.exitFlagSet   = (m_signalled != 0);
+        state.focusChanging = m_focusChanging;
+
+        switch (eventPumpDecide(state)) {
+
+        case EventPumpAction::StopOnError:
+            if (r < 0) {
+                errno = pollErrno;
+                std::perror("wm2: poll failed");
+            } else {
+                // A failed descriptor. Reported rather than spun on: this
+                // branch did not exist before, so an errored descriptor
+                // matched nothing, fell through, and re-polled at full CPU.
+                std::fprintf(stderr,
+                             "wm2: event loop descriptor failed "
+                             "(x revents 0x%x, pipe revents 0x%x), exiting\n",
+                             (unsigned)fds[0].revents,
+                             (unsigned)fds[1].revents);
+            }
             m_looping = false;
             m_returnCode = 1;
             return;
-        }
 
-        // Signal pipe readable? (signal handler wrote a byte)
-        if (fds[1].revents & POLLIN) {
-            // Drain pipe (handler may have written multiple bytes)
-            char buf[32];
-            while (read(m_pipeRead.get(), buf, sizeof(buf)) > 0) { /* drain */ }
-            std::fprintf(stderr, "wm2: signal caught, exiting\n");
-            m_looping = false;
-            m_returnCode = 0;
+        case EventPumpAction::StopOnSignal:
+            shutdownOnSignal();
             return;
-        }
 
-        // Timer expired (r == 0 means timeout, no fd ready)
-        if (r == 0) {
-            if (m_focusChanging) {
-                checkDelaysForFocus();
-            }
-            continue;  // re-check X11 queue, then poll again
-        }
+        case EventPumpAction::ServiceFocusTick:
+            checkDelaysForFocus();
+            continue;  // re-pump, then poll again
 
-        // X11 fd readable
-        if (fds[0].revents & POLLIN) {
-            XNextEvent(display(), e);
-            return;
+        case EventPumpAction::DeliverEvent:
+        case EventPumpAction::Block:
+        case EventPumpAction::Retry:
+            continue;
         }
+    }
+}
+
+
+void WindowManager::shutdownOnSignal()
+{
+    // Drain pipe (handler may have written multiple bytes)
+    char buf[32];
+    while (read(m_pipeRead.get(), buf, sizeof(buf)) > 0) { /* drain */ }
+    std::fprintf(stderr, "wm2: signal caught, exiting\n");
+    m_looping = false;
+    m_returnCode = 0;
+}
+
+
+void WindowManager::wakeEventLoop()
+{
+    if (s_pipeWriteFd >= 0) {
+        char c = 'x';
+        (void)write(s_pipeWriteFd, &c, 1);
     }
 }
 
@@ -239,16 +345,76 @@ void WindowManager::eventDestroy(XDestroyWindowEvent *e)
     Client *c = windowToClient(e->window);
 
     if (c) {
+        // SCAN-02: Capture dock-ness BEFORE STEP 4 erases the owning unique_ptr.
+        // The post-erase workarea recomputation used to query the client through
+        // the raw pointer after ~Client() had already run -- a heap-use-after-free
+        // reachable by any client that simply destroys a managed window
+        // (COMPILED_CODE_BEHAVIOR_CHECKLIST.md "Current Scan Findings",
+        // src/Events.cpp:237-283; threat T-8-UAF). Branch on the local instead.
+        //
+        // Read through this alias, never through the raw `c` pointer, so the
+        // greppable regression guard holds: grepping this file for an isDock
+        // call made through `c` must return zero matches. Any reappearance of
+        // that spelling means a post-erase dereference has come back.
+        const Client &dying = *c;
+        const bool wasDock = dying.isDock();
+
         // STEP 1: Clear focus tracking BEFORE destroying the Client (Pitfall 1)
-        if (m_focusChanging && c == m_focusCandidate) {
-            stopConsideringFocus();
+        //
+        // The scrub is NOT conditional on m_focusChanging, and that is the fix
+        // for a second heap-use-after-free in this same path (threat T-8-UAF,
+        // found by the sanitizer gate while landing plan 08-11).
+        //
+        // m_focusChanging and m_focusCandidate are set together but cleared
+        // apart: stopConsideringFocus() clears the flag and LEAVES the candidate
+        // pointer where it was, and Client::focusIfAppropriate() calls it on the
+        // ordinary success path. So by the time a client is destroyed the flag is
+        // routinely false while the candidate still names that client -- and the
+        // old guard read the flag first, so it declined to clear the very pointer
+        // that was about to dangle. The next considerFocusChange() to find the
+        // flag true again dereferences it through
+        // stopConsideringFocus() -> Client::selectOnMotion() -> Client::root(),
+        // which is exactly the read AddressSanitizer reported.
+        //
+        // Clearing whenever the dying client IS the recorded candidate costs
+        // nothing and removes the whole class: a freed Client can never remain
+        // reachable through this pair. Same discipline as the skipInRevert()
+        // scrub below, for the same reason.
+        if (c == m_focusCandidate) {
+            if (m_focusChanging) stopConsideringFocus();
             m_focusCandidate = nullptr;
+            m_focusCandidateWindow = None;
         }
 
         // STEP 2: Clear active client if this is it
         if (m_activeClient == c) {
             setActiveClient(nullptr);
         }
+
+        // STEP 2b: Scrub the dying client out of every OTHER client's revert
+        // chain, before STEP 4 frees it (threat T-8-UAF).
+        //
+        // m_revert is a raw Client* recording where the focus should fall back
+        // to when its owner goes away, and WindowManager::clearFocus() walks
+        // that chain calling isNormal() on each link. Until this line, the sole
+        // caller of skipInRevert() was Client::activate() -- so a client that
+        // was DESTROYED rather than superseded stayed referenced as a revert
+        // target by everything that had reverted to it, and the next
+        // clearFocus() to walk the chain read freed memory.
+        //
+        // Found by the ASan gate while landing FOCUS-01, and pre-existing: the
+        // defect is in this removal path, not in the focus work. What changed is
+        // its reachability. Before map-time arbitration, m_revert was populated
+        // only when the user actually focused something, so revert chains were
+        // rare and mostly single-link; now every mapped window activates, chains
+        // form in ordinary use, and "map two windows, close the first, close the
+        // second" is enough to read through a dangling pointer.
+        //
+        // Passing c->revertTo() as the replacement keeps the chain intact rather
+        // than truncating it: whoever pointed at the dying client inherits its
+        // target. That target is live by induction -- it was either never
+        // destroyed, or was itself scrubbed here when it was.
+        skipInRevert(c, c->revertTo());
 
         // STEP 3: Remove from map first
         m_windowMap.erase(c->window());
@@ -278,8 +444,8 @@ void WindowManager::eventDestroy(XDestroyWindowEvent *e)
         // Update _NET_CLIENT_LIST after client removal
         updateClientList();
 
-        // EWMH: Recalculate workarea if dock was destroyed
-        if (c->isDock()) {
+        // EWMH: Recalculate workarea if dock was destroyed (SCAN-02: `c` is dangling here)
+        if (wasDock) {
             updateWorkarea();
         }
 
@@ -300,17 +466,92 @@ void WindowManager::eventClient(XClientMessageEvent *e)
         }
     }
 
-    // EWMH: _NET_ACTIVE_WINDOW (per D-10, always grant)
+    // EWMH: _NET_ACTIVE_WINDOW -- arbitrated by source indication.
+    //
+    // SUPERSEDES Phase 6 D-10 ("always grant"), by the recorded outcome of the
+    // decision checkpoint in plan 08-08; the amendment note lives on the D-10
+    // entry in .planning/phases/06-ewmh-compliance/06-CONTEXT.md. D-10 itself
+    // forecast this: it scoped always-grant to Phase 6 and said Phase 8 would
+    // add timestamp-based focus-stealing prevention.
+    //
+    // Why this branch has to exist at all: FOCUS-01 is enforced at map time in
+    // Client::shouldFocusOnMap(). If activation requests were still granted
+    // unconditionally, an application refused there could simply ask for the
+    // focus it had just been denied. A mitigation with an unguarded second
+    // entry point is not a mitigation.
+    //
+    // The source indication is the discriminator, and it is the one the EWMH
+    // provides for exactly this purpose:
+    //
+    //   2 (pager)       granted unconditionally. Taskbars and window switchers
+    //                   act on the user's direct instruction and know more
+    //                   about the user's intent than the WM does. Arbitrating
+    //                   them would break the desktop to no security benefit.
+    //   1 (application) arbitrated against the message timestamp, through the
+    //                   SAME isUserTimeRecent() helper the map-time path uses.
+    //                   Not a second comparison -- one arbiter, two callers,
+    //                   because a security rule that exists twice drifts.
+    //   0 (none given)  granted. A legacy client sends no source indication and
+    //                   refusing it would break it, which is D-19's reasoning
+    //                   applied to this entry point.
+    //
+    // The honest ceiling: a client that lies about its source is granted. So is
+    // one that forges a fresh timestamp, so arbitrating all sources would not
+    // raise the ceiling -- it would only break pagers. This stops ordinary
+    // background applications, not a deliberately hostile one.
     if (e->message_type == Atoms::net_activeWindow) {
-        if (c && c->isNormal()) {
-            c->activate();
+        // Validate before trusting any field. Format 32 is what makes the five
+        // long slots meaningful; a managed, normal target is what makes the
+        // request actionable; and the source must be one the EWMH defines,
+        // because treating "not 1" as "trusted" would hand focus to any client
+        // that sent a garbage source value.
+        if (!c || !c->isNormal() || e->format != 32) return;
+
+        const long source = e->data.l[0];
+        if (source != 0 && source != 1 && source != 2) return;
+
+        bool grant = true;
+        if (config().focusStealingPrevention && source == 1) {
+            const Time stamp = static_cast<Time>(e->data.l[1]);
+            // Zero is not a timestamp the WM can act on. At map time it carries
+            // the spec's explicit "do not focus me"; on a request to BE focused
+            // it is simply absent evidence, and the request is arbitrated as
+            // stale rather than granted on the strength of nothing.
+            grant = (stamp != 0) && isUserTimeRecent(stamp);
         }
+
+        if (grant) c->activate();
+        else       c->demandAttention();
         return;
     }
 
     // EWMH: _NET_WM_STATE (Pitfall 3: honor add/remove/toggle semantics)
     if (e->message_type == Atoms::net_wmState) {
-        if (c && e->format == 32) {
+        // The !isWithdrawn() guard is the fix for a tampering defect found by
+        // the [wm_state] misaddressed-message case in plan 08-12 (threat
+        // T-8-MSG), and it restores the symmetry the other two branches of this
+        // function already had: WM_CHANGE_STATE checks isNormal(), the
+        // activation branch checks isNormal(), and this one checked nothing.
+        //
+        // windowToClient() is NOT the same question as "is this window
+        // managed". The WM builds a Client for every non-override-redirect
+        // top-level window when it appears, so between CreateNotify and the
+        // MapRequest every window on the display has one: Withdrawn, no frame
+        // mapped, manage() never run, absent from _NET_CLIENT_LIST. Applying a
+        // state change to one of those reached straight past all of that.
+        //
+        // MEASURED against the shipped binary before this line existed: one
+        // message any client can send to root moved and resized ANOTHER
+        // application's unmapped window from (10,10 50x50) to (0,0 1024x768)
+        // and published _NET_WM_STATE_FULLSCREEN on it. The client that owns
+        // the window has no say and no notification.
+        //
+        // Deliberately isWithdrawn() and not isNormal(): a hidden (Iconic)
+        // client is genuinely managed, and a pager unmaximizing an iconified
+        // window is legitimate. Withdrawn is the ICCCM's own word for "the
+        // window manager is not managing this window", which is exactly the
+        // set that must be refused.
+        if (c && !c->isWithdrawn() && e->format == 32) {
             int action = static_cast<int>(e->data.l[0]);  // 0=remove, 1=add, 2=toggle
             Atom prop1 = static_cast<Atom>(e->data.l[1]);
             Atom prop2 = static_cast<Atom>(e->data.l[2]);

@@ -1,0 +1,83 @@
+# discriminator -- 08.5-13 Task 4
+# round base : e835737b2251ec2d7c145d74a153b5181da5f144
+# commit     : 00767bbfc5a64e8f3e1054a6261a0cba402c3dfd
+# host       : Linux 6.8.0-124-generic x86_64 / tomislav-HP-Z440-Workstation
+# started    : 2026-09-01T07:34:35Z
+#
+# The case takes TWO independent readings at the same instant:
+#   root   = XGetImage on DefaultRootWindow() at the menu rect
+#   direct = XGetImage on the menu window itself
+# Their agreement places each run in exactly one bucket of the
+# partition fixed in 08.5-13-PLAN.md before this was measured:
+#   disagree              -> readback path (test instrument)
+#   agree, wrong colour   -> production did not paint
+#   agree, right colour   -> sample ran early (completion predicate)
+#
+# command: ctest --test-dir build/debug -R '^Menu background colour reaches' -V --no-tests=error --timeout 180
+# ------------------------------------------------------------------
+run=1 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=1 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=2 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=2 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=3 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=3 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=4 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=4 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=5 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=5 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=6 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=6 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=7 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=7 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=8 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=8 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=9 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=9 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=10 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=10 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=11 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=11 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=12 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=12 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=13 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=13 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=14 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=14 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=15 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=15 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=16 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=16 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=17 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=17 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=18 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=18 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=19 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=19 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=20 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=20 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=21 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=21 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=22 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=22 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=23 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=23 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=24 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=24 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=25 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=25 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=26 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=26 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=27 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=27 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=28 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=28 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=29 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=29 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+run=30 colour=#C8CACC expected=0xc8cacc root=Painted direct=Painted rootDom=0xc8cacc directDom=0xc8cacc agree=yes result=PASS
+run=30 colour=#00cc00 expected=0x00cc00 root=Painted direct=Painted rootDom=0x00cc00 directDom=0x00cc00 agree=yes result=PASS
+# ------------------------------------------------------------------
+# finished : 2026-09-01T07:35:20Z
+# runs     : 30
+# passed   : 30
+# failed   : 0
+# per-run ctest output retained under /tmp/discriminator-raw during the round

@@ -1,0 +1,7 @@
+display: :120
+wm-pid: 4179266
+mode: control
+reason: calibration: forced capture against a healthy window manager
+threshold-ms: 500
+elapsed-ms: 20
+framed: yes

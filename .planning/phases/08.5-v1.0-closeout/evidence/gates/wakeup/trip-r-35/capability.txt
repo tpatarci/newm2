@@ -1,0 +1,9 @@
+wm-alive: PRESENT pid=508513
+wm-stderr: PRESENT bytes=44006
+xvfb-log: ABSENT log file empty or not present
+wchan: PRESENT do_poll.constprop.0
+backtrace: PRESENT frames=5
+poll-timeout: PRESENT -1
+socket-recvq: PRESENT sockets=1 recvq=0 max=0
+proc-state: S
+wake-arm: PRESENT arm=poke poke-issued=yes framed-after=yes ms=20

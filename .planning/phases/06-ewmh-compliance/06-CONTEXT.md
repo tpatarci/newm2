@@ -56,6 +56,17 @@ Requirements: EWMH-01 through EWMH-09.
 ### Activation Policy
 - **D-10:** Phase 6 always honors _NET_ACTIVE_WINDOW client messages — when an app requests activation, the WM grants it (sets focus, raises the window). Phase 8 adds focus stealing prevention with timestamp checks and user-interaction heuristics.
 
+  > **Amendment (Phase 8, plan 08-08 — superseded, append-only).** The always-grant rule above no longer describes the shipped behaviour. Phase 8 plan 08-08 implements FOCUS-01, and a map-time-only mitigation would have been bypassable by any application that simply asked for focus instead of relying on being focused when its window appeared. At that plan's decision checkpoint, option-a was selected: `_NET_ACTIVE_WINDOW` requests are now **arbitrated by source indication** rather than granted unconditionally.
+  >
+  > - source `2` (pager) — granted unconditionally; taskbars and window switchers act on the user's direct instruction.
+  > - source `1` (application) — arbitrated against the message timestamp via `WindowManager::isUserTimeRecent()`, the same helper the map-time path uses.
+  > - source `0` (no indication, legacy client) — granted, on the same reasoning D-19 applies to the map-time path.
+  > - a refusal sets `_NET_WM_STATE_DEMANDS_ATTENTION` and the ICCCM urgency hint rather than failing silently.
+  >
+  > The whole behaviour reverts to the original always-grant rule with `focus-stealing-prevention = false` (or `--no-focus-stealing-prevention`).
+  >
+  > This is a continuation of D-10's own trajectory rather than a reversal against its intent: the sentence above already scoped always-grant to Phase 6 and forecast that Phase 8 would add timestamp-based prevention. The original text is left intact so the history stays legible. Implementation: `WindowManager::eventClient()` in `src/Events.cpp`; tests: the activation group in `tests/test_wm_focus.cpp`; rationale: `.planning/phases/08-xrandr-vnc-compatibility-focus-rules/08-08-PLAN.md` and its SUMMARY.
+
 ### Root Window Properties
 - **D-11:** The following properties are set on the root window at startup and maintained throughout:
   - _NET_SUPPORTED: list of all EWMH atoms the WM supports

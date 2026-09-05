@@ -33,29 +33,45 @@ TEST_CASE("Config defaults match upstream Config.h", "[config]") {
     Config cfg;
 
     // Colors (tab) - 2 settings
-    REQUIRE(cfg.tabForeground == "black");
-    REQUIRE(cfg.tabBackground == "gray80");
+    REQUIRE(cfg.tabForeground == "#000000");
+    REQUIRE(cfg.tabBackground == "#C8CACC");
 
     // Colors (frame) - 3 settings
-    REQUIRE(cfg.frameBackground == "gray95");
-    REQUIRE(cfg.buttonBackground == "gray95");
-    REQUIRE(cfg.borders == "black");
+    REQUIRE(cfg.frameBackground == "#DCDEE0");
+    REQUIRE(cfg.buttonBackground == "#DCDEE0");
+    REQUIRE(cfg.borders == "#000000");
 
     // Colors (menu) - 4 settings
-    REQUIRE(cfg.menuForeground == "black");
-    REQUIRE(cfg.menuBackground == "gray80");
-    REQUIRE(cfg.menuHighlight == "gray60");
-    REQUIRE(cfg.menuBorders == "black");
+    REQUIRE(cfg.menuForeground == "#000000");
+    REQUIRE(cfg.menuBackground == "#C8CACC");
+    REQUIRE(cfg.menuHighlight == "#A8ACB0");
+    REQUIRE(cfg.menuBorders == "#000000");
 
-    // Focus policy - 3 settings
+    // Focus policy - 3 settings.
+    //
+    // D-17: raiseOnFocus and autoRaise assert TRUE deliberately. They read false
+    // until plan 08-07, but nothing in the runtime consulted them, so those
+    // assertions were pinning values the WM ignored -- it did pointer focus with
+    // auto-raise and fused raising into focusing regardless. The defaults were
+    // corrected to describe the shipped binary; these assertions follow, and are
+    // stated explicitly rather than loosened.
     REQUIRE(cfg.clickToFocus == false);
-    REQUIRE(cfg.raiseOnFocus == false);
-    REQUIRE(cfg.autoRaise == false);
+    REQUIRE(cfg.raiseOnFocus == true);
+    REQUIRE(cfg.autoRaise == true);
+
+    // FOCUS-01 (plan 08-08): focus-stealing prevention defaults ON. It is an
+    // access-control mitigation, so the safe value is the default one; the
+    // switch exists (D-19) for users whose legacy X clients set no
+    // _NET_WM_USER_TIME and who would rather have the old always-grant
+    // behaviour than a correctly-refused window.
+    REQUIRE(cfg.focusStealingPrevention == true);
 
     // Timing (milliseconds) - 3 settings
     REQUIRE(cfg.autoRaiseDelay == 400);
     REQUIRE(cfg.pointerStoppedDelay == 80);
-    REQUIRE(cfg.destroyWindowDelay == 1500);
+    // 400, not upstream's 1500. Changed in plan 08.5-02 after the operator sat
+    // with it in a real remote session; see the reasoning in include/Config.h.
+    REQUIRE(cfg.destroyWindowDelay == 400);
 
     // Frame - 1 setting
     REQUIRE(cfg.frameThickness == 7);
@@ -86,9 +102,9 @@ TEST_CASE("applyFile parses key=value and overrides defaults", "[config]") {
     REQUIRE(cfg.clickToFocus == true);
     REQUIRE(cfg.newWindowCommand == "alacritty");
 
-    // Unset keys retain defaults
-    REQUIRE(cfg.tabBackground == "gray80");
-    REQUIRE(cfg.autoRaise == false);
+    // Unset keys retain defaults (D-17: auto-raise defaults to true)
+    REQUIRE(cfg.tabBackground == "#C8CACC");
+    REQUIRE(cfg.autoRaise == true);
 
     removeTempFile(path);
 }
@@ -147,7 +163,7 @@ TEST_CASE("applyFile silently skips non-existent files", "[config]") {
     cfg.applyFile("/tmp/wm2-nonexistent-config-file-xyz123.cfg");
 
     // All defaults should remain
-    REQUIRE(cfg.tabForeground == "black");
+    REQUIRE(cfg.tabForeground == "#000000");
     REQUIRE(cfg.frameThickness == 7);
     REQUIRE(cfg.newWindowCommand == "xterm");
 }
@@ -283,7 +299,10 @@ TEST_CASE("Config load precedence: user config overrides system config", "[confi
     {
         std::ofstream out(userSubdir + "/config");
         out << "tab-foreground = user-color\n";
-        out << "auto-raise = true\n";
+        // Written FALSE against a true default (D-17), so this assertion keeps
+        // discriminating. `auto-raise = true` would now agree with the default
+        // and would pass whether the file was read or ignored.
+        out << "auto-raise = false\n";
     }
 
     setenv("XDG_CONFIG_DIRS", sysDir.c_str(), 1);
@@ -297,10 +316,10 @@ TEST_CASE("Config load precedence: user config overrides system config", "[confi
     REQUIRE(cfg.tabForeground == "user-color");
     // System config value preserved (not overridden by user)
     REQUIRE(cfg.frameThickness == 15);
-    // User config adds new setting
-    REQUIRE(cfg.autoRaise == true);
+    // User config adds new setting, overriding the built-in default
+    REQUIRE(cfg.autoRaise == false);
     // Defaults preserved where neither config sets
-    REQUIRE(cfg.tabBackground == "gray80");
+    REQUIRE(cfg.tabBackground == "#C8CACC");
 
     // Clean up
     std::system(("rm -rf " + sysDir).c_str());
@@ -333,11 +352,13 @@ TEST_CASE("Config load with no config files returns pure defaults", "[config]") 
     Config cfg = Config::load(1, argv);
 
     // All defaults
-    REQUIRE(cfg.tabForeground == "black");
+    REQUIRE(cfg.tabForeground == "#000000");
     REQUIRE(cfg.frameThickness == 7);
     REQUIRE(cfg.autoRaiseDelay == 400);
     REQUIRE(cfg.newWindowCommand == "xterm");
-    REQUIRE(cfg.autoRaise == false);
+    REQUIRE(cfg.autoRaise == true);          // D-17
+    REQUIRE(cfg.raiseOnFocus == true);       // D-17
+    REQUIRE(cfg.clickToFocus == false);
 
     // Restore
     if (origDirsStr.empty()) unsetenv("XDG_CONFIG_DIRS");
@@ -511,7 +532,7 @@ TEST_CASE("Values exceeding 256 chars are rejected", "[config]") {
     cfg.applyFile(path);
 
     // Long value should be rejected (default kept)
-    REQUIRE(cfg.tabForeground == "black");
+    REQUIRE(cfg.tabForeground == "#000000");
     // Normal value should parse
     REQUIRE(cfg.tabBackground == "blue");
 
@@ -599,6 +620,9 @@ TEST_CASE("CLI --frame-thickness sets integer value", "[config][cli]") {
 // Test 22: CLI --auto-raise sets autoRaise to true
 TEST_CASE("CLI --auto-raise enables boolean", "[config][cli]") {
     Config cfg;
+    // Forced off first: the built-in default is now TRUE (D-17), so without
+    // this the case would pass whether or not the flag did anything.
+    cfg.autoRaise = false;
     REQUIRE(cfg.autoRaise == false);
     char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--auto-raise"), nullptr };
     cfg.applyCliArgs(2, argv);
@@ -629,6 +653,171 @@ TEST_CASE("CLI --no-click-to-focus disables boolean", "[config][cli]") {
     char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--no-click-to-focus"), nullptr };
     cfg.applyCliArgs(2, argv);
     REQUIRE(cfg.clickToFocus == false);
+}
+
+// Test 25a: CLI --raise-on-focus sets raiseOnFocus to true
+//
+// FOCUS-02: raise-on-focus was the one focus boolean with no CLI coverage in
+// either direction. Both flags existed and dispatched correctly, but nothing
+// asserted it -- so the pair could have been broken (or removed) without a
+// single test noticing, on the boolean whose default this plan changes.
+TEST_CASE("CLI --raise-on-focus enables boolean", "[config][cli]") {
+    Config cfg;
+    // Forced off first: the built-in default is now TRUE (D-17).
+    cfg.raiseOnFocus = false;
+    REQUIRE(cfg.raiseOnFocus == false);
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--raise-on-focus"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.raiseOnFocus == true);
+}
+
+// Test 25b: CLI --no-raise-on-focus sets raiseOnFocus to false
+TEST_CASE("CLI --no-raise-on-focus disables boolean", "[config][cli]") {
+    Config cfg;
+    cfg.raiseOnFocus = true;
+    char* argv[] = { const_cast<char*>("wm2"), const_cast<char*>("--no-raise-on-focus"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.raiseOnFocus == false);
+}
+
+// Test 25c: the full precedence chain, all three focus booleans, both directions
+//
+// Default -> config file -> CLI, asserted end to end in one case per direction,
+// because that ordering is what the three gates added in this plan actually
+// consume. The pieces were covered separately; the chain was not.
+//
+// Direction 1: a CLI negation beats a config-file enable.
+TEST_CASE("A CLI negation overrides a config-file enable for every focus boolean",
+          "[config][cli]") {
+    std::string path = writeTempConfig(
+        "click-to-focus = true\n"
+        "raise-on-focus = true\n"
+        "auto-raise = true\n"
+    );
+
+    Config cfg;
+    cfg.applyFile(path);
+    REQUIRE(cfg.clickToFocus == true);
+    REQUIRE(cfg.raiseOnFocus == true);
+    REQUIRE(cfg.autoRaise == true);
+
+    char* argv[] = {
+        const_cast<char*>("wm2"),
+        const_cast<char*>("--no-click-to-focus"),
+        const_cast<char*>("--no-raise-on-focus"),
+        const_cast<char*>("--no-auto-raise"),
+        nullptr
+    };
+    cfg.applyCliArgs(4, argv);
+
+    REQUIRE(cfg.clickToFocus == false);
+    REQUIRE(cfg.raiseOnFocus == false);
+    REQUIRE(cfg.autoRaise == false);
+
+    removeTempFile(path);
+}
+
+// Direction 2: a CLI enable beats a config-file disable.
+TEST_CASE("A CLI enable overrides a config-file disable for every focus boolean",
+          "[config][cli]") {
+    std::string path = writeTempConfig(
+        "click-to-focus = false\n"
+        "raise-on-focus = false\n"
+        "auto-raise = false\n"
+    );
+
+    Config cfg;
+    cfg.applyFile(path);
+    // Non-vacuous for all three: two of these disagree with the built-in
+    // default (D-17), and the third agrees with it but is flipped below.
+    REQUIRE(cfg.clickToFocus == false);
+    REQUIRE(cfg.raiseOnFocus == false);
+    REQUIRE(cfg.autoRaise == false);
+
+    char* argv[] = {
+        const_cast<char*>("wm2"),
+        const_cast<char*>("--click-to-focus"),
+        const_cast<char*>("--raise-on-focus"),
+        const_cast<char*>("--auto-raise"),
+        nullptr
+    };
+    cfg.applyCliArgs(4, argv);
+
+    REQUIRE(cfg.clickToFocus == true);
+    REQUIRE(cfg.raiseOnFocus == true);
+    REQUIRE(cfg.autoRaise == true);
+
+    removeTempFile(path);
+}
+
+// ---------------------------------------------------------------------------
+// FOCUS-01 (plan 08-08): the focus-stealing-prevention off switch.
+//
+// All four precedence steps are asserted -- built-in default, config-file key,
+// CLI enable, CLI negation -- because this switch disables a security
+// mitigation. A user who believes they have turned it off and has not, or who
+// believes it is on and it is not, is worse off than one with no switch at all.
+// ---------------------------------------------------------------------------
+
+// Step 2: the config-file key, in both directions.
+TEST_CASE("Config key focus-stealing-prevention parses in both directions",
+          "[config]") {
+    Config cfg;
+    REQUIRE(cfg.focusStealingPrevention == true);   // step 1: the default
+
+    cfg.applyKeyValue("focus-stealing-prevention", "false");
+    REQUIRE(cfg.focusStealingPrevention == false);
+
+    cfg.applyKeyValue("focus-stealing-prevention", "true");
+    REQUIRE(cfg.focusStealingPrevention == true);
+
+    // The same 0/1 spelling the other booleans accept.
+    cfg.applyKeyValue("focus-stealing-prevention", "0");
+    REQUIRE(cfg.focusStealingPrevention == false);
+
+    cfg.applyKeyValue("focus-stealing-prevention", "1");
+    REQUIRE(cfg.focusStealingPrevention == true);
+}
+
+// Step 3/4: the CLI pair. The enable case forces the value OFF first, so it
+// cannot pass vacuously against a default that is already true.
+TEST_CASE("CLI --no-focus-stealing-prevention disables the mitigation",
+          "[config][cli]") {
+    Config cfg;
+    REQUIRE(cfg.focusStealingPrevention == true);
+    char* argv[] = { const_cast<char*>("wm2"),
+                     const_cast<char*>("--no-focus-stealing-prevention"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.focusStealingPrevention == false);
+}
+
+TEST_CASE("CLI --focus-stealing-prevention enables the mitigation",
+          "[config][cli]") {
+    Config cfg;
+    cfg.focusStealingPrevention = false;
+    REQUIRE(cfg.focusStealingPrevention == false);
+    char* argv[] = { const_cast<char*>("wm2"),
+                     const_cast<char*>("--focus-stealing-prevention"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.focusStealingPrevention == true);
+}
+
+// The whole chain, in the direction that actually matters for a mitigation:
+// a config file that turned it off, overridden back on from the command line.
+TEST_CASE("A CLI enable overrides a config-file disable of focus-stealing prevention",
+          "[config][cli]") {
+    std::string path = writeTempConfig("focus-stealing-prevention = false\n");
+
+    Config cfg;
+    cfg.applyFile(path);
+    REQUIRE(cfg.focusStealingPrevention == false);   // disagrees with the default
+
+    char* argv[] = { const_cast<char*>("wm2"),
+                     const_cast<char*>("--focus-stealing-prevention"), nullptr };
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.focusStealingPrevention == true);
+
+    removeTempFile(path);
 }
 
 // Test 26: Multiple CLI options on same command line all applied
@@ -733,7 +922,7 @@ TEST_CASE("CLI -- terminates option parsing", "[config][cli]") {
 
     REQUIRE(cfg.frameThickness == 5);
     // --tab-foreground=blue should NOT be parsed (after --)
-    REQUIRE(cfg.tabForeground == "black");  // default remains
+    REQUIRE(cfg.tabForeground == "#000000");  // default remains
 }
 
 // Test 30: CLI --new-window-command="alacritty" sets newWindowCommand
@@ -802,8 +991,72 @@ TEST_CASE("CLI no args leaves config unchanged", "[config][cli]") {
     char* argv[] = { const_cast<char*>("wm2"), nullptr };
     cfg.applyCliArgs(1, argv);
 
-    REQUIRE(cfg.tabForeground == "black");
+    REQUIRE(cfg.tabForeground == "#000000");
     REQUIRE(cfg.frameThickness == 7);
-    REQUIRE(cfg.autoRaise == false);
+    REQUIRE(cfg.autoRaise == true);          // D-17: unchanged means the default
     REQUIRE(cfg.newWindowCommand == "xterm");
+}
+
+// =============================================================================
+// Manual menu entry tests (APPS-04): menu-entry-name=/menu-entry-command=/
+// menu-entry-category= accumulator parsing
+// =============================================================================
+
+// Test 36: Full triple (name, command, category) produces one AppEntry
+TEST_CASE("menu-entry-name/command/category produce one manual AppEntry", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("menu-entry-name", "Firefox");
+    cfg.applyKeyValue("menu-entry-command", "firefox --private-window");
+    cfg.applyKeyValue("menu-entry-category", "Internet");
+
+    REQUIRE(cfg.manualMenuEntries.size() == 1);
+    REQUIRE(cfg.manualMenuEntries[0].name == "Firefox");
+    REQUIRE(cfg.manualMenuEntries[0].execArgv == (std::vector<std::string>{"firefox", "--private-window"}));
+    REQUIRE(cfg.manualMenuEntries[0].category == "Internet");
+    REQUIRE(cfg.manualMenuEntries[0].source == AppEntry::Source::Manual);
+}
+
+// Test 37: menu-entry-name alone defaults category to "Custom" (D-07)
+TEST_CASE("menu-entry-name alone defaults category to Custom", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("menu-entry-name", "App");
+
+    REQUIRE(cfg.manualMenuEntries.size() == 1);
+    REQUIRE(cfg.manualMenuEntries[0].name == "App");
+    REQUIRE(cfg.manualMenuEntries[0].category == "Custom");
+}
+
+// Test 38: menu-entry-command with no preceding menu-entry-name does not
+// crash and leaves manualMenuEntries empty
+TEST_CASE("menu-entry-command with no preceding menu-entry-name is a no-op", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("menu-entry-command", "x");
+
+    REQUIRE(cfg.manualMenuEntries.empty());
+}
+
+// Test 39: multiple menu-entry-name= blocks each accumulate independently
+TEST_CASE("multiple menu-entry-name blocks accumulate independently", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("menu-entry-name", "First");
+    cfg.applyKeyValue("menu-entry-command", "first-cmd");
+    cfg.applyKeyValue("menu-entry-name", "Second");
+    cfg.applyKeyValue("menu-entry-command", "second-cmd");
+    cfg.applyKeyValue("menu-entry-category", "Graphics");
+
+    REQUIRE(cfg.manualMenuEntries.size() == 2);
+    REQUIRE(cfg.manualMenuEntries[0].name == "First");
+    REQUIRE(cfg.manualMenuEntries[0].execArgv == std::vector<std::string>{"first-cmd"});
+    REQUIRE(cfg.manualMenuEntries[0].category == "Custom");
+    REQUIRE(cfg.manualMenuEntries[1].name == "Second");
+    REQUIRE(cfg.manualMenuEntries[1].execArgv == std::vector<std::string>{"second-cmd"});
+    REQUIRE(cfg.manualMenuEntries[1].category == "Graphics");
+}
+
+// Test 40: menu-entry-category with no preceding menu-entry-name is a no-op
+TEST_CASE("menu-entry-category with no preceding menu-entry-name is a no-op", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("menu-entry-category", "Graphics");
+
+    REQUIRE(cfg.manualMenuEntries.empty());
 }

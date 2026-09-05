@@ -1,0 +1,320 @@
+Internal ctest changing into directory: /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3dae5c755583b237/build/debug
+Test project /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a3dae5c755583b237/build/debug
+  Test   #1: DisplayPtr is move-only
+  Test   #2: UniquePixmap is move-only
+  Test   #3: UniqueColormap default constructor is None
+  Test   #4: DisplayDeleter handles null safely
+  Test   #5: UniquePixmap default constructor is None
+  Test   #6: UniqueCursor move transfers ownership
+  Test   #7: UniqueCursor release disassociates without freeing
+  Test   #8: FontStructDeleter handles null safely
+  Test   #9: UniqueFont is move-only
+  Test  #10: GCDeleter handles null GC safely
+  Test  #11: UniqueFont default constructor is None
+  Test  #12: GCDeleter handles null display + null GC safely
+  Test  #13: UniqueCursor is move-only
+  Test  #14: UniqueCursor default constructor is None
+  Test  #15: GCDeleter default state has null display
+  Test  #16: UniqueColormap is move-only
+  Test  #17: DisplayPtr manages display lifecycle
+  Test  #18: GCPtr manages GC lifecycle
+  Test  #19: UniqueCursor manages cursor lifecycle
+  Test  #20: UniquePixmap manages pixmap lifecycle
+  Test  #21: Can open Xvfb display
+  Test  #22: FontStructPtr manages font lifecycle
+  Test  #23: Xvfb display is available
+  Test  #24: FdGuard move assignment transfers ownership
+  Test  #25: FdGuard default constructed has fd -1
+  Test  #26: FdGuard closes fd on destruction
+  Test  #27: FdGuard move transfers ownership
+  Test  #28: Self-pipe can be created and used
+  Test  #29: Timeout computation clamps past deadlines to 0
+  Test  #30: Minimum of two deadlines returns earlier
+  Test  #31: Duration arithmetic produces positive ms for past deadlines
+  Test  #32: Duration arithmetic produces positive ms for future deadlines
+  Test  #33: steady_clock future 80ms deadline is after now
+  Test  #34: steady_clock future 400ms deadline is after now
+  Test  #35: WM_STATE property round-trip with ClientState values
+  Test  #36: Multiple windows managed simultaneously
+  Test  #37: Window move and resize operations
+  Test  #38: ClientState enum values match X11 constants
+  Test  #39: ServerGrab is not copyable
+  Test  #40: Window reparenting on Xvfb
+  Test  #41: Window creation and destruction on Xvfb
+  Test  #42: ClientState is a scoped enum
+  Test  #43: Colormap window property read and free
+  Test  #44: ServerGrab grabs and releases X server
+  Test  #45: ServerGrab handles null display safely
+  Test  #46: XftColor allocation and cleanup
+  Test  #47: Rotated font loads via FcMatrix
+  Test  #48: Xft text measurement with XftTextExtentsUtf8
+  Test  #49: Xft font loads by fontconfig pattern
+  Test  #50: Xft text renders inside shaped window
+  Test  #51: UTF-8 string rendering does not crash
+  Test  #52: EWMH _NET_WM_STRUT_PARTIAL preferred over _NET_WM_STRUT
+  Test  #53: EWMH atoms can be interned
+  Test  #54: _NET_CLIENT_LIST round-trip
+  Test  #55: _NET_SUPPORTED contains declared atoms
+  Test  #56: EWMH _NET_WM_STATE add/remove/toggle semantics
+  Test  #57: EWMH _NET_WORKAREA subtracts dock struts
+  Test  #58: _NET_NUMBER_OF_DESKTOPS is 1
+  Test  #59: EWMH fullscreen state round-trip
+  Test  #60: _NET_ACTIVE_WINDOW can be set to None
+  Test  #61: _NET_WM_NAME UTF8_STRING encoding
+  Test  #62: EWMH _NET_WM_STATE property format is Atom array
+  Test  #63: _NET_WORKAREA is 4-element CARDINAL
+  Test  #64: _NET_CURRENT_DESKTOP is 0
+  Test  #65: _NET_SUPPORTING_WM_CHECK self-reference
+  Test  #66: EWMH _NET_WM_STRUT clamped to screen dimensions
+  Test  #67: EWMH maximize state both axes
+  Test  #68: WmFixture starts the real WM and it publishes _NET_SUPPORTING_WM_CHECK
+  Test  #69: Destroying a dock window restores _NET_WORKAREA with no sanitizer report
+  Test  #70: SIGTERM shuts the WM down cleanly with exit status 0
+  Test  #71: A dock window with _NET_WM_STRUT_PARTIAL shrinks _NET_WORKAREA
+  Test  #72: Synthesised XTEST input on a client's tab activates that window
+  Test  #73: A root right-click with no eligible client leaves the WM responsive and idle
+  Test  #74: On a server without XRender the WM starts, manages a client and frames it
+  Test  #75: With Shape forced off SIGTERM still shuts the WM down cleanly
+  Test  #76: On a server without XRender SIGTERM still shuts the WM down cleanly
+  Test  #77: The forced no-Shape path announces itself distinctly in the transcript
+  Test  #78: Without the lever the server reports the same frame as shaped
+  Test  #79: With no tab font at all the WM still frames clients and exits cleanly
+  Test  #80: With Shape forced off the WM still manages and frames a client
+  Test  #81: A RENDER-less server is recorded in the transcript and costs no font rung
+  Test  #82: Without the disable the same WM records XRender as available
+  Test  #83: With the rotated tab font unavailable the WM degrades to horizontal labels
+  Test  #84: src/Border.cpp names the Xlib rectangle-combining call exactly once
+  Test  #85: Spike: a rotated Xft font loads, measures and draws with XRender disabled
+  Test  #86: With Shape forced off the server reports the frame as unshaped
+  Test  #87: The WM starts and warns on a server with no RANDR extension
+  Test  #88: A window larger than the screen is clamped to the origin, not to a negative coordinate
+  Test  #89: The WM manages windows normally on a server with no RANDR extension
+  Test  #90: A configure request naming the frame does not move the window
+  Test  #91: A client hanging off the right and bottom edges is moved fully on screen
+  Test  #92: With RANDR inert the root-ConfigureNotify fallback still reflows
+  Test  #93: With no docks _NET_WORKAREA is the full screen rectangle
+  Test  #94: On a RANDR-capable server the WM announces the extension as available
+  Test  #95: The WM exits cleanly on SIGTERM with no RANDR extension
+  Test  #96: A window dragged off the top-left keeps its tab on screen
+  Test  #97: A fullscreen client is sized to exactly the screen
+  Test  #98: A client mapped fully on screen is not moved
+  Test  #99: A resolution change updates _NET_WORKAREA to the new screen rectangle
+  Test #100: A window that still fits after a shrink is not moved
+  Test #101: A window left offscreen by a shrink is moved back into view, not resized
+  Test #102: Redelivered screen-change notifications carrying stale dimensions change nothing
+  Test #103: A fullscreen client is not repositioned by the resolution-change reflow
+  Test #104: A window mapped with a user-time of exactly zero is not focused
+  Test #105: With raise-on-focus on a focused window is also raised
+  Test #106: With click-to-focus the pointer alone does not focus a window but a click does
+  Test #107: An activation request from a pager is granted despite a stale timestamp
+  Test #108: Activating a refused window clears its demands-attention state
+  Test #109: A stale application activation request is refused and demands attention
+  Test #110: A window mapped with a user-time newer than the last interaction is focused
+  Test #111: A stale user-time on the user-time-window proxy is arbitrated
+  Test #112: A user-time of zero is refused even before any user interaction
+  Test #113: An activation request with no source indication is granted
+  Test #114: With raise-on-focus off a window is focused without changing stacking order
+  Test #115: A window mapped with a stale user-time is refused focus and demands attention
+  Test #116: A window mapped with no user-time property is focused
+  Test #117: With auto-raise off the WM burns no CPU while focus tracking is live
+  Test #118: With focus-stealing prevention off a stale window is focused anyway
+  Test #119: With auto-raise off pointer entry neither raises nor focuses the window
+  Test #120: With auto-raise on pointer entry raises the window above its neighbour
+  Test #121: With focus-stealing prevention off a stale activation request is granted
+  Test #122: With click-to-focus off the pointer alone focuses a window
+  Test #123: A fresh application activation request is granted
+  Test #124: Malformed activation requests are ignored without crashing the WM
+  Test #125: A position rule places a window and a size rule sizes it
+  Test #126: A window matching a skip-taskbar rule carries skip-taskbar and skip-pager
+  Test #127: Two matching rules fold later-wins per action, not first-match
+  Test #128: A rule matching on window type alone applies to every window of that type
+  Test #129: With no rules configured a titled window is placed where it asked
+  Test #130: A title rule and a class rule fold later-wins over one window
+  Test #131: A window matching a no-decorate rule is managed without a frame
+  Test #132: A title rule places a window whose title matches
+  Test #133: A window that matches no configured rule is untouched by the rules
+  Test #134: A title changed after mapping does not re-apply the rule
+  Test #135: With no rules configured a window is framed, placed and stated as before
+  Test #136: A position rule that would strand a window offscreen is clamped
+  Test #137: A title rule matches a window that advertises its title only through _NET_WM_NAME
+  Test #138: Destroying a hidden client removes it from the list without a sanitizer report
+  Test #139: Destroying one of three clients removes exactly that one, in order
+  Test #140: A base size plus an increment quantises to base + n*increment
+  Test #141: A client declaring no gravity is placed as NorthWest
+  Test #142: A minimum size cannot be dragged past, in either dimension
+  Test #143: The placement adjustment is its own inverse across map/unmap cycles
+  Test #144: Every handled window gravity places the client where that mode implies
+  Test #145: Unhiding a client moves it back to the visible list, clears the state and remaps
+  Test #146: An unhandled gravity value places the window without a negative coordinate
+  Test #147: An increment with no base size quantises against the minimum size
+  Test #148: Hiding a client moves it to the hidden list, marks it hidden and unmaps its frame
+  Test #149: A fixed-size client is not resized by a drag and shows no resize handle
+  Test #150: A zero, negative or absurd resize increment neither divides by zero nor produces a nonsensical size
+  Test #151: Destroying a mapped focused client leaves no stale list or active-window entry
+  Test #152: Destroying a client while it is the live focus candidate does not crash
+  Test #153: A maximum size cannot be dragged past, in either dimension
+  Test #154: A maximum smaller than the minimum resolves without a nonsensical dimension
+  Test #155: A window-type property of the wrong atom type is ignored
+  Test #156: A state message with the wrong format is ignored
+  Test #157: An oversized property array is read within a bound and does not hang
+  Test #158: Maximizing straight after leaving fullscreen uses workarea geometry
+  Test #159: A WM_CHANGE_STATE iconify message hides the client and adds hidden
+  Test #160: A property of the wrong FORMAT is rejected rather than misread
+  Test #161: A strut larger than the screen produces a clamped, valid workarea
+  Test #162: Single-axis maximize changes only that axis, and restores exactly
+  Test #163: Negative and out-of-range struts never invert or empty the workarea
+  Test #164: A state message adds and removes fullscreen
+  Test #165: A two-property toggle flips each property independently
+  Test #166: A dock mapped after a window is maximized leaves its restore geometry intact
+  Test #167: Fullscreen requested while hidden takes effect when the client is unhidden
+  Test #168: Maximize fills the workarea rather than the screen, and restores exactly
+  Test #169: Fullscreen covers the whole screen including the dock, and restores exactly
+  Test #170: The whole malformed-property battery against one window leaves the WM consistent
+  Test #171: A single state message naming two properties applies both
+  Test #172: A state message naming an unsupported state changes nothing
+  Test #173: An empty property array is handled as absent, not as a zero value
+  Test #174: A name containing invalid UTF-8 renders without crashing or corrupting
+  Test #175: A state message naming an unmanaged window is ignored and does not crash
+  Test #176: A state message toggles fullscreen in both directions
+  Test #177: Destroying a client while it is fullscreen leaves nothing behind
+  Test #178: Deleting a property after the window is managed is handled on the notification
+  Test #179: A UTF-8 title is not truncated at its first multi-byte character
+  Test #180: Highlighting a root-menu row does not erase its label, and neither does leaving it
+  Test #181: Every terminating path exits within a deadline rather than hanging
+  Test #182: exec-using-shell gates whether a command with arguments and metacharacters is evaluated by a shell
+  Test #183: Frame thickness changes the measured frame geometry in both directions
+  Test #184: The sideways tab grows with the window title and renders its label
+  Test #185: A title advertised only through _NET_WM_NAME reaches the sideways tab
+  Test #186: Highlighting a category submenu row does not erase its label either
+  Test #187: A setting given on the command line overrides the same setting in the config file
+  Test #188: A second window manager fails cleanly and leaves the incumbent working
+  Test #189: _NET_WM_NAME wins over WM_NAME when a client sets both
+  Test #190: With no font available at all the binary exits non-zero and names the menu font
+  Test #191: destroy-window-delay decides whether a tab-button press hides or deletes
+  Test #192: An unparseable colour setting exits non-zero and names the offending setting
+  Test #193: Tab foreground and background colours reach the rendered tab
+  Test #194: A WM_NAME-only client is unaffected by the EWMH title read
+  Test #195: A long title on a short window is shortened to fit its tab, still legibly
+  Test #196: new-window-command decides which program the menu's New entry starts
+  Test #197: The help flag prints usage and exits successfully
+  Test #198: Repeated create, map, unmap and destroy over 120 windows leaves the WM correct, bounded and free of zombies
+  Test #199: A stale sanitizer report on a reused display prefix is cleared, and only that prefix is cleared
+  Test #200: Moving from a submenu back to the outer menu re-highlights it and closes the submenu
+  Test #201: The active window's tab wears a bevel and an inactive one does not
+  Test #202: With no display available the binary exits non-zero and names the display
+  Test #203: The root menu still opens and tracks the pointer after a submenu episode
+  Test #204: The window button answers across the whole tab-top square while painting the same square as before
+  Test #205: An unrecognised flag exits non-zero and its advice names a flag that works
+  Test #206: Menu background colour reaches the menu opened by a real root click
+  Test #207: The window manager reports how often its timestamp path took a cold-cache property wait
+  Test #208: Idle CPU stays under one percent with auto-raise disabled
+  Test #209: Resident memory with twenty clients mapped stays inside the fixed, pre-committed budget
+  Test #210: Idle CPU with twenty clients mapped and no input stays under one percent of wall clock
+  Test #211: The post-readiness reparent is sampled to a stated budget in two modes
+  Test #212: The hang-time capture path yields an eight-channel bundle and one confirmed intervention from a healthy window manager
+  Test #213: menu-entry-command with no preceding menu-entry-name is a no-op
+  Test #214: CLI --frame-thickness sets integer value
+  Test #215: CLI integer values are clamped to valid ranges
+  Test #216: multiple menu-entry-name blocks accumulate independently
+  Test #217: Boolean config values accept multiple formats
+  Test #218: A CLI negation overrides a config-file enable for every focus boolean
+  Test #219: Config load with no config files returns pure defaults
+  Test #220: CLI --exec-using-shell enables boolean
+  Test #221: applyFile warns on lines without equals sign
+  Test #222: CLI --new-window-command sets string value
+  Test #223: CLI --raise-on-focus enables boolean
+  Test #224: CLI unknown option causes exit
+  Test #225: applyFile parses key=value and overrides defaults
+  Test #226: Values exceeding 256 chars are rejected
+  Test #227: CLI --no-auto-raise disables boolean
+  Test #228: xdgConfigHome ignores relative XDG_CONFIG_HOME
+  Test #229: CLI overrides config file values
+  Test #230: A CLI enable overrides a config-file disable for every focus boolean
+  Test #231: CLI --no-click-to-focus disables boolean
+  Test #232: CLI --no-raise-on-focus disables boolean
+  Test #233: CLI multiple options all applied
+  Test #234: CLI no args leaves config unchanged
+  Test #235: CLI --auto-raise-delay sets integer value
+  Test #236: A CLI enable overrides a config-file disable of focus-stealing prevention
+  Test #237: applyKeyValue handles all 18 settings
+  Test #238: xdgConfigHome returns XDG_CONFIG_HOME when set and absolute
+  Test #239: applyFile skips comments and blank lines
+  Test #240: Config defaults match upstream Config.h
+  Test #241: CLI --auto-raise enables boolean
+  Test #242: Integer values are clamped to valid ranges
+  Test #243: applyKeyValue handles non-numeric int values gracefully
+  Test #244: menu-entry-name/command/category produce one manual AppEntry
+  Test #245: Config load precedence: user config overrides system config
+  Test #246: xdgConfigDirs skips relative paths
+  Test #247: Lines exceeding 4096 chars are skipped
+  Test #248: menu-entry-category with no preceding menu-entry-name is a no-op
+  Test #249: CLI -- terminates option parsing
+  Test #250: Config key focus-stealing-prevention parses in both directions
+  Test #251: CLI --tab-foreground sets string value
+  Test #252: CLI --click-to-focus enables boolean
+  Test #253: applyFile silently skips non-existent files
+  Test #254: CLI --focus-stealing-prevention enables the mitigation
+  Test #255: menu-entry-name alone defaults category to Custom
+  Test #256: xdgConfigHome falls back to HOME/.config
+  Test #257: xdgConfigDirs parses colon-separated XDG_CONFIG_DIRS
+  Test #258: CLI --no-focus-stealing-prevention disables the mitigation
+  Test #259: CLI --no-exec-using-shell disables boolean
+  Test #260: xdgConfigDirs defaults to /etc/xdg
+  Test #261: An action with no preceding match line warns and produces no rule
+  Test #262: A malformed position or size warns and leaves that action unset
+  Test #263: A config file of only rule lines produces no unknown-key warnings
+  Test #264: Folding matching rules yields the last value set for each action
+  Test #265: A title criterion matches on the window title
+  Test #266: The class criterion is tested against both the instance and the class name
+  Test #267: Rules append across the system-then-user chain without merging groups
+  Test #268: Consecutive match and mode lines attach to the same rule
+  Test #269: A match line following an action line opens a second rule
+  Test #270: Substring is the default match mode
+  Test #271: A title criterion is AND-ed with a class criterion
+  Test #272: rule-match-instance matches the instance name only
+  Test #273: A title criterion honours exact and substring modes
+  Test #274: A class criterion and a name criterion are AND-ed
+  Test #275: rule-match-title parses and opens a rule group
+  Test #276: A rule with no criteria matches nothing
+  Test #277: Exact mode requires whole-string equality, substring mode accepts a partial match
+  Test #278: A rule value longer than the value-length limit is rejected
+  Test #279: rule-match-name is no longer a rule key
+  Test #280: An unrecognised window type warns and leaves the type criterion unset
+  Test #281: A title criterion against an untitled window does not match
+  Test #282: A class line, a name line and two action lines produce one rule
+  Test #283: A later rule setting an action false overrides an earlier true
+  Test #284: A rule with only a class criterion matches that class and nothing else
+  Test #285: A rule with only a title criterion is not treated as criterion-free
+  Test #286: parseFile excludes NotShowIn=wm2-born-again entries
+  Test #287: parseFile excludes entries with unresolvable TryExec
+  Test #288: parseFile handles a CRLF-terminated blank line without crashing
+  Test #289: xdgApplicationsDirs appends applications to each data dir and prepends user dir
+  Test #290: xdgDataDirs defaults to /usr/local/share and /usr/share
+  Test #291: parseExec treats a quoted argument as one literal token
+  Test #292: parseFile excludes Hidden=true entries
+  Test #293: xdgDataDirs parses colon-separated XDG_DATA_DIRS
+  Test #294: parseFile rejects unrecognized Exec field codes
+  Test #295: parseFile parses a well-formed entry
+  Test #296: scanAll does not throw when XDG data dirs are empty/missing
+  Test #297: parseFile excludes NoDisplay=true entries
+  Test #298: isGuiBinary classifies known GUI toolkit substrings
+  Test #299: scanUsrBin excludes names already present in existingNames
+  Test #300: readNeededLibraries succeeds on a real CLI ELF binary
+  Test #301: readNeededLibraries returns nullopt for a shebang script
+  Test #302: scanUsrBin produces only well-formed BinaryScan entries
+  Test #303: readNeededLibraries returns nullopt for bad ELF magic
+  Test #304: readNeededLibraries returns nullopt for a nonexistent path
+  Test #305: readNeededLibraries returns nullopt for an empty file
+  Test #306: AppCache read on nonexistent path returns empty CacheData
+  Test #307: AppCache write-then-read round-trips mixed-source entries
+  Test #308: mergeEntries preserves explicit non-Custom category on manual entry
+  Test #309: mergeEntries D-08 override replaces name-matching entry entirely
+  Test #310: mergeEntries D-07 default Custom category preserved for non-colliding manual entry
+  Test #311: AppCache read skips a malformed entry but keeps well-formed ones
+  Test #312: loadOrRescan performs a full rescan, persists, then fast-paths
+  Test #313: needsRescan returns true for epoch and false for far-future timestamp
+  Test #314: preflight
+  Test #315: start_xvfb
+  Test #316: stop_xvfb
+
+Total Tests: 316
