@@ -54,3 +54,12 @@ Three findings, all confirmed by reading and fixed in the follow-up commit:
 | P1 the `ButtonRelease` re-ran `pointerAt()` and scrolled once more, so an edge-row release launched the entry BELOW the one shown | `pointerAt(rx, ry, allowScroll)`: only `MotionNotify` may scroll; the release commits the displayed entry | by reading (the release path is one call) |
 | P2 `m_frameless` survived a withdraw/re-manage whose rule outcome changed | reset to `false` at the top of `manage()`, set on the frameless path only | by reading |
 | P2 the Off rule called `updateNetWmState()`, which rebuilds the whole property and erased client-set states the WM never imported | `stripNetWmStates(SKIP_TASKBAR, SKIP_PAGER)` removes exactly the two the rule overrides | the Off case now also sets `_NET_WM_STATE_DEMANDS_ATTENTION` before mapping and requires it to survive: `green2-skip-taskbar_off_keeps_unrelated_state.log` |
+
+## Second re-review (Codex, `--commit` on the re-review fix), 2026-09-05
+
+| Finding | Fix |
+| --- | --- |
+| P1 a focusable frameless client that withdrew kept deactivate()'s passive grab on its window; re-managed framed, nothing ever ungrabbed it and its clicks were swallowed | `withdraw()` ungrabs the client window when frameless; `manage()` ungrabs it again before clearing the flag |
+| P2 `stripNetWmStates()` read only the first 64 atoms | reads the whole property, re-fetching with a covering length while `bytesAfter` is non-zero |
+
+Both by reading; the four review cases and the no-decorate geometry case pass after.

@@ -99,7 +99,10 @@ void Client::manage(bool mapped)
 {
     // Recomputed on EVERY management cycle: a client that withdrew, changed
     // the class or type the no-decorate decision rested on, and remapped must
-    // not inherit the previous cycle's frameless flag (Codex re-review P2).
+    // not inherit the previous cycle's frameless flag (Codex re-review P2) --
+    // nor its passive button grab, which deactivate() put on the CLIENT window
+    // and which a framed cycle would never remove (Codex re-review 2, P1).
+    if (m_frameless) XUngrabButton(display(), AnyButton, AnyModifier, m_window);
     m_frameless = false;
 
     bool shouldHide, reshape;
@@ -762,11 +765,21 @@ void Client::stripNetWmStates(Atom a, Atom b)
 {
     Atom actualType = None; int actualFormat = 0;
     unsigned long nItems = 0, bytesAfter = 0; unsigned char* raw = nullptr;
-    if (XGetWindowProperty(display(), m_window, Atoms::net_wmState, 0L, 64L, false,
-                           XA_ATOM, &actualType, &actualFormat, &nItems, &bytesAfter,
-                           &raw) != Success || !raw) {
-        if (raw) XFree(raw);
-        return;
+    // Whole property, however long: a first read that leaves bytesAfter is
+    // repeated with a length that covers the remainder, so a skip atom past
+    // the first chunk is still found and nothing after it is dropped
+    // (Codex re-review 2, P2).
+    long length = 64L;
+    for (;;) {
+        if (XGetWindowProperty(display(), m_window, Atoms::net_wmState, 0L, length, false,
+                               XA_ATOM, &actualType, &actualFormat, &nItems, &bytesAfter,
+                               &raw) != Success || !raw) {
+            if (raw) XFree(raw);
+            return;
+        }
+        if (bytesAfter == 0) break;
+        XFree(raw); raw = nullptr;
+        length = static_cast<long>(nItems + bytesAfter / 4 + 8);
     }
     std::vector<Atom> kept;
     if (actualType == XA_ATOM && actualFormat == 32) {
@@ -1496,7 +1509,11 @@ void Client::unreparent()
 
 void Client::withdraw(bool changeState)
 {
-    if (!m_frameless) {
+    if (m_frameless) {
+        // The passive grab deactivate() left on the client window must not
+        // outlive this management cycle (Codex re-review 2, P1).
+        XUngrabButton(display(), AnyButton, AnyModifier, m_window);
+    } else {
         m_border->unmap();
 
         gravitate(true);
