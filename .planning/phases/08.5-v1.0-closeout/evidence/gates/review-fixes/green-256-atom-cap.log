@@ -1,0 +1,5 @@
+Filters: "An explicit skip-taskbar=false rule still strips at the 256-atom cap"
+Randomness seeded to: 1368082116
+===============================================================================
+All tests passed (11 assertions in 1 test case)
+

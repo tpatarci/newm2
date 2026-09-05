@@ -69,3 +69,17 @@ Both by reading; the four review cases and the no-decorate geometry case pass af
 One finding, confirmed: the whole-property read had no size or retry bound on a
 client-controlled property. Now one retry and a 256-atom cap; past either the
 property is left unchanged. The passive-grab cleanup was judged sound.
+
+## Fourth re-review (Codex), 2026-09-05
+
+One P2, confirmed by reading: the 256-atom cap was compared against
+`count + 8` (the retry slack), so a property holding 249..256 atoms, inside the
+documented cap, was left untouched and an explicit `rule-skip-taskbar=false`
+did nothing. The cap now applies to the count the property holds; the slack
+only widens the re-read length.
+
+Boundary case at exactly 256 atoms (skip-taskbar first, skip-pager last, 254
+unrelated atoms between, survivors checked for count and order):
+`red-256-atom-cap.log` (fails on the first `REQUIRE_FALSE` before the fix),
+`green-256-atom-cap.log` (11 assertions after). The original Off case still
+passes.
