@@ -1,0 +1,38 @@
+Filters: "A no-decorate window maximizes to the workarea exactly"
+Randomness seeded to: 1549499495
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_wm_rules is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+A no-decorate window maximizes to the workarea exactly
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_wm_rules.cpp:377
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_wm_rules.cpp:416: FAILED:
+  REQUIRE( r.w == wa.w )
+with expansion:
+  1023 (0x3ff) == 1024 (0x400)
+with messages:
+  wm stderr:
+  
+wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: X_UnmapWindow (0x600026): BadWindow (invalid Window parameter)
+  workarea (0,0 1024x768) client (0,0 1023x767)
+
+===============================================================================
+test cases:  1 |  0 passed | 1 failed
+assertions: 11 | 10 passed | 1 failed
+

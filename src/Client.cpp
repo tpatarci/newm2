@@ -711,8 +711,12 @@ void Client::setMaximized(bool vert, bool horz)
             // window in plan 08-11.
             int maxX = wx + xi;
             int maxY = wy + yi;
-            int maxW = ww - xi - 1;
-            int maxH = wh - yi - 1;
+            // The trailing pixel is the decorated frame's outer border; a
+            // frameless client has none and fills the workarea exactly
+            // (Codex branch review, 2026-09-05).
+            const int edge = m_frameless ? 0 : 1;
+            int maxW = ww - xi - edge;
+            int maxH = wh - yi - edge;
             if (maxW < 1) maxW = 1;
             if (maxH < 1) maxH = 1;
 
@@ -2400,14 +2404,16 @@ void Client::detectFullscreenGesture(XButtonEvent *e)
     std::vector<Point> points;
     points.push_back({e->x_root, e->y_root});
 
-    XEvent event;
+    XEvent event{};
     bool done = false;
+    bool interrupted = false;
 
     while (!done) {
         // Ledger 8: interruptible. An interrupted gesture is no gesture.
         if (windowManager()->modalWait(ButtonPressMask | ButtonReleaseMask |
                                        ButtonMotionMask, &event, -1)
             != WindowManager::ModalWait::Event) {
+            interrupted = true;
             break;
         }
 
@@ -2428,6 +2434,15 @@ void Client::detectFullscreenGesture(XButtonEvent *e)
             done = true;
             break;
         }
+    }
+
+    if (interrupted) {
+        // No event was delivered, so `event` carries nothing readable. Release
+        // the grab with the press's own timestamp -- the one defined time this
+        // path has -- and evaluate no gesture (Codex branch review, 2026-09-05:
+        // the previous code read event.xbutton.time and event.type here).
+        XUngrabPointer(display(), e->time);
+        return;
     }
 
     // For releaseGrab, we need a XButtonEvent pointer

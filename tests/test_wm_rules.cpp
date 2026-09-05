@@ -332,6 +332,94 @@ TEST_CASE("A window matching a no-decorate rule is managed without a frame", "[w
 
 namespace {
 
+// Root _NET_WORKAREA, first desktop, as a Rect.
+bool readWorkarea(Display* d, Rect& out)
+{
+    const Atom prop = XInternAtom(d, "_NET_WORKAREA", False);
+    Atom actualType = None; int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0; unsigned char* raw = nullptr;
+    if (XGetWindowProperty(d, DefaultRootWindow(d), prop, 0, 4, False, XA_CARDINAL,
+                           &actualType, &actualFormat, &nItems, &bytesAfter,
+                           &raw) != Success || !raw) return false;
+    bool ok = false;
+    if (actualType == XA_CARDINAL && actualFormat == 32 && nItems >= 4) {
+        const long* v = reinterpret_cast<const long*>(raw);
+        out.x = static_cast<int>(v[0]); out.y = static_cast<int>(v[1]);
+        out.w = static_cast<int>(v[2]); out.h = static_cast<int>(v[3]);
+        ok = true;
+    }
+    XFree(raw);
+    return ok;
+}
+
+// EWMH _NET_WM_STATE client message to root: action 1 = add.
+void requestStates(Display* d, Window w, const char* a, const char* b)
+{
+    XEvent ev{};
+    ev.xclient.type         = ClientMessage;
+    ev.xclient.window       = w;
+    ev.xclient.message_type = XInternAtom(d, "_NET_WM_STATE", False);
+    ev.xclient.format       = 32;
+    ev.xclient.data.l[0]    = 1;
+    ev.xclient.data.l[1]    = static_cast<long>(XInternAtom(d, a, False));
+    ev.xclient.data.l[2]    = static_cast<long>(XInternAtom(d, b, False));
+    ev.xclient.data.l[3]    = 1;  // source: application
+    XSendEvent(d, DefaultRootWindow(d), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &ev);
+    XSync(d, False);
+}
+
+} // namespace
+
+// Codex branch review, 2026-09-05: maximize deducted the decorated frame's
+// one-pixel outer border for a frameless client too, so a no-decorate window
+// maximized one pixel short of the workarea on each axis.
+TEST_CASE("A no-decorate window maximizes to the workarea exactly", "[wm_rules]")
+{
+    WmFixture fx(rulesFixture(
+        "rule-match-class=WmRulesNoDecorateMax\n"
+        "rule-no-decorate=true\n"));
+
+    auto conn = fx.openDisplay();
+    REQUIRE(conn != nullptr);
+    Display* d = conn.get();
+    const Window root = DefaultRootWindow(d);
+
+    Window win = createClient(d, 100, 100, 260, 200, "wmrulesnodecoratemax", "WmRulesNoDecorateMax");
+    REQUIRE(mapAndAwait(d, win));
+    REQUIRE(parentOf(d, win) == root);
+
+    Rect wa{};
+    REQUIRE(readWorkarea(d, wa));
+    REQUIRE(wa.w > 0);
+    REQUIRE(wa.h > 0);
+
+    requestStates(d, win, "_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ");
+
+    // Await the exact workarea rectangle; a one-pixel shortfall never matches
+    // and the loop runs out, which is the RED this case was written to show.
+    Rect r{};
+    bool exact = false;
+    for (int i = 0; i < 400 && !exact; ++i) {
+        XSync(d, False);
+        if (serverRect(d, win, r) && r.x == wa.x && r.y == wa.y && r.w == wa.w && r.h == wa.h)
+            exact = true;
+        else
+            usleep(20000);
+    }
+    INFO("wm stderr:\n" << fx.wmStderr());
+    INFO("workarea " << describe(wa) << " client " << describe(r));
+    REQUIRE(hasState(d, win, "_NET_WM_STATE_MAXIMIZED_VERT"));
+    REQUIRE(hasState(d, win, "_NET_WM_STATE_MAXIMIZED_HORZ"));
+    CHECK(r.x == wa.x);
+    CHECK(r.y == wa.y);
+    REQUIRE(r.w == wa.w);
+    REQUIRE(r.h == wa.h);
+}
+
+
+namespace {
+
 // Root _NET_ACTIVE_WINDOW, or None when unset.
 Window activeWindowOf(Display* d)
 {

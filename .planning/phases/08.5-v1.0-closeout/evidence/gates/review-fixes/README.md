@@ -121,3 +121,14 @@ Finding 1 changes `src/`, findings 2 and 3 change `tests/`, so the bundle at
 `d08b6e5` no longer describes the shipping tree; the capture is re-run at the
 commit that carries these fixes and the Codex pass over the whole branch diff,
 and the ten-run series at that final commit follows it.
+
+## Codex review of the whole branch diff (`codex review --base origin/main`), 2026-09-05
+
+Two P2 findings, both confirmed by reading, both fixed.
+
+| Finding | Verified | Fix | Evidence |
+|---|---|---|---|
+| The interruptible gesture loop (ledger 8) breaks on `Interrupted` with `event` never written, then reads `event.xbutton.time` and `event.type` — undefined behaviour on the shutdown path | Yes: `XEvent event;` was uninitialised and only `modalWait` returning `Event` ever wrote it | `event` is value-initialised, an `interrupted` flag is set on the non-Event return, and that path ungrabs with the press's own `e->time` (the one defined timestamp it has) and evaluates no gesture | By reading; a signal mid-gesture has no deterministic assertion point from a client |
+| Frameless maximize kept the decorated frame's one-pixel outer-border allowance (`ww - xi - 1`), so a no-decorate window maximized one pixel short of the workarea on each axis | Yes | `edge = m_frameless ? 0 : 1` | New `[wm_rules]` case "A no-decorate window maximizes to the workarea exactly": `red-frameless-maximize-one-pixel-short.log` fails `1023 == 1024`; `green-frameless-maximize-one-pixel-short.log` passes 12 assertions |
+
+The source changed again after the gate bundle at `d08b6e5`, so the bundle is re-captured at the commit carrying these fixes and the CodeRabbit ones above; the test surface moves to 334 source cases / 336 registered and the checklist's test-surface row is recomputed at that commit.

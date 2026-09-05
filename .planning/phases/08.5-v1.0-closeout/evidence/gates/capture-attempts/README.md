@@ -59,6 +59,19 @@ manager target then compiles with no warning line. The plain `write` at
 `src/Events.cpp` had not warned but is the same pattern and got the same
 treatment.
 
+## Attempt 3 — commit `d08b6e5`: every gate green; superseded by the branch reviews
+
+All four blockers green (335/335 in each tree, zero warning lines, static
+analysis OK, smoke transcript and PROVENANCE agreeing on the commit). It was
+committed as the bundle. The two reviewer passes over the whole branch that
+followed — CodeRabbit CLI and Codex, recorded in `../review-fixes/README.md` —
+then changed `src/` and `tests/` four more times (a hide-or-kill on a signal
+during a tab-button press, an uninitialised event read on gesture interruption,
+a one-pixel-short frameless maximize, two test-helper hardenings), so the
+bundle no longer described the shipping tree. Nothing in it was red; nothing
+from it is kept here because every file is reproduced by the same commands at
+the final commit.
+
 ## Unchanged across the attempts, carried into the final bundle
 
 - Six sanitizer report files per ASan run, byte-identical to each other, each
