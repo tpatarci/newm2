@@ -1,8 +1,8 @@
 # Earlier capture attempts — NOT the gate bundle
 
-**This directory is not the criterion-7 gate bundle.** It records the three
+**This directory is not the criterion-7 gate bundle.** It records the four
 08.5-08 captures that ran before the one at the top level of `evidence/gates/`:
-two stopped by something their own logs surfaced, one all-green bundle
+two stopped by something their own logs surfaced, two all-green bundles
 superseded when the branch reviews changed the source. The plan says a red log stays
 in the bundle under a distinguishable name and a finding is fixed rather than
 retried away; this is where those logs and the fixes they led to are kept.
@@ -73,6 +73,17 @@ bundle no longer described the shipping tree. Nothing in it was red; nothing
 from it is kept here because every file is reproduced by the same commands at
 the final commit.
 
+## Attempt 4 — commit `f54de6e`: every gate green; superseded by Codex's second pass
+
+All four blockers green (336/336 in each tree, zero warning lines, static analysis OK, headers agreeing).
+Codex's pass over that very commit found the frameless path was the one place a managed client kept
+its X border (`../review-fixes/README.md`, second pass), fixed at `9e45b48` with a new `[wm_rules]` case,
+so the bundle was retired and re-captured. Two further things changed for the fifth capture on the phase
+verification's reading of attempt 4's logs: the build directories are removed first, so every translation
+unit compiles and the "zero warning lines" gate is not vacuous for a tree that happened to be up to date
+(attempt 4's debug log had no `Building CXX` line at all); and `PROVENANCE.txt` records the compiled-unit
+count per tree.
+
 ## Unchanged across the attempts, carried into the final bundle
 
 - Six sanitizer report files per ASan run, byte-identical to each other, each
@@ -94,8 +105,8 @@ the final commit.
 ## Why the other files from each attempt are not kept
 
 A bundle is bound to one commit. The build-all, compiler, preflight, ldd,
-DOC-GUARDS, runtime-smoke and PROVENANCE files from `8e29d6d`, `2a94cbb` and
-`d08b6e5` were produced by real runs, but keeping them beside the final capture
-would leave four bundles interleaved in one directory, which the plan's
-coexistence rule forbids. What each attempt found is kept; what it merely repeated is
+DOC-GUARDS, runtime-smoke and PROVENANCE files from `8e29d6d`, `2a94cbb`,
+`d08b6e5` and `f54de6e` were produced by real runs, but keeping them beside the
+final capture would leave five bundles interleaved in one directory, which the
+plan's coexistence rule forbids. What each attempt found is kept; what it merely repeated is
 superseded by the same commands run again at the fixed commit.

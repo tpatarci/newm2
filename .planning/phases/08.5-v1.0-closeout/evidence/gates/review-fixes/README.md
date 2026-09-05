@@ -164,3 +164,10 @@ border is set at *creation* (CreateWindow is not redirected, so the running WM c
 workarea after maximize. `red-frameless-border-kept.log` fails `3 == 0` on the border; `green-frameless-border-kept.log`
 passes 11 assertions. Dock and notification cases, which share the path, still pass. Test surface: 335
 source cases / 337 registered.
+
+## Codex, third pass (`codex review --commit 9e45b48`), 2026-09-05 — clean
+
+"The frameless management path now consistently strips client borders like the framed and
+ConfigureRequest paths, and the added regression test directly covers both border removal and exact
+maximized geometry. No actionable defects were identified." The branch's source review ends here; the
+fifth capture runs at this commit.
