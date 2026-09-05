@@ -1148,6 +1148,12 @@ constexpr int kFatalDeadlineMs = 6000;   // tight: what a healthy host really ta
 
 }  // namespace
 
+// Defined below, beside the [wm_menulabel] cases that first needed it; declared
+// here so the exec-using-shell case above them can take the same verified open.
+bool openRootMenuVerified(Display* d, XTestDriver& driver, int x, int y,
+                          Window& menuOut, Rect& rectOut, std::string& whyOut,
+                          unsigned long expectedBg);
+
 
 // ===========================================================================
 // [wm_harness] -- the fixture's own stale-report cleanup (deferred item 14)
@@ -1686,7 +1692,16 @@ TEST_CASE("exec-using-shell gates whether a command with arguments and "
 
         Window menu = None;
         Rect menuRect{};
-        REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect));
+        // Verified open, as the three [wm_menulabel] sites use (WINDOWS.md
+        // ledger 13): the raw helper had no retry around deferred item 17, so
+        // one never-opens run failed this case's positive control after the
+        // whole 20 s stage budget, and the failure said nothing about shells.
+        std::string why;
+        const bool opened = openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                                 menu, menuRect, why,
+                                                 namedPixel(d, kShippedMenuBackground));
+        INFO("menu open diagnostics: " << why);
+        REQUIRE(opened);
         selectFirstMenuEntry(d, driver, menuRect);
 
         spawnedOut = awaitClientWithClass(d, kProbeClass, before,
@@ -4208,4 +4223,43 @@ TEST_CASE("The window manager reports how often its timestamp path took a "
     // 2. ANTI-VACUITY GUARD. A run reporting zero branch entries never reached
     //    the path and measures nothing.
     CHECK(summary.cold > 0);
+}
+
+
+// ---------------------------------------------------------------------------
+// WINDOWS.md ledger 8. Every modal grab loop -- the root menu, releaseGrab(),
+// move, resize, the tab button and the gesture recogniser -- waited either in
+// XMaskEvent or in a 50 ms sleep, and neither watched the exit flag or the
+// self-pipe. SIGTERM delivered while the operator held a button was therefore
+// honoured only once the button came up. The menu is the loop a test can hold
+// open deterministically: Button1 stays pressed for the menu's whole life.
+TEST_CASE("SIGTERM while the root menu is held open is honoured without waiting "
+          "for the release", "[wm_process]")
+{
+    WmFixture fixture(cleanFixture());
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());   // throws if XTEST is unavailable
+    parkPointer(d);
+
+    Window menu = None;
+    Rect menuRect{};
+    std::string why;
+    const bool opened = openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                             menu, menuRect, why,
+                                             namedPixel(d, kShippedMenuBackground));
+    INFO("menu open diagnostics: " << why);
+    REQUIRE(opened);
+    // Button1 is still held here; the window manager is inside menu()'s loop.
+
+    // The fixture's own pid, SIGTERM only. 3000 ms is well inside the fixture's
+    // 8000 ms SIGKILL escalation and far above a healthy exit, which the
+    // [wm_process] SIGTERM case measures in tens of milliseconds.
+    const bool clean = fixture.terminateWmCleanly(3000);
+    // Released only AFTER the verdict is taken, so the release cannot be what
+    // let the loop out.
+    driver.release(Button1);
+    INFO("wm stderr: " << fixture.wmStderr());
+    REQUIRE(clean);
 }

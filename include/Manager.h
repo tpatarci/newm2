@@ -112,6 +112,19 @@ public:
 
     // Grab helpers
     int attemptGrab(Window, Window, int, Time);
+
+    // WINDOWS.md ledger 8. The modal grab loops -- the root menu, releaseGrab(),
+    // move, resize, the tab button and the gesture recogniser -- used to wait in
+    // XMaskEvent, or sleep 50 ms between XCheckMaskEvent sweeps, and neither
+    // form watched the exit flag or the self-pipe: SIGTERM delivered while a
+    // button was held was honoured only when the button came up. Every such
+    // loop now waits here instead. Event: *out holds a matching event.
+    // Timeout: timeoutMs elapsed (never returned for timeoutMs < 0).
+    // Interrupted: the exit flag is set or the self-pipe is readable; the
+    // caller leaves its loop with nothing chosen and the main loop's own
+    // shutdownOnSignal() takes it from there -- the pipe is NOT drained here.
+    enum class ModalWait { Event, Timeout, Interrupted };
+    ModalWait modalWait(long mask, XEvent *out, int timeoutMs);
     void releaseGrab(XButtonEvent *e);
 
     // Exposure during grab

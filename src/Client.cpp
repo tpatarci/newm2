@@ -1611,8 +1611,16 @@ void Client::move(XButtonEvent *e)
         }
 
         if (!found) {
-            poll(nullptr, 0, 50);
-            continue;
+            // Ledger 8: the 50 ms sleep is now a wait that also watches the
+            // exit flag and the self-pipe. Interrupted: abandon the drag with
+            // nothing committed (doSomething stays false).
+            const WindowManager::ModalWait w = windowManager()->modalWait(
+                ButtonPressMask | ButtonReleaseMask | ButtonMotionMask | ExposureMask,
+                &event, 50);
+            if (w == WindowManager::ModalWait::Interrupted) { done = true; break; }
+            if (w == WindowManager::ModalWait::Timeout) continue;
+            // Event: it was taken off the queue, so it is handled below like
+            // any event the sweep found.
         }
 
         switch (event.type) {
@@ -1722,8 +1730,11 @@ void Client::resize(XButtonEvent *e, bool horizontal, bool vertical)
         }
 
         if (!found) {
-            poll(nullptr, 0, 50);
-            continue;
+            // Ledger 8: see the move loop above.
+            const WindowManager::ModalWait w = windowManager()->modalWait(
+                dragMask | ExposureMask, &event, 50);
+            if (w == WindowManager::ModalWait::Interrupted) { done = true; break; }
+            if (w == WindowManager::ModalWait::Timeout) continue;
         }
 
         switch (event.type) {
@@ -2239,8 +2250,13 @@ void Client::detectFullscreenGesture(XButtonEvent *e)
     bool done = false;
 
     while (!done) {
-        XMaskEvent(display(), ButtonPressMask | ButtonReleaseMask |
-                   ButtonMotionMask, &event);
+        // Ledger 8: interruptible. An interrupted gesture is no gesture.
+        if (windowManager()->modalWait(ButtonPressMask | ButtonReleaseMask |
+                                       ButtonMotionMask, &event, -1)
+            != WindowManager::ModalWait::Event) {
+            done = true;
+            break;
+        }
 
         switch (event.type) {
         case MotionNotify:

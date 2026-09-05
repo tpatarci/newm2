@@ -159,7 +159,9 @@ void WindowManager::releaseGrab(XButtonEvent *e)
     XEvent ev;
     if (!nobuttons(e)) {
         for (;;) {
-            XMaskEvent(display(), ButtonMask | ButtonMotionMask, &ev);
+            // Ledger 8: interruptible. On SIGTERM the grab is simply released
+            // below with the press event's own time.
+            if (modalWait(ButtonMask | ButtonMotionMask, &ev, -1) != ModalWait::Event) break;
             if (ev.type == MotionNotify) continue;
             e = &ev.xbutton;
             if (nobuttons(e)) break;
@@ -533,7 +535,17 @@ void WindowManager::menu(XButtonEvent *e)
     XEvent event;
 
     while (!done) {
-        XMaskEvent(display(), MenuMask, &event);
+        if (modalWait(MenuMask, &event, -1) != ModalWait::Event) {
+            // Ledger 8: SIGTERM (or the Exit action's own wake) while the menu
+            // is held. Leave with nothing chosen, cleaned up exactly as the
+            // release path below cleans up; the main loop then observes the
+            // flag and shuts down.
+            XUngrabPointer(display(), CurrentTime);
+            closeSubmenu();
+            XUnmapWindow(display(), m_menuWindow);
+            done = true;
+            break;
+        }
 
         switch (event.type) {
 

@@ -1,0 +1,57 @@
+Internal ctest changing into directory: /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/build/debug
+Test project /home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/build/debug
+    Start 328: preflight
+1/2 Test #328: preflight ..............................................................................   Passed    0.20 sec
+    Start 203: SIGTERM while the root menu is held open is honoured without waiting for the release
+2/2 Test #203: SIGTERM while the root menu is held open is honoured without waiting for the release ...***Failed    3.31 sec
+Filters: "SIGTERM while the root menu is held open is honoured without waiting for the release"
+Randomness seeded to: 1236615591
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test_wm_runtime is a Catch2 v3.14.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+SIGTERM while the root menu is held open is honoured without waiting for the
+release
+-------------------------------------------------------------------------------
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_wm_runtime.cpp:4236
+...............................................................................
+
+/home/tomislav/development/wm2-born-again/.claude/worktrees/agent-a0ef668e51c39c8dd/tests/test_wm_runtime.cpp:4264: FAILED:
+  REQUIRE( clean )
+with expansion:
+  false
+with messages:
+  menu open diagnostics: 
+  wm stderr: 
+  wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+    Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+    Copying and redistribution encouraged.  No warranty.
+  
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients
+  only on menu.
+  
+  Shape extension available.
+    Xrandr extension available.
+    XRender extension available.
+  wm2: timestamp: entering blocking property wait
+  wm2: X_UnmapWindow (0x600026): BadWindow (invalid Window parameter)
+
+===============================================================================
+test cases: 1 | 1 failed
+assertions: 3 | 2 passed | 1 failed
+
+
+
+50% tests passed, 1 tests failed out of 2
+
+Label Time Summary:
+preflight     =   0.20 sec*proc (1 test)
+wm_process    =   3.31 sec*proc (1 test)
+
+Total Test time (real) =   3.53 sec
+
+The following tests FAILED:
+	203 - SIGTERM while the root menu is held open is honoured without waiting for the release (Failed)
+Errors while running CTest

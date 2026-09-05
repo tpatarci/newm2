@@ -272,6 +272,56 @@ void WindowManager::nextEvent(XEvent *e)
 }
 
 
+WindowManager::ModalWait WindowManager::modalWait(long mask, XEvent *out,
+                                                 int timeoutMs)
+{
+    using clock = std::chrono::steady_clock;
+    const bool bounded = timeoutMs >= 0;
+    const clock::time_point deadline =
+        bounded ? clock::now() + std::chrono::milliseconds(timeoutMs)
+                : clock::time_point::max();
+
+    struct pollfd fds[2];
+    fds[0].fd = ConnectionNumber(display());
+    fds[0].events = POLLIN;
+    fds[1].fd = m_pipeRead.get();
+    fds[1].events = POLLIN;
+
+    for (;;) {
+        if (m_signalled) return ModalWait::Interrupted;
+
+        // XCheckMaskEvent flushes and reads whatever the socket holds, so a
+        // matching event that arrived while we were elsewhere is found here
+        // without a round trip.
+        if (XCheckMaskEvent(display(), mask, out)) return ModalWait::Event;
+
+        if (m_signalled) return ModalWait::Interrupted;
+
+        int wait = -1;
+        if (bounded) {
+            const auto left = deadline - clock::now();
+            if (left <= clock::duration::zero()) return ModalWait::Timeout;
+            wait = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(left).count());
+            if (wait <= 0) wait = 1;   // sub-millisecond remainder still waits
+        }
+
+        fds[0].revents = 0;
+        fds[1].revents = 0;
+        const int r = poll(fds, 2, wait);
+        if (r < 0) {
+            if (errno == EINTR) continue;   // the flag is re-read at the top
+            return ModalWait::Interrupted;  // a dead descriptor ends the grab
+        }
+        if (fds[1].revents & POLLIN) return ModalWait::Interrupted;
+        if (fds[0].revents & eventPumpFailedRevents()) return ModalWait::Interrupted;
+        if (r == 0 && bounded) return ModalWait::Timeout;
+        // X readable, or a non-matching event: go round, let XCheckMaskEvent
+        // pull it in. A non-matching event stays queued for the main loop.
+    }
+}
+
+
 void WindowManager::shutdownOnSignal()
 {
     // Drain pipe (handler may have written multiple bytes)
