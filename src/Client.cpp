@@ -790,6 +790,14 @@ void Client::stripNetWmStates(Atom a, Atom b)
         if (attempt >= 1 || present > static_cast<unsigned long>(kMaxStateAtoms)) return;
         length = static_cast<long>(present + 8);
     }
+    // The widened re-read can return up to eight atoms more than were present
+    // at the first read if the client appended in between; the cap is on what
+    // is processed, so it is checked once more on what actually arrived
+    // (re-review 5, P2).
+    if (nItems > static_cast<unsigned long>(kMaxStateAtoms)) {
+        XFree(raw);
+        return;
+    }
     std::vector<Atom> kept;
     if (actualType == XA_ATOM && actualFormat == 32) {
         const Atom* atoms = reinterpret_cast<const Atom*>(raw);
