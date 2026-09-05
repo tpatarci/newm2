@@ -1,0 +1,40 @@
+# DOC-GUARDS.txt -- documentation guards run at commit f54de6efec4057ec9259d0200f70b93fae5cc4f4 (f54de6e), branch worktree-agent-a0ef668e51c39c8dd, 2026-09-05T15:35:41Z
+# Every reading below is the output of the command beside it, run in this session.
+# Phase directory: .planning/phases/08.5-v1.0-closeout/
+
+## Gap-1 guard A (XDIS-05)
+command: grep -c 'never installed' docs/RELEASE-NOTES.md
+reading: 0   (expected 0)
+
+## Gap-1 guard B (XDIS-05)
+command: grep -c 'Not tested' docs/RELEASE-NOTES.md
+reading: 0   (expected 0)
+
+## Rule-key parity (RULES-01)
+command (shipped set):    sed -n '/isRuleMatchKey/,/;/p' src/Config.cpp | grep -oE 'rule-match-[a-z]+' | sort -u
+shipped set (5 keys):   rule-match-class rule-match-instance rule-match-mode rule-match-title rule-match-type 
+command (described set):  grep -oE 'rule-match-[a-z]+' docs/RELEASE-NOTES.md | sort -u
+described set (6 keys): rule-match-class rule-match-instance rule-match-mode rule-match-name rule-match-title rule-match-type 
+symmetric difference, shipped-only:   (none)
+symmetric difference, described-only: rule-match-name 
+A zero on EITHER side would be a guard failure (nothing compared), not a pass; both sides are non-zero here.
+Expected asymmetry: exactly one member, the old spelling rule-match-name, which survives only in the
+release notes' migration note (D-8.5-01: renamed, not aliased) and is deliberately absent from the code.
+
+## Statements
+1. 08.5-VERIFICATION.md records gap 1 as open. It was written before plan 08.5-03 landed at 195ac51;
+   the two guard readings above, taken at this bundle's commit, are what close it. The report is stale
+   on this point rather than wrong when it was written.
+2. Byte-semantics limit, recorded and NOT closed (v1.1): rule-match-title compares bytes. The title
+   read is capped at 400 bytes (src/Client.cpp:1009; the plan cites src/Client.cpp:875) and a config
+   value at 256 characters (src/Config.cpp:130-132), so the two caps do not line up for
+   multi-byte titles and an exact-mode rule against a longer title can never match. Not fixed here.
+3. A guard reading is a snapshot bound to this commit. Nothing in this repository re-runs it when a
+   later commit lands.
+
+## Parity verdict (appended after the capture; same commands re-run at HEAD f54de6e, 2026-09-05T15:44:08Z;
+## 'git diff --name-only f54de6e..HEAD -- src include tests scripts CMakeLists.txt docs/RELEASE-NOTES.md' lists 0 paths)
+exact shipped-set check:  [ "$SHIPPED" = "rule-match-class rule-match-instance rule-match-mode rule-match-title rule-match-type " ]  -> PASS
+exact difference check:   [ "$ONLY_DOC" = "rule-match-name " ] && [ -z "$ONLY_SRC" ]  -> PASS
+Any reading other than PASS/PASS on these two lines is a guard failure; the size and difference lines above
+remain the diagnostic detail, these two lines are the pass/fail.

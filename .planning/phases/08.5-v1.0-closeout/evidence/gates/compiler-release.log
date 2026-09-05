@@ -1,0 +1,59 @@
+Consolidate compiler generated dependencies of target wm2-born-again
+[  1%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Client.cpp.o
+[  1%] Building CXX object CMakeFiles/wm2-born-again.dir/src/Border.cpp.o
+Consolidate compiler generated dependencies of target Catch2
+[ 62%] Built target Catch2
+Consolidate compiler generated dependencies of target Catch2WithMain
+[ 63%] Built target Catch2WithMain
+Consolidate compiler generated dependencies of target test_smoke
+Consolidate compiler generated dependencies of target test_raii
+Consolidate compiler generated dependencies of target test_desktopentry
+Consolidate compiler generated dependencies of target test_autoraise
+Consolidate compiler generated dependencies of target test_menupaint
+Consolidate compiler generated dependencies of target test_eventloop
+[ 64%] Built target test_smoke
+Consolidate compiler generated dependencies of target test_binaryscanner
+Consolidate compiler generated dependencies of target test_xft_poc
+Consolidate compiler generated dependencies of target test_ewmh
+[ 65%] Built target test_raii
+Consolidate compiler generated dependencies of target test_client
+Consolidate compiler generated dependencies of target test_rules
+Consolidate compiler generated dependencies of target test_config
+[ 67%] Built target test_desktopentry
+Consolidate compiler generated dependencies of target test_appcache
+[ 68%] Built target test_xft_poc
+[ 69%] Built target test_ewmh
+[ 71%] Built target test_binaryscanner
+[ 72%] Built target test_config
+[ 73%] Built target test_client
+[ 74%] Built target test_autoraise
+[ 76%] Built target test_menupaint
+[ 78%] Built target test_rules
+[ 79%] Building CXX object CMakeFiles/test_eventloop.dir/tests/test_eventloop.cpp.o
+[ 82%] Built target test_appcache
+[ 82%] Linking CXX executable test_eventloop
+[ 82%] Built target test_eventloop
+[ 83%] Linking CXX executable wm2-born-again
+[ 88%] Built target wm2-born-again
+Consolidate compiler generated dependencies of target test_wm_focus
+Consolidate compiler generated dependencies of target test_wm_process
+Consolidate compiler generated dependencies of target test_wm_resource
+Consolidate compiler generated dependencies of target test_wm_rules
+Consolidate compiler generated dependencies of target test_wm_fallbacks
+Consolidate compiler generated dependencies of target test_wm_geometry
+Consolidate compiler generated dependencies of target test_wm_state
+Consolidate compiler generated dependencies of target test_wm_repro
+Consolidate compiler generated dependencies of target test_wm_lifecycle
+Consolidate compiler generated dependencies of target test_wm_runtime
+[ 89%] Built target test_wm_process
+[ 90%] Building CXX object CMakeFiles/test_wm_rules.dir/tests/test_wm_rules.cpp.o
+[ 91%] Built target test_wm_fallbacks
+[ 92%] Built target test_wm_resource
+[ 93%] Built target test_wm_lifecycle
+[ 95%] Built target test_wm_state
+[ 96%] Built target test_wm_focus
+[ 97%] Built target test_wm_repro
+[ 98%] Built target test_wm_runtime
+[100%] Built target test_wm_geometry
+[100%] Linking CXX executable test_wm_rules
+[100%] Built target test_wm_rules

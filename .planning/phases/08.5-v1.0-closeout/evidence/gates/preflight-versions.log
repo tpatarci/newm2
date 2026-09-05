@@ -1,0 +1,37 @@
+# bash scripts/preflight.sh -- run at commit f54de6efec4057ec9259d0200f70b93fae5cc4f4 (f54de6e), 2026-09-05T15:35:40Z
+# Output below is the command's own, unedited.
+
+== pkg-config modules ==
+  x11          1.7.5
+  xext         1.3.4
+  xft          2.3.4
+  fontconfig   2.13.1
+  xrandr       1.5.2
+  xrender      0.9.10
+
+== toolchain ==
+  cmake version 3.22.1
+  c++ (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+  pkg-config 0.29.2
+  distro: Ubuntu 22.04.5 LTS
+
+== X11 tooling ==
+  Xvfb       /usr/bin/Xvfb
+  Xephyr     /usr/bin/Xephyr
+  xprop      /usr/bin/xprop
+  xwininfo   /usr/bin/xwininfo
+  xdotool    /usr/bin/xdotool
+  xdpyinfo   /usr/bin/xdpyinfo
+  xrandr     /usr/bin/xrandr
+
+== simple X client ==
+  xclock     /usr/bin/xclock
+  xmessage   /usr/bin/xmessage
+  xterm      not installed (informational: not required; tests use xclock)
+
+== fontconfig fallback chains ==
+  'Noto Sans,DejaVu Sans,Sans:size=12' -> /usr/share/fonts/truetype/noto/NotoSans-SemiCondensed.ttf
+  'Noto Sans,DejaVu Sans,Sans:bold:size=12' -> /usr/share/fonts/truetype/noto/NotoSans-SemiCondensedBold.ttf
+  'sans-serif:bold:size=12' -> /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
+
+preflight OK
