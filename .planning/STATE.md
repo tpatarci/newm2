@@ -4,11 +4,11 @@ milestone: v1.0
 current_phase: 08.5
 current_phase_name: v1.0 Closeout
 status: executing
-stopped_at: "08.5 shipped (PR #6 merged 0fec5db) and security-verified (08.5-SECURITY.md, 0 open). Verification human_needed awaits the operator. Next: Phase 9 planning; UI refresh reminder pending"
-last_updated: "2026-09-05T18:40:00Z"
+stopped_at: Phase 9 context gathered
+last_updated: "2026-09-05T23:17:11.296Z"
 last_activity: 2026-09-05
-last_activity_desc: Phase 8.5 shipped -- PR #6 merged (0fec5db); Codex fourth pass and CodeRabbit fourth delta pass recorded; ten-run series at 39de548 10/10 green
-state_head: 5a418206824065ab01d647835a34c71e78cb1ecd
+last_activity_desc: Phase 8.5 shipped -- PR
+state_head: 947a7fca6e652ca7bfa10f6c0de391d99852c3e6
 progress:
   total_phases: 10
   completed_phases: 4
@@ -508,6 +508,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-05T18:15:00Z
-Stopped at: Phase 8.5 shipped and security-verified; next Phase 9 planning
-Resume file: None
+Last session: 2026-09-05T23:17:10.742Z
+Stopped at: Phase 9 context gathered
+Resume file: .planning/phases/09-config-gui-ipc/09-CONTEXT.md
