@@ -2089,6 +2089,23 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
         // begins, so the two reloads below cannot leave the frame palette new
         // and the menu palette old: by the time the first of them commits, the
         // server has already agreed that all nine names parse.
+        //
+        // WHAT THIS DOES AND DOES NOT PROVE (I-02). It proves the nine NAMES
+        // parse. It is NOT the same allocation the reloads then perform:
+        // tryAllocateColour here, XftColorAllocName through x11::XftColorWrap
+        // in reloadMenuColours (src/Manager.cpp's colour helpers), and in
+        // Border::reloadColours two further Xft colours, two derived shades
+        // (tryAllocateShadeOf) and up to three GCs that this loop never
+        // touches. So the "a half-applied palette needs an allocation that
+        // fails after an identical one succeeded" reasoning recorded against
+        // CR-04 is not literally true.
+        //
+        // The invariant is held by the VISUAL CLASS, not by this loop: on the
+        // TrueColor visuals this project targets both routes reduce to parsing
+        // a name and computing a pixel, and Border::reloadColours is
+        // allocate-then-swap, so its own failures commit nothing. Written down
+        // here so a later reader does not take the pre-flight for a guarantee
+        // it cannot give on a visual that allocates from a map.
         const struct { const char *key; const std::string *value; } palette[] = {
             {"tab-foreground",    &next.tabForeground},
             {"tab-background",    &next.tabBackground},
