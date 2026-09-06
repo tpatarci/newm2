@@ -422,7 +422,21 @@ ConfigWriteResult configFileWrite(const std::string& path,
     const std::filesystem::path directory =
         target.has_parent_path() ? target.parent_path() : std::filesystem::path(".");
 
-    if (!std::filesystem::exists(directory, ec)) {
+    // "COULD NOT TELL" IS NOT "IS NOT THERE" (I-03, the same shape WR-01 fixed
+    // in readLines()). exists() returns false AND sets its error_code on
+    // ELOOP, ENAMETOOLONG, EACCES on a path component and EIO. Reading that
+    // false as an absent directory sends this straight into
+    // create_directories, which then fails with a message about creating a
+    // directory that may well already exist -- the two spellings of the same
+    // call, thirty lines apart in one file, disagreeing about whether a failed
+    // existence check is a failure.
+    const bool directoryExists = std::filesystem::exists(directory, ec);
+    if (ec) {
+        errorOut = "could not examine the directory '" + directory.string() +
+                   "': " + ec.message();
+        return ConfigWriteResult::DirectoryFailed;
+    }
+    if (!directoryExists) {
         std::filesystem::create_directories(directory, ec);
         if (ec) {
             errorOut = "could not create the directory '" + directory.string() +
@@ -431,7 +445,26 @@ ConfigWriteResult configFileWrite(const std::string& path,
         }
     }
 
+    // --- The lock, held from before the read until after the rename ---------
+    //
+    // Declared here so it covers every return below: the read the output is
+    // computed from and the rename that publishes it are one critical section,
+    // or a concurrent saver's edits are lost (WR-02).
+    const DirectoryLock lock(directory);
+    if (lock.busy()) {
+        errorOut = "another program is writing '" + path + "' at the moment. "
+                   "Nothing was changed; try saving again in a moment.";
+        return ConfigWriteResult::Busy;
+    }
+
     // --- A symlinked target is REFUSED, and said so (WR-05) -----------------
+    //
+    // BELOW THE LOCK (I-04). The check used to run above it, which made it
+    // advisory: another saver could in principle have replaced the target
+    // between this lstat and the lock being taken. No saver this project
+    // ships creates symlinks, so nothing could actually race it -- but
+    // moving the check inside the critical section costs nothing and
+    // removes the question entirely.
     //
     // rename() replaces the LINK, not what it points at. A user who keeps
     // ~/.config/wm2-born-again/config as a symlink into a dotfiles repository
@@ -451,18 +484,6 @@ ConfigWriteResult configFileWrite(const std::string& path,
                        "at instead.";
             return ConfigWriteResult::WriteFailed;
         }
-    }
-
-    // --- The lock, held from before the read until after the rename ---------
-    //
-    // Declared here so it covers every return below: the read the output is
-    // computed from and the rename that publishes it are one critical section,
-    // or a concurrent saver's edits are lost (WR-02).
-    const DirectoryLock lock(directory);
-    if (lock.busy()) {
-        errorOut = "another program is writing '" + path + "' at the moment. "
-                   "Nothing was changed; try saving again in a moment.";
-        return ConfigWriteResult::Busy;
     }
 
     // --- Read ---------------------------------------------------------------
