@@ -465,6 +465,19 @@ private:
     // Start the socket and publish its path on the root window (DISC-03).
     void startConfigSocket();
 
+    // Withdraw that publication (codex pass 3, P2).
+    //
+    // A root-window property outlives the process that set it -- the X server
+    // holds it until somebody deletes it -- so every path that ends the socket
+    // has to end the property with it, or a discovery client is sent to a node
+    // that is no longer there. Called from the three places that can leave this
+    // window manager without a listener: a startup that could not bind, a
+    // listener that failed mid-session, and release().
+    //
+    // Safe when nothing was ever published: deleting an absent property is a
+    // no-op at the server, not an error.
+    void unpublishConfigSocketPath();
+
     static bool m_initialising;
     static int errorHandler(Display*, XErrorEvent*);
     static void sigHandler(int);

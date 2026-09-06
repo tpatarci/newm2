@@ -426,6 +426,14 @@ void WindowManager::release()
     // nothing to reclaim.
     m_socketServer.close();
 
+    // And the publication goes with it (codex pass 3, P2). The socket node has
+    // just been unlinked; a property still naming it would outlive this process
+    // on the server's root window and send the next discovery client to
+    // nothing. Done HERE, while the display is still open and before the
+    // ignoreBadWindowErrors window below, because after either of those this is
+    // no longer a request that can be made honestly.
+    unpublishConfigSocketPath();
+
     m_windowMap.clear();
 
     // WR-02: Rely solely on ~Client() for unreparenting. Previously release()
@@ -974,12 +982,23 @@ void WindowManager::setupEwmhProperties()
     // Written ONLY when the socket actually bound, so the property's presence
     // is itself the answer to "is there a socket?" -- a client never has to
     // connect to find out.
+    //
+    // AND EXPLICITLY REMOVED WHEN IT DID NOT (codex pass 3, P2). The write used
+    // to have no else, which is only correct on a root window this process
+    // owns -- and it owns none of it. The property persists across window
+    // manager processes on a live X server, so a predecessor's path survives
+    // its predecessor; a start that cannot bind would then publish all of its
+    // OWN metadata beside a stale path belonging to nobody, and discovery
+    // clients would be sent to a node that is not there. Write or delete: the
+    // property's presence stays the answer to "is there a socket?" either way.
     if (m_socketServer.isListening()) {
         const std::string &socketPath = m_socketServer.path();
         XChangeProperty(display(), m_root, Atoms::wm2_configSocket,
                         XA_STRING, 8, PropModeReplace,
                         reinterpret_cast<const unsigned char*>(socketPath.c_str()),
                         static_cast<int>(socketPath.size()));
+    } else {
+        unpublishConfigSocketPath();
     }
 
     // Set _NET_SUPPORTING_WM_CHECK on check window pointing to ITSELF (Pitfall 1)
@@ -2590,6 +2609,16 @@ ConfigSocketReply WindowManager::handleConfigRequest(const ConfigSocketRequest &
 
     refuse("unsupported message type", true);
     return out;
+}
+
+
+void WindowManager::unpublishConfigSocketPath()
+{
+    // Guarded on the atom rather than on the socket: this runs on paths where
+    // there is no listener by definition, and it may run before the atoms are
+    // interned if a failure is ever moved earlier than they are.
+    if (Atoms::wm2_configSocket == None) return;
+    XDeleteProperty(display(), m_root, Atoms::wm2_configSocket);
 }
 
 

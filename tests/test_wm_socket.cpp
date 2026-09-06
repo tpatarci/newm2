@@ -543,6 +543,61 @@ TEST_CASE("The socket path is published on the root window and is a socket",
     CHECK(path == configSocketPath(fixture.display().c_str()));
 }
 
+TEST_CASE("The published socket path is withdrawn when the window manager exits",
+          "[wm_socket]")
+{
+    // Codex pass 3, P2. A root-window property OUTLIVES the process that set
+    // it: the X server keeps it until somebody deletes it or the server itself
+    // goes away. close() unlinks the socket node on the way out, so a window
+    // manager that published a path and then exited cleanly used to leave the
+    // property naming a path that no longer exists -- and a discovery client
+    // reading it connects to nothing, with no way to tell the difference
+    // between "no window manager" and "a window manager that has moved on".
+    //
+    // The X server here is the fixture's own and outlives the window manager by
+    // construction: WmFixture's destructor reaps the WM child first and only
+    // then shuts the server down. So the root window is still there to be asked
+    // after the window manager is gone, which is exactly the state a later
+    // client -- or a later window manager -- would find it in.
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    const std::string path = awaitPublishedSocketPath(d);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(path.empty());
+    }
+
+    // SIGTERM to the PID THIS FIXTURE CREATED, and a normal exit demanded: the
+    // deletion lives in release(), which a signal death never reaches.
+    const bool exited = fixture.terminateWmCleanly();
+
+    // Bounded observation rather than a single read: the property disappears
+    // when the server has processed the departed connection's last requests,
+    // which is an event to wait for and not an elapsed time.
+    std::string remaining = "unread";
+    const bool withdrawn = WmFixture::pollUntil([&] {
+        remaining = publishedSocketPath(d);
+        return remaining.empty();
+    }, 8000);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO("property after exit: '" << remaining << "'");
+    CHECK(exited);
+
+    // THE POINT: the property and the socket node are withdrawn together, so
+    // the property's presence keeps meaning what DISC-03 says it means -- there
+    // is a socket at this path, right now.
+    CHECK(withdrawn);
+
+    struct stat st;
+    CHECK(::lstat(path.c_str(), &st) != 0);
+}
+
 TEST_CASE("An idle window manager answers hello and status", "[wm_socket]")
 {
     WmFixture fixture;
