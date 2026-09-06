@@ -1,0 +1,17 @@
+
+wm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.
+  Parts derived from 9wm Copyright (c) 1994-96 David Hogan
+  Copying and redistribution encouraged.  No warranty.
+
+  Focus follows pointer.  Auto-raise on.  Raise on focus.  Hidden clients only on menu.
+
+  Settings window on PATH: yes, Configure is on the root menu.
+  Shape extension available.
+  Xrandr extension available.
+  XRender extension available.
+  Configuration socket: /run/user/1000/wm2-born-again/socket_147
+wm2: timestamp: entering blocking property wait
+wm2: X_UnmapWindow (0x20002c): BadWindow (invalid Window parameter)
+wm2: X_UnmapWindow (0x200026): BadWindow (invalid Window parameter)
+wm2: signal caught, exiting
+wm2: timestamp: cold=5 blocked=5 foreign=0 longestms=1

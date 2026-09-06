@@ -847,9 +847,10 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
       DONE (plan 09-09): measured, not estimated, on a real TigerVNC 1.12.0
       session at 1280x1024x24, loopback only, release build, with the window
       open and each of its three pages visited and screenshotted --
-      **`wm2-config` 98.5 MB**, a second instance on the same session 49.6 MB,
-      `wm2-born-again` beside it 12.0 MB, `Xvnc` itself recorded in the same
-      transcript. Evidence, server version and commit:
+      **`wm2-config` 98.7 MB**, a second instance on the same session 49.4 MB,
+      `wm2-born-again` beside it 11.8 MB and `Xvnc` itself 74.2 MB -- so the
+      whole desktop is about 86 MB of a 512 MB machine, or about 189 MB while
+      the settings window is open. Evidence, server version and commit:
       `09-config-gui-ipc/evidence/remote-desktop/README.md`. The regression
       detector is `[wm2_config_smoke]` "wm2-config's resident memory is measured
       against a stated budget", 160 MB, which reads the same `/proc` field

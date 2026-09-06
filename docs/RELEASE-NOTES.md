@@ -489,18 +489,24 @@ the project expected and it was measured rather than estimated.
 Measured on a real TigerVNC 1.12.0 session, 1280x1024x24, release build, with
 the settings window open and each of its three pages visited:
 
-| Process | Resident |
-|---|---|
-| `wm2-config`, the first one opened in a session | **98.5 MB** |
-| `wm2-config`, a second one opened in the same session | 49.6 MB |
-| `wm2-born-again`, running alongside it | 12.0 MB |
+| Process | Resident | Of a 512 MB machine |
+|---|---|---|
+| `wm2-config`, the first one opened in a session | **98.7 MB** | 19% |
+| `wm2-config`, a second one opened in the same session | 49.4 MB | 10% |
+| `wm2-born-again`, running alongside it | 11.8 MB | 2% |
+| the VNC server itself (`Xvnc`) | 74.2 MB | 14% |
 
-**What that means on the target machine.** A 512 MB droplet running the window
-manager, a VNC server and the settings window is spending roughly a fifth of its
-memory on the settings window for as long as it is open. That is affordable —
-you open it, you change something, you close it — and it would not be affordable
-as a resident part of the desktop. It is not: nothing starts it for you, and
-closing it gives the memory back.
+**What that means on the target machine.** A 512 MB droplet running this window
+manager and a VNC server sits at about **86 MB, a sixth of the machine**. Open
+the settings window and that becomes about **189 MB, better than a third** — the
+settings window alone is roughly a fifth of the whole machine for as long as it
+is up. That is affordable, because you open it, change something and close it,
+and it would not be affordable as a resident part of the desktop. It is not:
+nothing starts it for you, and closing it gives the memory back.
+
+The window manager's 11.8 MB here is the same figure the automated budget
+measures on Xvfb, which is worth saying: the window manager costs the same on a
+real VNC server as it does headless.
 
 The cost is GTK's, not this project's. `wm2-config` is a few thousand lines over
 a toolkit that maps a large amount of shared library, theme, icon and font

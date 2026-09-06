@@ -1,0 +1,36 @@
+commit           8f4275b1ada85358ef7bf86bf0c106c8e054de22
+server           TigerVNC 1.12.0
+display          :147  (loopback only)
+
+== starting Xvnc ==
+  Xvnc pid 204980 up
+== starting the release window manager ==
+  wm2-born-again pid 205057
+== launching wm2-config (first launch on this server) ==
+  wm2-config pid 205159, window id 4194311
+  state property: "/run/user/1000/wm2-born-again/socket_147"
+
+  RSS on open, before any page switch: 101016 kB
+== exercising each of the three pages once ==
+  appearance page: RSS 101016 kB, page-appearance.png written
+  behaviour page: RSS 101016 kB, page-behaviour.png written
+  menu page: RSS 101024 kB, page-menu.png written
+  appearance-again page: RSS 101036 kB, page-appearance-again.png written
+
+MEASURED, with the settings window open and all three pages visited:
+  wm2-config      101036 kB
+  wm2-born-again  12128 kB
+  Xvnc            75936 kB   (the session server itself)
+
+== capability / property / tree capture ==
+  captured into .planning/phases/09-config-gui-ipc/evidence/remote-desktop/tigervnc/
+
+== a second wm2-config on the same server ==
+  second instance RSS: 50580 kB
+
+== stopping everything, each by the PID this script started ==
+  kill 205632 (wm2-config, second)
+  kill 205159 (wm2-config, first)
+  kill 205057   (wm2-born-again)
+  kill 204980 (Xvnc)
+  done

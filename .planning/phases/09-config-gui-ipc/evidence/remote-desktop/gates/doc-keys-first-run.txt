@@ -1,0 +1,26 @@
+== keys the binary accepts that docs/RELEASE-NOTES.md does not document ==
+wm2: doc-keys: the binary accepts 'borders' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2: doc-keys: the binary accepts 'button-background' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2: doc-keys: the binary accepts 'menu-background' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2: doc-keys: the binary accepts 'menu-borders' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2: doc-keys: the binary accepts 'menu-categories' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2: doc-keys: the binary accepts 'menu-entry-category' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2: doc-keys: the binary accepts 'menu-entry-command' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2: doc-keys: the binary accepts 'menu-entry-name' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2: doc-keys: the binary accepts 'menu-foreground' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2: doc-keys: the binary accepts 'tab-foreground' and docs/RELEASE-NOTES.md never presents it as a setting
+
+== keys docs/RELEASE-NOTES.md presents that the binary does not accept ==
+  (none)
+
+wm2: doc-keys FAILED with 10 problem(s):
+wm2:   - the binary accepts 'borders' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2:   - the binary accepts 'button-background' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2:   - the binary accepts 'menu-background' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2:   - the binary accepts 'menu-borders' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2:   - the binary accepts 'menu-categories' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2:   - the binary accepts 'menu-entry-category' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2:   - the binary accepts 'menu-entry-command' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2:   - the binary accepts 'menu-entry-name' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2:   - the binary accepts 'menu-foreground' and docs/RELEASE-NOTES.md never presents it as a setting
+wm2:   - the binary accepts 'tab-foreground' and docs/RELEASE-NOTES.md never presents it as a setting
