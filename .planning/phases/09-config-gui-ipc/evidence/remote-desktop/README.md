@@ -27,10 +27,12 @@ restated as prohibitions in `09-09-PLAN.md`:
 - **No host identifier, no network address.** `capabilities.txt` recorded
   `uname -n` — this machine's name — in every capture the project has ever
   taken, and the scan required by this plan found it in this bundle's own first
-  draft. `scripts/capture-display-capabilities.sh` no longer emits it. **The
+  draft. `scripts/capture-display-capabilities.sh` no longer emits it. The
   captures committed under `08-…/evidence/` and `08.5-…/evidence/` still
-  contain it**; that is a pre-existing exposure this plan did not rewrite, and
-  it is recorded here rather than left to be rediscovered.
+  contained it when this plan closed; the orchestrator replaced the name with
+  `<workstation>` in all sixteen tracked files at commit `823a253`, after this
+  plan. The pushed history before that commit still carries it; whether to
+  rewrite that history is the operator's decision (ledger entry 28).
 - **`~/.xsession-errors` is never read, copied, quoted or committed.** On the
   validation host that file carries the operator's whole environment in
   plaintext. Nothing in this bundle came from it. <!-- planner-discipline-allow: xsession-errors -->
