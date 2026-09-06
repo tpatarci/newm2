@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 22
+open_count: 24
 waived_count: 8
 fixed_count: 9
-total_count: 39
-last_updated: 2026-09-06T21:48:51.990Z
+total_count: 41
+last_updated: 2026-09-06T22:51:09.093Z
 ---
 
 # Broken Windows Ledger
@@ -54,6 +54,8 @@ last_updated: 2026-09-06T21:48:51.990Z
 | 37 | 09 | unrun-verify |  |  | W-06 review-fix residual: the CR-03 ownership arm (fstat's st_uid != geteuid) is now driven by a case that REACHES it -- [config_socket][directory] 'a socket directory owned by somebody else is refused' -- but that case can only run as a process able to give a directory away, so it SKIPS on this host (non-root; also skips under 'unshare -Ur', where chown to an unmapped uid returns EINVAL). It never passes vacuously: both the euid gate and the chown failure are SKIPs, not silent successes. The reachable half (the mkdir refusal) is a separate case scoped entirely inside a scratch TempDir, so no value of euid can make either case create anything at the filesystem root. | open |  | 2026-09-06T19:06:03.889Z |  |
 | 38 | 09 | deviation | src/Manager.cpp | 2049 | Review fix WR-13 narrowed plan 09-04's must-have T7 after its SUMMARY was written: a set of tab-font, menu-font or frame-thickness arriving while a modal grab is held is now REFUSED with a reason rather than applied; documented in docs/RELEASE-NOTES.md but the plan's truth 'applied without waiting for the grab to end' no longer holds for those three keys | open |  | 2026-09-06T20:05:07.666Z |  |
 | 39 | 09 | unrun-verify | apps/wm2-ctl/main.cpp | 214 | Codex PR-review fix P1 (wm2-ctl non-blocking socket, commit 3ef61cc): the CONNECT half is covered by a RED-first [wm_config_live] case (a saturated accept queue; the tool now exits 2 on its own 15 s deadline instead of hanging until the harness watchdog kills it). The SEND half -- the EAGAIN arm that now waits on POLLOUT instead of spinning -- has no automated case. Reaching it needs the peer to stop reading AND more than one socket buffer of data in flight; AF_UNIX stream flow control is charged to the SENDER's SO_SNDBUF (default ~208 KB on this host, not settable from outside the tool) while Linux caps a single argv string at MAX_ARG_STRLEN = 128 KB, so no invocation a test can construct fills it. Verified by reading instead: the arm is the same shape as ProtocolClient.cpp's, which WR-09 closed and which is exercised there. | open |  | 2026-09-06T21:48:51.990Z |  |
+| 40 | 09 | unrun-verify | src/Client.cpp |  | Codex PR-review pass 2, P2 fullscreen fix (commit 60c758f): the deferred-refresh flags are driven RED-first for a frame-thickness and a tab-background change applied while a client is fullscreen ([wm_config_live] "a client that was fullscreen while the configuration moved comes back wearing the new one"). Two arms share that code and have no case of their own: a TAB-FONT change during fullscreen (it sets the same m_frameLayoutStale flag and is replayed through the same Border::relayoutForTabFont call, so the case would differ only in which key is set), and a client that is HIDDEN as well as fullscreen when the change arrives (the frame windows are unmapped, so the geometry is assertable but no pixel is). Verified by reading: applyDeferredFrameRefresh() has one path and the thickness case reaches all of it. | open |  | 2026-09-06T22:51:02.152Z |  |
+| 41 | 09 | unrun-verify | apps/wm2-config/FormState.cpp |  | Codex PR-review pass 2, P2 lower-layer fix (commit e981cdd): FormState::refreshLowerLayers is driven RED-first for a single setting through the reload path ([wm2_config_smoke] "a file re-read moves what Reset will produce, and keeps the edits it finds"), and the window wiring is asserted by a comment-stripped source guard on onReloadNotice() rather than by a driven GTK reload -- the same precedent row 21 records for the entry-dialog case. Two arms have no case: the MENU-ENTRIES half (m_menuBelowUser, and a pending menu reset following the new lower layer), and the SAVE path, which re-reads the layers for the same reason and now refreshes them the same way. Both are the same three lines of the same function as the covered arm. | open |  | 2026-09-06T22:51:09.093Z |  |
 
 ````json
 [
@@ -523,6 +525,30 @@ last_updated: 2026-09-06T21:48:51.990Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-06T21:48:51.990Z",
+    "resolved_at": null
+  },
+  {
+    "id": 40,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "src/Client.cpp",
+    "line": null,
+    "description": "Codex PR-review pass 2, P2 fullscreen fix (commit 60c758f): the deferred-refresh flags are driven RED-first for a frame-thickness and a tab-background change applied while a client is fullscreen ([wm_config_live] \"a client that was fullscreen while the configuration moved comes back wearing the new one\"). Two arms share that code and have no case of their own: a TAB-FONT change during fullscreen (it sets the same m_frameLayoutStale flag and is replayed through the same Border::relayoutForTabFont call, so the case would differ only in which key is set), and a client that is HIDDEN as well as fullscreen when the change arrives (the frame windows are unmapped, so the geometry is assertable but no pixel is). Verified by reading: applyDeferredFrameRefresh() has one path and the thickness case reaches all of it.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T22:51:02.152Z",
+    "resolved_at": null
+  },
+  {
+    "id": 41,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "apps/wm2-config/FormState.cpp",
+    "line": null,
+    "description": "Codex PR-review pass 2, P2 lower-layer fix (commit e981cdd): FormState::refreshLowerLayers is driven RED-first for a single setting through the reload path ([wm2_config_smoke] \"a file re-read moves what Reset will produce, and keeps the edits it finds\"), and the window wiring is asserted by a comment-stripped source guard on onReloadNotice() rather than by a driven GTK reload -- the same precedent row 21 records for the entry-dialog case. Two arms have no case: the MENU-ENTRIES half (m_menuBelowUser, and a pending menu reset following the new lower layer), and the SAVE path, which re-reads the layers for the same reason and now refreshes them the same way. Both are the same three lines of the same function as the covered arm.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T22:51:09.093Z",
     "resolved_at": null
   }
 ]
