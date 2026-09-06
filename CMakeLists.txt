@@ -358,14 +358,32 @@ if(BUILD_TESTS)
         set(XVFB_PID_FILE "${CMAKE_BINARY_DIR}/xvfb.pid")
         set(XVFB_LOG_FILE "${CMAKE_BINARY_DIR}/xvfb99.log")
 
-        # Two fixes over the original one-liner, both required for `ctest -j`:
+        # Three fixes over the original one-liner. The first two are required
+        # for `ctest -j`; the third is required for the suite to be testing what
+        # it thinks it is testing.
         #   1. The backgrounded server's stdout/stderr go to a FILE. Previously
         #      it inherited ctest's output pipe and never closed it, so ctest
         #      blocked forever after the tests finished -- the whole suite hung.
         #   2. Readiness is a bounded poll on the server actually answering,
         #      not a flat `sleep 1` that can expire early under parallel load.
+        #   3. THE SUITE NEVER ADOPTS A SERVER IT DID NOT START. "Something
+        #      answers on :99" used to be the whole readiness test, so when an
+        #      earlier run was killed before its cleanup step, its orphaned
+        #      Xvfb kept :99, this command's own Xvfb exited at once with
+        #      "Server is already active for display 99", and every later run
+        #      silently ran on the orphan -- for fourteen hours on one host,
+        #      with the orphan partly swapped out, until an X round trip that
+        #      takes no time on a fresh server took more than the two seconds
+        #      one case allows. The lock file the server writes carries its
+        #      pid; the fixture succeeds only when that pid is the one it
+        #      spawned and still alive, and otherwise fails with the server's
+        #      own log so the orphan is found rather than used.
+        #
+        # -nolisten tcp and no -ac: a test server takes local connections only,
+        # with the server's default access list, the same as the per-fixture
+        # servers the window-manager tests allocate for themselves.
         add_test(NAME start_xvfb
-            COMMAND bash -c "Xvfb :99 -screen 0 1024x768x24 -ac +render -noreset >${XVFB_LOG_FILE} 2>&1 & echo $! > ${XVFB_PID_FILE}; n=0; while [ $n -lt 100 ]; do DISPLAY=:99 xdpyinfo >/dev/null 2>&1 && exit 0; n=$((n+1)); sleep 0.1; done; echo 'wm2: Xvfb :99 did not become ready' >&2; exit 1"
+            COMMAND bash -c "rm -f ${XVFB_PID_FILE}; Xvfb :99 -screen 0 1024x768x24 -nolisten tcp +render -noreset >${XVFB_LOG_FILE} 2>&1 & pid=$!; echo $pid > ${XVFB_PID_FILE}; n=0; while [ $n -lt 100 ]; do if ! kill -0 $pid 2>/dev/null; then echo 'wm2: the Xvfb this suite started on :99 exited; :99 belongs to another server and the suite will not adopt it. Its log:' >&2; cat ${XVFB_LOG_FILE} >&2; exit 1; fi; if DISPLAY=:99 xdpyinfo >/dev/null 2>&1; then if [ \"$(tr -d ' ' < /tmp/.X99-lock 2>/dev/null)\" = \"$pid\" ]; then exit 0; fi; echo 'wm2: :99 answered but its lock file names a different server; the suite will not adopt it' >&2; exit 1; fi; n=$((n+1)); sleep 0.1; done; echo 'wm2: Xvfb :99 did not become ready' >&2; cat ${XVFB_LOG_FILE} >&2; exit 1"
         )
         set_tests_properties(start_xvfb PROPERTIES FIXTURES_SETUP xvfb_display)
 
