@@ -40,6 +40,7 @@
 
 #include "AppEntry.h"
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -71,6 +72,24 @@ struct ConfigEdit {
 inline constexpr std::size_t kConfigFileMaxValueBytes = 256;
 
 
+// How long a save waits for a concurrent saver's lock before refusing, in
+// milliseconds.
+//
+// BOUNDED BECAUSE THE CALLER IS THE GTK MAIN THREAD (W-02). configFileWrite()
+// runs from ConfigWindow::save(), i.e. from a button handler on the thread that
+// also draws the window. An unbounded flock(LOCK_EX) there hands the settings
+// window's responsiveness to whatever else holds a lock on
+// ~/.config/wm2-born-again -- another wm2-config mid-fsync, a backup tool, a
+// dotfile syncer, a shell running `flock ~/.config/... -c ...` -- with no
+// repaint and no way out. That is the exact failure mode WR-09 was written to
+// remove from this thread.
+//
+// Two seconds is far longer than any honest holder of this lock needs (a save
+// is a read, a rewrite of a handful of lines, an fsync and a rename) and far
+// shorter than a user will wait before deciding the program has hung.
+inline constexpr int kConfigFileLockWaitMs = 2000;
+
+
 enum class ConfigWriteResult {
     Ok,
     InvalidEdit,      // an edit the writer refuses to perform -- see below
@@ -78,7 +97,8 @@ enum class ConfigWriteResult {
     DirectoryFailed,  // the target's parent directory could not be created
     TempFailed,       // the temporary file beside the target could not be made
     WriteFailed,      // writing or flushing the temporary file failed
-    RenameFailed      // the temporary file could not be renamed over the target
+    RenameFailed,     // the temporary file could not be renamed over the target
+    Busy              // somebody else is saving; nothing was read and nothing written
 };
 
 

@@ -10,6 +10,7 @@
 #include "ConfigFileWriter.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
@@ -220,19 +221,45 @@ void appendMenuEntry(const AppEntry& e, std::vector<std::string>& out) {
 // has neither problem, creates no litter beside the user's configuration, and
 // costs nothing in contention: the directory holds one configuration file.
 //
-// BEST EFFORT, NEVER FATAL. A filesystem that will not lock (some NFS mounts)
-// leaves the save exactly as unserialised as it was before this existed, which
-// is strictly no worse; a save is never refused because a lock could not be
-// taken.
+// BEST EFFORT, NEVER FATAL, BUT NEVER UNBOUNDED EITHER (W-02). A filesystem
+// that will not lock at all (some NFS mounts) leaves the save exactly as
+// unserialised as it was before this existed, which is strictly no worse. A
+// filesystem that WOULD lock and a holder that will not let go are a different
+// thing: the wait is bounded at kConfigFileLockWaitMs and the save is refused
+// with ConfigWriteResult::Busy rather than freezing the GTK main thread until
+// the holder decides otherwise.
+//
+// THE WAIT IS A POLL, NOT A BLOCKING flock. LOCK_EX alone has no deadline and
+// is interruptible: a signal delivered during it returns EINTR, and treating
+// that as "this filesystem cannot lock" would let the save proceed entirely
+// unserialised -- the lost update WR-02 exists to prevent, produced by a
+// SIGCHLD. LOCK_NB in a loop makes EINTR a retry rather than a verdict and
+// makes the deadline expressible at all.
+//
+// The two failures are told apart because they mean different things to the
+// caller: `unsupported()` is "there is no lock here, carry on unserialised",
+// `busy()` is "somebody else holds it, refuse and say so".
 class DirectoryLock {
 public:
     explicit DirectoryLock(const std::filesystem::path& directory) {
         m_fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-        if (m_fd < 0) return;
-        if (::flock(m_fd, LOCK_EX) != 0) {
-            ::close(m_fd);
-            m_fd = -1;
+        if (m_fd < 0) return;   // no lock to be had; unsupported, not busy
+
+        const auto until = std::chrono::steady_clock::now() +
+                           std::chrono::milliseconds(kConfigFileLockWaitMs);
+        for (;;) {
+            if (::flock(m_fd, LOCK_EX | LOCK_NB) == 0) return;   // held
+            if (errno == EINTR) continue;                        // not a refusal
+            if (errno != EWOULDBLOCK && errno != EAGAIN) break;   // cannot lock here
+            if (std::chrono::steady_clock::now() >= until) {
+                m_busy = true;
+                break;
+            }
+            ::usleep(20 * 1000);
         }
+
+        ::close(m_fd);
+        m_fd = -1;
     }
 
     ~DirectoryLock() {
@@ -244,8 +271,14 @@ public:
     DirectoryLock(const DirectoryLock&) = delete;
     DirectoryLock& operator=(const DirectoryLock&) = delete;
 
+    // Somebody else held the lock for the whole of the deadline. The save must
+    // be refused: it is the only outcome that neither hangs the window nor
+    // overwrites the other saver's work.
+    bool busy() const { return m_busy; }
+
 private:
-    int m_fd = -1;
+    int  m_fd = -1;
+    bool m_busy = false;
 };
 
 // Reads the file into lines. `exists` distinguishes "no such file" (which is an
@@ -404,6 +437,11 @@ ConfigWriteResult configFileWrite(const std::string& path,
     // computed from and the rename that publishes it are one critical section,
     // or a concurrent saver's edits are lost (WR-02).
     const DirectoryLock lock(directory);
+    if (lock.busy()) {
+        errorOut = "another program is writing '" + path + "' at the moment. "
+                   "Nothing was changed; try saving again in a moment.";
+        return ConfigWriteResult::Busy;
+    }
 
     // --- Read ---------------------------------------------------------------
     std::vector<std::string> lines;

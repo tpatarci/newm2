@@ -579,7 +579,12 @@ reported in the window rather than left to be discovered later:
 - **Somebody else is saving at the same time.** Two settings windows, or one
   window and a hand edit through another program, no longer overwrite each
   other: a save waits for the one in progress and then re-reads, so both sets of
-  edits survive.
+  edits survive. The wait is bounded at two seconds. If whatever holds the file
+  is still holding it then — a backup tool, a dotfile syncer, a shell running
+  `flock` over `~/.config/wm2-born-again` — the save is **refused** with *"another
+  program is writing … try saving again in a moment"* rather than freezing the
+  window: nothing is read, nothing is written, and your edits are still in the
+  window to save again.
 
 **How to open it.** When `wm2-config` is installed and on the window manager's
 `PATH` at the moment the window manager starts, the root menu carries a

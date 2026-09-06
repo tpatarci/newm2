@@ -14,6 +14,8 @@
 #include "ConfigFileWriter.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -1023,6 +1025,95 @@ TEST_CASE("a save waits for a concurrent saver rather than overwriting it",
     // And the pass-through content is still pass-through.
     CHECK(content.find("# hand written") != std::string::npos);
     CHECK(content.find("frame-thickness = 7") != std::string::npos);
+}
+TEST_CASE("a save refuses rather than waiting for ever on a held lock",
+          "[config_writer][concurrency]") {
+    // THE OTHER HALF OF THE LOCK (W-02). The case above proves the lock
+    // SERIALISES; this one proves it is BOUNDED. configFileWrite() runs from a
+    // GTK button handler on the thread that draws the settings window, so a
+    // lock held by anything at all -- another wm2-config mid-fsync, a backup
+    // tool, a dotfile syncer, a shell running `flock ~/.config/... -c ...` --
+    // must not be able to freeze that window with no repaint and no way out.
+    //
+    // The refusal the user sees is worth more than the wait: `Busy` carries a
+    // sentence naming the situation, and the window's existing "Could not
+    // save: " path shows it.
+    TempDir dir;
+    const std::string path = dir.file("config");
+    writeFile(path, "# hand written\nframe-thickness = 7\n");
+
+    // TWO pipes. `ready` is the handshake that makes the case deterministic
+    // rather than a race the test hopes to win: the parent's save does not
+    // begin until the child holds the lock. `hold` is what the child BLOCKS ON,
+    // so it releases the lock and exits the moment the parent closes it -- or
+    // the moment the parent dies for any reason at all, including a harness
+    // timeout on a run where the bound is missing. A child that slept on a
+    // timer, or waited to be killed, would be left holding the lock for ever
+    // by exactly the run that proves the bug.
+    int ready[2] = { -1, -1 };
+    int hold[2]  = { -1, -1 };
+    REQUIRE(::pipe(ready) == 0);
+    REQUIRE(::pipe(hold) == 0);
+
+    const pid_t child = ::fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+        ::close(ready[0]);
+        ::close(hold[1]);
+        const int fd = ::open(dir.path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (fd < 0) ::_exit(1);
+        if (::flock(fd, LOCK_EX) != 0) ::_exit(1);
+
+        char go = 'g';
+        ssize_t ignored = ::write(ready[1], &go, 1);
+        (void)ignored;
+        ::close(ready[1]);
+
+        // Held until the parent lets go of the other end. No timer, so the
+        // hold cannot expire mid-measurement.
+        char stop = 0;
+        while (::read(hold[0], &stop, 1) < 0 && errno == EINTR) { }
+        ::_exit(0);
+    }
+
+    ::close(ready[1]);
+    ::close(hold[0]);
+    char go = 0;
+    REQUIRE(::read(ready[0], &go, 1) == 1);
+    ::close(ready[0]);
+
+    const auto started = std::chrono::steady_clock::now();
+    std::string error;
+    const ConfigWriteResult r = save(path, {set("tab-font", "Sans:bold:size=13")}, error);
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - started).count();
+
+    // Release the hold and reap. Closing the pipe is what the child is waiting
+    // on, so nothing here has to signal anything.
+    ::close(hold[1]);
+    int status = 0;
+    ::waitpid(child, &status, 0);
+
+    INFO("result " << static_cast<int>(r) << ", error '" << error << "', "
+         << elapsedMs << " ms");
+
+    // REFUSED, not hung. Without the bound this call never returns until the
+    // holder lets go, which for a stuck holder is never.
+    CHECK(r == ConfigWriteResult::Busy);
+    CHECK(error.find("another program") != std::string::npos);
+
+    // And it refused ON the deadline rather than instantly: an unconditional
+    // LOCK_NB with no retry would refuse a lock a healthy saver was about to
+    // release, which is a different defect with the same result code. Three
+    // times the deadline as the upper bound, so a loaded host cannot flake it.
+    CHECK(elapsedMs >= kConfigFileLockWaitMs / 2);
+    CHECK(elapsedMs < kConfigFileLockWaitMs * 3);
+
+    // Nothing was read, nothing was written, nothing was left behind.
+    CHECK(readFile(path) == "# hand written\nframe-thickness = 7\n");
+    const std::vector<std::string> left = dir.entries();
+    CHECK(left.size() == 1);
+    CHECK(left.front() == "config");
 }
 
 
