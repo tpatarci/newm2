@@ -40,18 +40,24 @@
 
 #include "Config.h"
 #include "ConfigFileWriter.h"
+#include "ConfigProtocol.h"
 #include "SocketServer.h"
 
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 
 #include <fcntl.h>
+#include <poll.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstring>
 #include <cstdlib>
 #include <fstream>
 #include <string>
@@ -286,6 +292,126 @@ ChildProcess spawnConfigGui(const std::string& display,
     return ChildProcess(pid);
 }
 #endif
+
+// ---------------------------------------------------------------------------
+// A peer on the socket path that is NOT a window manager
+// ---------------------------------------------------------------------------
+
+// A socket path SHORT enough to bind.
+//
+// sockaddr_un.sun_path is 108 bytes on Linux (RESEARCH Pitfall 4), and this
+// repository is checked out several directories deep inside a worktree, so a
+// socket under WM2_TEST_WORKDIR does not fit -- bind() answers a path that is
+// too long with a confusing EINVAL rather than with the truth. The fake peer
+// therefore lives beside where the real one would: the same mode-0700
+// per-user directory configSocketDirectory() resolves, with a name unique to
+// this process and this call so two ctest workers cannot collide (T-8-TMP,
+// which forbids a fixed /tmp name, not a per-uid directory).
+std::string shortSocketPath(const std::string& suffix)
+{
+    static int counter = 0;
+    const std::string dir = configSocketDirectory();
+    makeParents(dir + "/x");
+    ::mkdir(dir.c_str(), 0700);
+    return dir + "/test-" + std::to_string(::getpid()) + "-" +
+           std::to_string(++counter) + "-" + suffix;
+}
+
+
+// Listens on a unix socket of this case's own and answers the hello in one of
+// two dishonest ways. Its whole purpose is to be a stranger: D-15 says the GUI
+// never sends settings to one, and the only way to prove that is to be one.
+//
+// The accept loop runs on a thread this class owns and joins in its destructor;
+// nothing here is terminated by name or left behind.
+class FakeServer {
+public:
+    enum class Reply {
+        Nothing,       // accepts, reads, and says nothing at all
+        WrongVersion   // a well-formed hello-ack naming a version nobody speaks
+    };
+
+    FakeServer(const std::string& path, Reply reply)
+        : m_path(path), m_reply(reply)
+    {
+        makeParents(path);
+
+        m_listenFd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (m_listenFd < 0) return;
+
+        struct sockaddr_un addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        if (path.size() + 1 > sizeof(addr.sun_path)) return;
+        std::memcpy(addr.sun_path, path.c_str(), path.size());
+
+        ::unlink(path.c_str());
+        if (::bind(m_listenFd, reinterpret_cast<struct sockaddr*>(&addr),
+                   sizeof(addr)) != 0) {
+            return;
+        }
+        if (::listen(m_listenFd, 4) != 0) return;
+
+        m_listening = true;
+        m_thread = std::thread([this]() { serve(); });
+    }
+
+    ~FakeServer()
+    {
+        m_stop = true;
+        if (m_listenFd >= 0) ::shutdown(m_listenFd, SHUT_RDWR);
+        if (m_thread.joinable()) m_thread.join();
+        if (m_listenFd >= 0) ::close(m_listenFd);
+        ::unlink(m_path.c_str());
+    }
+
+    FakeServer(const FakeServer&) = delete;
+    FakeServer& operator=(const FakeServer&) = delete;
+
+    bool listening() const { return m_listening; }
+    const std::string& path() const { return m_path; }
+
+private:
+    void serve()
+    {
+        while (!m_stop) {
+            struct pollfd p;
+            p.fd = m_listenFd;
+            p.events = POLLIN;
+            p.revents = 0;
+            const int r = ::poll(&p, 1, 100);
+            if (r <= 0) continue;
+
+            const int fd = ::accept(m_listenFd, nullptr, nullptr);
+            if (fd < 0) continue;
+
+            if (m_reply == FakeServer::Reply::WrongVersion) {
+                ConfigMessage ack;
+                ack.type = ConfigMessageType::HelloAck;
+                ack.program = "not-really-a-window-manager";
+                ack.protocol = 99;
+                const std::string bytes = configProtocolEncode(ack);
+                ssize_t ignored = ::send(fd, bytes.data(), bytes.size(), MSG_NOSIGNAL);
+                (void)ignored;
+            }
+
+            // Held open either way, so the client's own deadline is what ends
+            // the exchange rather than a peer hanging up and looking like an
+            // absent window manager.
+            for (int i = 0; i < 80 && !m_stop; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            ::close(fd);
+        }
+    }
+
+    std::string       m_path;
+    Reply             m_reply;
+    int               m_listenFd = -1;
+    bool              m_listening = false;
+    std::atomic<bool> m_stop{false};
+    std::thread       m_thread;
+};
 
 const char* kGuiNotBuilt =
     "wm2-config was not built in this tree (BUILD_CONFIG_GUI resolved to OFF, "
@@ -722,4 +848,73 @@ TEST_CASE("the protocol client reports a reason and stays file-only when nothing
     CHECK(client.state() == ProtocolClient::State::NoSocket);
     CHECK_FALSE(client.reason().empty());
     CHECK(client.fileDescriptor() < 0);
+}
+
+
+// =============================================================================
+// D-15: the GUI never sends settings to a stranger
+// =============================================================================
+
+TEST_CASE("a peer that accepts the connection and says nothing is a stranger, not an absent window manager",
+          "[wm2_config_smoke]")
+{
+    // The two file-only states are not interchangeable. "Nothing is listening"
+    // is an ordinary Tuesday on a droplet with no desktop open; "something is
+    // listening on the window manager's socket path and will not say what it
+    // is" is worth a person's attention, and the banner has to be able to tell
+    // them apart (D-15).
+    FakeServer server(shortSocketPath("silent"), FakeServer::Reply::Nothing);
+    REQUIRE(server.listening());
+
+    ProtocolClient client;
+    CHECK_FALSE(client.connect(server.path()));
+    CHECK(client.state() == ProtocolClient::State::Refused);
+    CHECK_FALSE(client.reason().empty());
+    CHECK(client.fileDescriptor() < 0);   // nothing was sent, and nothing will be
+}
+
+TEST_CASE("a peer speaking a protocol version this build does not is refused by name",
+          "[wm2_config_smoke]")
+{
+    FakeServer server(shortSocketPath("wrongver"), FakeServer::Reply::WrongVersion);
+    REQUIRE(server.listening());
+
+    ProtocolClient client;
+    CHECK_FALSE(client.connect(server.path()));
+    CHECK(client.state() == ProtocolClient::State::Refused);
+    INFO("reason: " << client.reason());
+    CHECK(client.reason().find("99") != std::string::npos);
+
+    // And the banner a person actually reads carries that reason on top of the
+    // fixed sentence, rather than replacing it.
+    const std::string banner =
+        connectionBannerText(ConnectionState::FileOnlyRefused, client.reason());
+    CHECK(banner.rfind(kFileOnlyBannerText, 0) == 0);
+    CHECK(banner.find("99") != std::string::npos);
+}
+
+TEST_CASE("writing an empty edit set WOULD move the file's modification time",
+          "[wm2_config_smoke]")
+{
+    // The mutation test for the case above. "Save with nothing changed leaves
+    // the file untouched" would pass just as happily against a writer that
+    // never touched the file at all, which would make it a test of nothing.
+    // This case proves the opposite arm: handing the writer an empty edit set
+    // DOES rewrite the file and DOES move its modification time -- so the
+    // window's decision not to call it is load-bearing, not incidental.
+    const std::string tree = makeTree("emptyedits");
+    const std::string userFile = tree + "/user/wm2-born-again/config";
+    writeFile(userFile, "borders=#00FF00\n");
+
+    struct timespec before;
+    REQUIRE(modificationTime(userFile, before));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    std::string error;
+    REQUIRE(configFileWrite(userFile, {}, {}, false, error) == ConfigWriteResult::Ok);
+
+    struct timespec after;
+    REQUIRE(modificationTime(userFile, after));
+    CHECK_FALSE(sameTime(before, after));
+    CHECK(readFileOrEmpty(userFile) == "borders=#00FF00\n");   // same bytes, new stamp
 }
