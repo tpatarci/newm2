@@ -26,13 +26,18 @@
 // D-03 -- THE FILE-ONLY BANNER
 // ---------------------------------------------------------------------------
 //
-// The sentence a file-only session shows begins "Not connected to a running
-// wm2-born-again" and is fixed by decision D-03. It has exactly one definition
-// in the tree, kFileOnlyBannerText in apps/wm2-config/ConnectionState.h, and a
-// [wm2_config_smoke] case compares against that constant rather than against a
-// copy of its own -- which is what makes the sentence unable to change quietly.
-// It is defined in a header rather than here because this file defines main()
-// and links GTK, so a display-free test can neither link it nor compile it.
+// The sentence a file-only session shows is fixed by decision D-03 and begins
+// "Not connected to a running wm2-born-again". It has exactly ONE definition in
+// the whole tree -- kFileOnlyBannerText in apps/wm2-config/ConnectionState.h,
+// which is where the rest of that sentence lives -- and a [wm2_config_smoke]
+// case compares against that constant rather than against a copy of its own,
+// which is what makes the sentence unable to change quietly.
+//
+// It is defined in a header rather than in this file because this file defines
+// main() and links GTK: a display-free Catch2 binary can neither link it nor
+// compile it, so "declared once" and "compared against by a test" are only
+// simultaneously true in a header. The line above quotes the sentence's opening
+// so a reader of the window's source is not sent hunting for it.
 
 #include "AppearancePage.h"
 #include "ConnectionState.h"

@@ -113,15 +113,27 @@ bool ProtocolClient::connect(const std::string& path)
     }
 
     m_fd = fd;
-    m_state = State::Connected;   // provisional: the handshake decides
+    // The state stays whatever it was until the handshake FINISHES. An earlier
+    // draft set it to Connected here "provisionally", and the consequence was
+    // visible: a peer that accepts the connection and then says nothing left
+    // the window announcing itself connected for the whole five seconds of the
+    // handshake deadline. Nothing may observe a connection the hello has not
+    // yet paid for.
 
     // --- D-15: the hello, and nothing else, until it is acknowledged --------
     ConfigMessage hello;
     hello.type = ConfigMessageType::Hello;
     hello.program = "wm2-config";
     hello.protocol = kConfigProtocolVersion;
+    // From here on a failure is REFUSED, never NoSocket. The transport
+    // connected, so something is on the other end of the window manager's
+    // socket path; a peer that will not identify itself is a stranger, and
+    // D-15's whole point is that the two situations are different for the
+    // person reading the banner. "Nothing is listening" is an ordinary
+    // Tuesday on a droplet with no desktop open; "something is listening and
+    // will not say what it is" is worth investigating.
     if (!send(hello)) {
-        disconnect(State::NoSocket, "could not send the handshake");
+        disconnect(State::Refused, "could not send the handshake");
         return false;
     }
 
@@ -134,7 +146,9 @@ bool ProtocolClient::connect(const std::string& path)
                                 }});
 
     if (!pumpUntil([&]() { return answered; }, kHandshakeMs)) {
-        disconnect(State::NoSocket, "no reply to the handshake");
+        disconnect(State::Refused,
+                   "something is listening on the socket but did not answer the "
+                   "handshake");
         return false;
     }
 

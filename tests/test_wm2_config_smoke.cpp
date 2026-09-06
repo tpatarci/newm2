@@ -784,6 +784,59 @@ TEST_CASE("wm2-config opens with no socket to talk to and says so",
 #endif
 }
 
+TEST_CASE("wm2-config points at a stranger and says file-only, never connected",
+          "[wm2_config_smoke]")
+{
+#ifndef WM2_CONFIG_PATH
+    SKIP(kGuiNotBuilt);
+#else
+    // The end-to-end form of the D-15 case above: a real wm2-config, pointed at
+    // a real stranger, must end up in the refused state and say so.
+    //
+    // The sawConnected half is deliberately WEAKER than it looks, and saying so
+    // here is more useful than letting a later reader over-trust it. It watches
+    // for a window that announces itself connected while the handshake is still
+    // unfinished. A mutation putting that premature state back into the client
+    // does NOT currently fail this case, because the window only republishes
+    // its state when the client's state handler fires and the premature
+    // assignment bypasses it -- so the lie is never observable through the
+    // property. The assertion is kept as insurance for the day the connection
+    // becomes asynchronous or the banner is driven by a poll, which is exactly
+    // when it would start being observable.
+    WmFixture fixture;
+    const std::string home = makeTree("guihome-stranger");
+    FakeServer server(shortSocketPath("guistranger"), FakeServer::Reply::Nothing);
+    REQUIRE(server.listening());
+
+    ChildProcess gui = spawnConfigGui(fixture.display(),
+                                      {"--socket", server.path()}, home);
+    REQUIRE(gui.pid() > 0);
+
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    bool sawConnected = false;
+    std::string state;
+    const bool refused = WmFixture::pollUntil([&]() {
+        std::string seen;
+        const Window win = findConfigWindow(d, DefaultRootWindow(d), seen);
+        if (win == None || seen.empty()) return false;
+        state = seen;
+        if (seen == std::string(connectionStateName(ConnectionState::Connected))) {
+            sawConnected = true;
+        }
+        return seen == std::string(connectionStateName(ConnectionState::FileOnlyRefused));
+    }, 30000);
+
+    INFO("last state seen: '" << state << "'");
+    CHECK(refused);
+    CHECK_FALSE(sawConnected);
+
+    gui.shutdown();
+#endif
+}
+
 TEST_CASE("a colour committed through the form state and the protocol client reaches the desktop",
           "[wm2_config_smoke]")
 {
