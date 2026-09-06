@@ -464,6 +464,84 @@ sentence in a document:
 
 ---
 
+## Changing settings while it runs
+
+A running window manager listens on a **Unix domain socket of its own**, and
+this release ships `wm2-ctl`, a small command that talks to it. That is the
+whole feature: you can change a setting on a desktop that is already open,
+from a shell, without restarting the window manager and without closing and
+reopening a single window.
+
+`wm2-ctl` is part of the window-manager package rather than of any graphical
+tool, and it links no X11, no Xft and no GTK. It needs no display of its own.
+The point is a droplet reached over SSH with nothing on the screen: you can
+still ask the window manager what it is doing and tell it to change.
+
+Four subcommands, and no others:
+
+| Command | What it does |
+|---|---|
+| `wm2-ctl status` | Print what the window manager is doing — its version, the protocol version, how long it has been up, the screen size, and how many windows it is managing and hiding. |
+| `wm2-ctl get KEY` | Print the value the window manager is **actually using**, which after a `set` is not necessarily what any file on disk says. |
+| `wm2-ctl set KEY VALUE` | Change a setting on the running desktop, now. |
+| `wm2-ctl reload` | Re-read the configuration files from disk and apply the result. |
+
+`wm2-ctl --help` lists every settable key, and the list is generated from the
+same table the window manager's own `--help` comes from, so the two tools
+cannot advertise different settings.
+
+**A `set` changes the running desktop and writes nothing.** No file is touched,
+so nothing you edited by hand is rewritten and no comment of yours is lost —
+and `wm2-ctl reload` therefore discards a `set` and puts the window manager
+back on what the files say. That is deliberate: it makes "try it and see" free
+of consequences. If you want a change to survive a restart, put it in the
+config file and reload.
+
+**A value the config file would silently correct is refused here instead.** The
+socket uses the *same* parser the config file uses — there is no second, laxer
+route into the window manager's state — but where the file clamps a
+`frame-thickness` of 500 down to 50 and warns on stderr, `wm2-ctl` tells you the
+value is out of range and changes nothing. A file is read once by somebody who
+can look at the warning; a command has somebody waiting for an answer, and
+answering "yes" to a request nobody made is worse than saying no.
+
+Exit codes, so a shell script can tell the cases apart:
+
+| Code | Meaning |
+|---|---|
+| `0` | Acknowledged. |
+| `1` | The window manager refused the request — the reason is on stderr, naming the key. |
+| `2` | There is no window manager to talk to. |
+| `3` | Usage error: `wm2-ctl` could not work out what was being asked. |
+
+`1` and `2` are deliberately different: "running and refused" is not the same
+situation as "not running", and a script that treats them alike will do the
+wrong thing in one of them.
+
+**Which settings apply live.** In this release `frame-thickness` does, and it is
+the hard one — it changes the geometry of every frame, tab and resize handle
+already on screen. Every other key is accepted, stored and reported by `get`,
+and the remaining live applications land in the following release. A `set` of a
+key that is not yet applied live is not lost; it is simply not visible until
+then.
+
+**Nothing about your windows crosses the socket.** No window title, no
+application class, no window geometry, no window count broken down per window —
+the `status` reply carries seven fixed fields about the *window manager* and
+nothing about what you have open. This is enforced in the code and asserted by
+tests rather than left as an intention.
+
+**Only your own account can connect.** The socket lives in a directory created
+mode 0700 and is itself mode 0600, and the window manager checks the connecting
+process's credentials against its own user before it reads a single byte. Any
+other user, root included, is refused and the connection is closed.
+
+**`SIGHUP` still means exit**, exactly as it always has, and does *not* mean
+reload. If you know Unix daemons you will assume otherwise, which is why it is
+written down here: reloading is `wm2-ctl reload` and nothing else.
+
+---
+
 ## For developers
 
 `COMPILED_CODE_BEHAVIOR_CHECKLIST.md` at the repository root is the release and
@@ -479,6 +557,11 @@ bash scripts/preflight.sh                       # every declared dependency, on 
 bash scripts/gates/build-all.sh                 # Debug, Release and sanitizer trees, full suite
 bash scripts/analysis/run-static-analysis.sh    # cppcheck and clang-tidy against the baseline
 bash scripts/capture-display-capabilities.sh :2 label
+
+wm2-ctl status                                  # what the running WM is doing
+wm2-ctl get frame-thickness                     # the value it is actually using
+wm2-ctl set frame-thickness 12                  # applied now, written nowhere
+wm2-ctl reload                                  # re-read the config files
 ```
 
 `./wm2-born-again --help` lists every setting, and every setting it lists is one
@@ -488,8 +571,9 @@ option parser is handed, so the two cannot drift apart.
 ### The configuration socket
 
 A running window manager listens on a Unix domain socket, so a configuration
-tool can ask it questions and, in a later release, change settings without a
-restart.
+tool can ask it questions and change settings without a restart. `wm2-ctl`
+above is the reference client for what follows; this subsection is the wire
+detail a second client would need.
 
 The path is published on the root window as the property `_WM2_CONFIG_SOCKET`,
 a `STRING` holding the socket's filesystem path:
@@ -515,10 +599,16 @@ at all.
 Messages are one JSON object per line, terminated by a newline, and a line
 longer than 4096 bytes is refused. The first message on a connection must be a
 `hello` naming the client program and the protocol version; anything else closes
-the connection. This release answers `hello` and `status`. The `status` reply
-carries the window manager version, the protocol version, uptime in seconds, the
-screen width and height, and counts of managed and hidden windows — and nothing
-else. No window title, class or geometry is ever sent over the socket.
+the connection. This release answers `hello`, `status`, `get`, `set` and
+`reload`. The `status` reply carries the window manager version, the protocol
+version, uptime in seconds, the screen width and height, and counts of managed
+and hidden windows — and nothing else. No window title, class or geometry is
+ever sent over the socket.
+
+A `set` is validated for kind and range before it reaches the parser and is then
+applied through the same `Config::applyKeyValue()` the config file goes through.
+There is exactly one parser, and the socket uses it: no value can reach the
+window manager's state by this route that the file route would have rejected.
 
 If the socket cannot be created the window manager says so on stderr and carries
 on managing windows normally; only the configuration connection is lost.
