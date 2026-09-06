@@ -760,8 +760,14 @@ void WindowManager::menu(XButtonEvent *e)
 
 void WindowManager::showGeometry(int x, int y)
 {
-    char string[20];
-    std::sprintf(string, "%d %d\n", x, y);
+    // 32, and snprintf (WR-16). Two ints at their widest produce
+    // "-2147483648 -2147483648\n" -- 24 bytes plus the terminator, into what
+    // was a 20-byte buffer. The current callers pass screen-clamped
+    // coordinates so it was latent rather than live, but showGeometry() is a
+    // public method with no documented bound on its arguments and sprintf
+    // gives it no way to fail safely.
+    char string[32];
+    std::snprintf(string, sizeof(string), "%d %d\n", x, y);
     int len = static_cast<int>(std::strlen(string));
 
     XGlyphInfo extents;
