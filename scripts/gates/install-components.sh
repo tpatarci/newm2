@@ -47,6 +47,19 @@ case "${1:-}" in
     -h|--help) usage; exit 0 ;;
 esac
 
+# WR-17. BUILD_DIR is used two ways: handed straight to cmake, and concatenated
+# after $REPO_ROOT to make the staging root. An absolute argument makes those
+# two disagree -- cmake operates on /tmp/mybuild while staging goes to
+# "$REPO_ROOT//tmp/mybuild/install-components", so the gate creates a tmp/
+# tree inside the checkout, and the cleanup trap's guard still matches, so the
+# stage is removed but the directories it made are not. The usage text
+# advertises only relative paths; this is what enforces it.
+case "$BUILD_DIR" in
+    /*) echo "wm2: install-components: build-dir must be relative to the" \
+             "repository root (got '$BUILD_DIR')" >&2
+        exit 2 ;;
+esac
+
 FAILURES=()
 
 fail() {
