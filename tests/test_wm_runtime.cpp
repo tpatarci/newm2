@@ -4929,3 +4929,271 @@ TEST_CASE("A category submenu with more entries than fit stays inside the screen
     CHECK(sub.y + sub.h <= screenH);
     dismissMenu(d, driver);
 }
+
+
+// ---------------------------------------------------------------------------
+// [wm_config_runtime] -- D-11: the root menu's Configure entry
+//
+// The decision, in its own words: the window manager adds a "Configure..."
+// entry to the top level of its root menu when a `wm2-config` binary is found
+// on PATH **at startup**, and otherwise no entry at all. The probe running once
+// is the decision, not a shortcut: putting the binary on PATH after the window
+// manager started deliberately changes nothing until it is restarted.
+//
+// WHY THESE CASES LIVE AT THE END OF THE FILE rather than beside the rest of
+// the [wm_config_runtime] group. They need the pixel machinery the
+// [wm_menulabel] section defines further down -- captureRootBitmap(),
+// pixelBounds(), nudgeUntil(), openRootMenuVerified() and seedApplications().
+// Hoisting those to the top would reorder a section whose comments explain
+// themselves where they sit; appending here does not move a line of it.
+//
+// HOW "ONE MORE ENTRY" IS OBSERVED. There is no readable label channel: the
+// menu paints text with Xft and the server keeps pixels, not strings. So the
+// row COUNT is derived from two things that are measured rather than assumed --
+// the popup's own height, read back from the server, and the row height, read
+// off the highlight band's bounding box exactly as the submenu-overflow case
+// reads it. menu() lays the outer popup out as `entryHeight * n + 13`
+// (src/Buttons.cpp), so n follows from those two measurements.
+//
+// WHAT MAKES THE COMPARISON FAIR. The two fixtures differ in exactly ONE
+// environment variable. Both are handed the same seeded XDG data tree, so the
+// same .desktop entry is discovered; both scan the same /usr/bin, so the binary
+// scanner contributes the same "Other" category to both; both run with the same
+// menu font, so entryHeight is the same measurement in each. The only free
+// variable is whether a directory holding a `wm2-config` binary is on the child
+// PATH.
+// ---------------------------------------------------------------------------
+namespace {
+
+// Two directories: one holding an executable named `wm2-config`, one holding
+// nothing. A PATH built from the first differs from a PATH built from the
+// second in exactly one fact -- whether a binary of that name is reachable --
+// which is the single variable these cases turn on.
+struct ConfigGuiDirs {
+    std::string withGui;
+    std::string withoutGui;
+};
+
+ConfigGuiDirs makeConfigGuiDirs(const char* tag)
+{
+    static int counter = 0;
+    const std::string base = std::string(WM2_TEST_WORKDIR) + "/configgui-" +
+                             std::string(tag) + "-" +
+                             std::to_string(::getpid()) + "-" +
+                             std::to_string(++counter);
+    ::mkdir(base.c_str(), 0700);
+
+    ConfigGuiDirs dirs;
+    dirs.withGui    = base + "/with";
+    dirs.withoutGui = base + "/without";
+    ::mkdir(dirs.withGui.c_str(), 0700);
+    ::mkdir(dirs.withoutGui.c_str(), 0700);
+    return dirs;
+}
+
+// Put the REAL built configuration GUI on the "with" side, by symlink rather
+// than by copy. The point of using the shipped binary here instead of a
+// stand-in is that the probe under test is `access(dir + "/wm2-config", X_OK)`
+// against whatever the build actually produced -- a stand-in would prove the
+// test's own file executable and nothing about the product.
+bool linkBuiltConfigGui(const std::string& dir, const std::string& target)
+{
+    const std::string link = dir + "/wm2-config";
+    ::unlink(link.c_str());
+    return ::symlink(target.c_str(), link.c_str()) == 0;
+}
+
+// An executable named `wm2-config` that records having been run and exits at
+// once. Used only by the SELECTION case, where what is being asserted is that
+// the entry execs a binary of that name through the window manager's own spawn
+// path -- not that GTK can open a window, which the [wm2_config_smoke] suite
+// already owns. A shim also leaves nothing running to clean up, which keeps
+// this case inside the project rule that every process is stopped by a PID its
+// own starter created.
+bool writeConfigGuiShim(const std::string& dir, const std::string& sentinel)
+{
+    const std::string path = dir + "/wm2-config";
+    std::ofstream out(path);
+    if (!out) return false;
+    out << "#!/bin/sh\n"
+        << ": > '" << sentinel << "'\n";
+    out.close();
+    return ::chmod(path.c_str(), 0700) == 0;
+}
+
+// The outer root menu's row count, from the popup geometry and the measured
+// row height. Returns -1 if the highlight never appeared, so a caller can tell
+// "no rows" from "never measured".
+//
+// The pointer is left ON row 0 with the button still held; the caller owns the
+// release.
+int measureMenuRows(Display* d, XTestDriver& driver, const Rect& menuRect,
+                    unsigned long highlight, int& entryHeightOut)
+{
+    entryHeightOut = 0;
+    if (!nudgeUntil(driver, menuRect.x + menuRect.w / 2, menuRect.y + 14, [&] {
+            return countAll(captureRootBitmap(d, menuRect), highlight) > 0;
+        })) {
+        return -1;
+    }
+
+    int hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+    if (!pixelBounds(captureRootBitmap(d, menuRect), highlight, hx0, hy0, hx1, hy1)) {
+        return -1;
+    }
+
+    const int entryHeight = hy1 - hy0 + 1;
+    if (entryHeight <= 0) return -1;
+    entryHeightOut = entryHeight;
+
+    // menu(): outerH = entryHeight * n + 13.
+    return (menuRect.h - 13) / entryHeight;
+}
+
+} // namespace
+
+
+TEST_CASE("The root menu carries a Configure entry when wm2-config is on the "
+          "window manager's PATH at startup, and not when it is not",
+          "[wm_config_runtime]")
+{
+#ifndef WM2_CONFIG_PATH
+    SKIP("this tree was configured without the settings window, so there is no "
+         "wm2-config binary to put on a PATH");
+#else
+    const ConfigGuiDirs dirs = makeConfigGuiDirs("menu");
+    REQUIRE(linkBuiltConfigGui(dirs.withGui, WM2_CONFIG_PATH));
+
+    // One seeded data tree, used by BOTH runs, so the discovered-application
+    // half of the menu is the same in each and the row-count difference can
+    // only come from the entry under test.
+    const std::string data = seedApplications(1);
+
+    // Rows in the top level of the root menu, for a window manager started with
+    // `path` as its whole PATH.
+    auto rowsWithPath = [&](const std::string& path, int& entryHeightOut) -> int {
+        WmFixtureOptions o = cleanFixture({"--menu-background=blue",
+                                           "--menu-foreground=red",
+                                           "--menu-highlight=green"});
+        o.childEnv["XDG_DATA_HOME"]  = data;
+        o.childEnv["XDG_DATA_DIRS"]  = data + "/no-system-data";
+        o.childEnv["XDG_CACHE_HOME"] = data + "/cache";
+        o.childEnv["PATH"]           = path;
+
+        WmFixture fixture(o);
+        x11::DisplayPtr dp = fixture.openDisplay();
+        REQUIRE(dp != nullptr);
+        Display* d = dp.get();
+        XTestDriver driver(fixture.display());
+        parkPointer(d);
+
+        const unsigned long hl = namedPixel(d, "green");
+        REQUIRE(hl != ~0UL);
+
+        Window menu = None; Rect menuRect; std::string why;
+        REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                     menu, menuRect, why, namedPixel(d, "blue")));
+        INFO("menu open diagnostics: " << why);
+
+        const int rows = measureMenuRows(d, driver, menuRect, hl, entryHeightOut);
+        INFO("wm stderr:\n" << fixture.wmStderr());
+        dismissMenu(d, driver);
+        return rows;
+    };
+
+    int heightWithout = 0;
+    const int rowsWithout = rowsWithPath(dirs.withoutGui, heightWithout);
+    int heightWith = 0;
+    const int rowsWith = rowsWithPath(dirs.withGui + ":" + dirs.withoutGui, heightWith);
+
+    INFO("rows without the GUI on PATH: " << rowsWithout
+         << " (entry height " << heightWithout << ")");
+    INFO("rows with the GUI on PATH:    " << rowsWith
+         << " (entry height " << heightWith << ")");
+
+    // Anti-vacuity: a measurement that failed reports -1, and -1 == -1 would
+    // otherwise satisfy a bare difference check.
+    REQUIRE(rowsWithout > 0);
+    REQUIRE(rowsWith > 0);
+    // Same font, same fixture geometry: a differing row height would mean the
+    // two runs are not comparable and the row counts below prove nothing.
+    REQUIRE(heightWith == heightWithout);
+
+    CHECK(rowsWith == rowsWithout + 1);
+#endif
+}
+
+
+TEST_CASE("Selecting the root menu's Configure entry runs wm2-config and leaves "
+          "no zombie behind", "[wm_config_runtime]")
+{
+    const ConfigGuiDirs dirs = makeConfigGuiDirs("spawn");
+    const std::string sentinel = sentinelPath("configgui");
+    ::unlink(sentinel.c_str());
+    REQUIRE(writeConfigGuiShim(dirs.withGui, sentinel));
+
+    const std::string data = seedApplications(1);
+
+    WmFixtureOptions o = cleanFixture({"--menu-background=blue",
+                                       "--menu-foreground=red",
+                                       "--menu-highlight=green"});
+    o.childEnv["XDG_DATA_HOME"]  = data;
+    o.childEnv["XDG_DATA_DIRS"]  = data + "/no-system-data";
+    o.childEnv["XDG_CACHE_HOME"] = data + "/cache";
+    // /bin is on this PATH because the shim is a `#!/bin/sh` script and the
+    // window manager's spawn path is execvp(), not a shell.
+    o.childEnv["PATH"]           = dirs.withGui + ":/usr/bin:/bin";
+
+    WmFixture fixture(o);
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    const unsigned long hl = namedPixel(d, "green");
+    REQUIRE(hl != ~0UL);
+
+    Window menu = None; Rect menuRect; std::string why;
+    REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                 menu, menuRect, why, namedPixel(d, "blue")));
+    INFO("menu open diagnostics: " << why);
+
+    int entryHeight = 0;
+    const int rows = measureMenuRows(d, driver, menuRect, hl, entryHeight);
+    REQUIRE(rows > 0);
+    REQUIRE(entryHeight > 0);
+
+    // D-11 puts the entry at the END of the top level, and the Exit slot is
+    // absent here because this menu was opened at (300,5) rather than in the
+    // bottom-right corner. So the last row is the Configure row.
+    const int lastRowCentre = menuRect.y + 11 + (rows - 1) * entryHeight + entryHeight / 2;
+    REQUIRE(nudgeUntil(driver, menuRect.x + menuRect.w / 2, lastRowCentre, [&] {
+        int hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+        if (!pixelBounds(captureRootBitmap(d, menuRect), hl, hx0, hy0, hx1, hy1)) {
+            return false;
+        }
+        return hy0 >= (rows - 1) * entryHeight;
+    }));
+
+    driver.release(Button1);
+    XSync(d, False);
+
+    const bool ran = WmFixture::pollUntil([&] {
+        return ::access(sentinel.c_str(), F_OK) == 0;
+    }, 20000);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    CHECK(ran);
+
+    // The window manager double-forks, so the program it launched is orphaned
+    // to init and can never be its zombie; what this counts is the intermediate
+    // child, which spawnArgv() reaps itself. Selecting the entry must not have
+    // introduced a second, unreaped path.
+    settleWm(d);
+    const int zombies = zombieChildrenOf(fixture.wm().pid());
+    INFO("zombie children of the WM: " << zombies);
+    CHECK(zombies == 0);
+
+    ::unlink(sentinel.c_str());
+}

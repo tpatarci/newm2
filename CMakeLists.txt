@@ -1028,6 +1028,20 @@ if(BUILD_TESTS)
         # The tests exec the binary, so it must exist before they run.
         add_dependencies(test_wm_runtime wm2-born-again)
 
+        # D-11's Configure entry is a PATH probe, so the case that proves the
+        # entry appears has to put a REAL wm2-config on the window manager's
+        # PATH. Handed in as a path, exactly as test_wm2_config_smoke below
+        # takes it, so nothing ever searches the developer's own PATH and a
+        # wm2-config installed on this machine can never be the one under test.
+        # Its ABSENCE is what the case's skip branch keys on, which is why the
+        # definition is conditional rather than the target being conditional.
+        if(CONFIG_GUI_ENABLED)
+            target_compile_definitions(test_wm_runtime PRIVATE
+                WM2_CONFIG_PATH="$<TARGET_FILE:wm2-config>"
+            )
+            add_dependencies(test_wm_runtime wm2-config)
+        endif()
+
         # ADD_TAGS_AS_LABELS is required by D-33, or the eleven tags this file
         # carries are not selectable by the anchored label gates. Eleven is the
         # figure computed by
