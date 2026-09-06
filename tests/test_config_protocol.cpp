@@ -385,6 +385,104 @@ TEST_CASE("A member name this version does not know is malformed", "[config_prot
             ConfigDecodeResult::Malformed);
 }
 
+TEST_CASE("A member the decoded type does not carry is malformed", "[config_protocol]") {
+    // The same class DISC-01c gives an unknown member NAME, applied one step
+    // later: `protocol` is a member this version knows, but `reload` does not
+    // carry it. Accepting it executed a reload while silently dropping a
+    // qualifier the sender meant something by -- acting on a message the
+    // receiver did not understand, which is the exact outcome the strict rule
+    // exists to prevent.
+    ConfigMessage got;
+    CHECK(configProtocolDecode("{\"type\":\"reload\",\"protocol\":2}\n", got) ==
+          ConfigDecodeResult::Malformed);
+    CHECK(configProtocolDecode("{\"type\":\"reloaded\",\"key\":\"k\"}\n", got) ==
+          ConfigDecodeResult::Malformed);
+    CHECK(configProtocolDecode("{\"type\":\"status\",\"fields\":[\"a\",\"b\"]}\n", got) ==
+          ConfigDecodeResult::Malformed);
+    CHECK(configProtocolDecode("{\"type\":\"get\",\"value\":\"v\"}\n", got) ==
+          ConfigDecodeResult::Malformed);
+    CHECK(configProtocolDecode("{\"type\":\"hello\",\"key\":\"k\",\"protocol\":1}\n", got) ==
+          ConfigDecodeResult::Malformed);
+    CHECK(configProtocolDecode("{\"type\":\"status-reply\",\"reason\":\"r\"}\n", got) ==
+          ConfigDecodeResult::Malformed);
+
+    // The members each type DOES carry are still accepted, so the rule is not
+    // simply refusing everything.
+    CHECK(configProtocolDecode("{\"type\":\"reload\"}\n", got) == ConfigDecodeResult::Ok);
+    CHECK(configProtocolDecode("{\"type\":\"error\",\"key\":\"k\",\"reason\":\"r\"}\n", got) ==
+          ConfigDecodeResult::Ok);
+
+    // And an UNKNOWN type is still UnknownType rather than Malformed: the type
+    // is resolved before its members are judged, because a version that cannot
+    // name the type cannot know what members it carries either.
+    CHECK(configProtocolDecode("{\"type\":\"list-windows\",\"key\":\"k\"}\n", got) ==
+          ConfigDecodeResult::UnknownType);
+}
+
+TEST_CASE("A repeated member is malformed, whichever member it is", "[config_protocol]") {
+    // Last-one-wins is the JSON convention and it is the wrong one here: two
+    // `key` members mean the sender and the receiver disagree about which
+    // setting is being read, and nothing on the wire says which of them is
+    // right. Refusing is the only answer that cannot be silently wrong.
+    ConfigMessage got;
+    CHECK(configProtocolDecode("{\"type\":\"get\",\"key\":\"a\",\"key\":\"b\"}\n", got) ==
+          ConfigDecodeResult::Malformed);
+    CHECK(configProtocolDecode("{\"type\":\"set\",\"key\":\"a\",\"value\":\"v\","
+                               "\"value\":\"w\"}\n", got) == ConfigDecodeResult::Malformed);
+    CHECK(configProtocolDecode("{\"type\":\"hello\",\"program\":\"a\",\"protocol\":1,"
+                               "\"protocol\":2}\n", got) == ConfigDecodeResult::Malformed);
+    CHECK(configProtocolDecode("{\"type\":\"hello\",\"program\":\"a\",\"program\":\"b\","
+                               "\"protocol\":1}\n", got) == ConfigDecodeResult::Malformed);
+    CHECK(configProtocolDecode("{\"type\":\"status-reply\",\"fields\":[\"a\",\"b\"],"
+                               "\"fields\":[\"c\",\"d\"]}\n", got) ==
+          ConfigDecodeResult::Malformed);
+    // The type member was already refused when repeated; it is checked here so
+    // the two rules are asserted in one place.
+    CHECK(configProtocolDecode("{\"type\":\"get\",\"type\":\"set\",\"key\":\"k\"}\n", got) ==
+          ConfigDecodeResult::Malformed);
+}
+
+TEST_CASE("Every message this version can encode decodes back as Ok",
+          "[config_protocol]") {
+    // THE OTHER SIDE OF THE MEMBER RULE, and the reason the allowed set is
+    // derived from configProtocolEncode() rather than written out a second
+    // time: a rule that disagreed with the encoder would refuse the window
+    // manager's own replies. Every one of the eleven types is encoded with
+    // every member it carries filled in, and must survive the round trip.
+    struct Probe { ConfigMessageType type; };
+    const ConfigMessageType kAll[] = {
+        ConfigMessageType::Hello,    ConfigMessageType::HelloAck,
+        ConfigMessageType::Get,      ConfigMessageType::Value,
+        ConfigMessageType::Set,      ConfigMessageType::Ack,
+        ConfigMessageType::Error,    ConfigMessageType::Reload,
+        ConfigMessageType::Reloaded, ConfigMessageType::Status,
+        ConfigMessageType::StatusReply
+    };
+
+    for (ConfigMessageType type : kAll) {
+        ConfigMessage sent;
+        sent.type     = type;
+        sent.program  = "wm2-born-again";
+        sent.protocol = kConfigProtocolVersion;
+        sent.key      = "frame-thickness";
+        sent.value    = "9";
+        sent.reason   = "because";
+        sent.fields   = {{"version", "1.0"}, {"managed", "3"}};
+
+        const std::string line = configProtocolEncode(sent);
+        INFO("type " << configMessageTypeName(type) << ": " << line);
+        REQUIRE(!line.empty());
+
+        ConfigMessage got;
+        REQUIRE(configProtocolDecode(line, got) == ConfigDecodeResult::Ok);
+        CHECK(got.type == type);
+
+        // Round-tripped EXACTLY: the encoder emits only the members the type
+        // carries, and the decoder leaves the rest at their defaults.
+        CHECK(configProtocolEncode(got) == line);
+    }
+}
+
 TEST_CASE("A status-reply field list with an odd number of entries is malformed",
           "[config_protocol]") {
     ConfigMessage got;

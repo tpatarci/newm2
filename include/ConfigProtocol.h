@@ -55,6 +55,28 @@
 // message additively. The protocol number in the hello is how a peer learns
 // what it may send; a new member rides a version bump, not silence.
 //
+// THE MEMBER RULE IS PER TYPE, and it has three parts. A member name the
+// grammar does not know at all is malformed (above). A member the grammar
+// knows but the DECODED TYPE does not carry is malformed too, for the same
+// reason and not a weaker one: `{"type":"reload","protocol":2}` is a v2 peer
+// qualifying a reload, and a v1 peer that ran the reload and dropped the
+// qualifier acted on a message it did not understand just as surely. And a
+// member REPEATED in one object is malformed, rather than last-one-wins:
+// two `key` members mean the two ends disagree about which setting is meant,
+// and nothing on the wire says which of them is right.
+//
+// WHAT IS NOT REQUIRED: presence. A member the type carries but the sender
+// omitted decodes to its empty default rather than to a verdict. Absence
+// cannot mean something the receiver fails to see -- an empty key is an empty
+// key, and every handler validates what it was given -- whereas an extra
+// member is by definition a meaning the receiver has no way to read.
+//
+// THE ALLOWED SET IS ASKED OF THE ENCODER, once per type, by encoding an empty
+// message of that type and reading back the member names it emitted. Two
+// spellings of "which members does `set` carry?" could drift apart, and the
+// half that drifted would either refuse the window manager's own replies or
+// reopen the hole; one spelling cannot.
+//
 // THE MENU-ENTRY VALUE GRAMMAR (plan 09-05, D-12). Not a frozen message type
 // and not a change to one: it is the agreed shape of the `value` member of a
 // `get`/`set`/`value` whose `key` is the literal `menu-entries`, and it is
@@ -103,6 +125,7 @@
 // with an unset type, and there is no else-less fallthrough anywhere in the
 // file -- the house rule include/MenuPaint.h's `Foreign` enumerator documents.
 
+#include <array>
 #include <cstddef>
 #include <string>
 #include <utility>
@@ -526,6 +549,88 @@ inline bool parseString(const std::string& s, std::size_t end, std::size_t& p,
     return false;  // ran off the end with the literal still open
 }
 
+// -----------------------------------------------------------------------------
+// Which members each type carries -- asked of the encoder, never written twice
+// -----------------------------------------------------------------------------
+
+// The seven member names the grammar knows, one bit each. A bit is all the
+// decoder needs: which members were seen, and whether one was seen twice.
+enum : unsigned {
+    kMemberType     = 1u << 0,
+    kMemberProgram  = 1u << 1,
+    kMemberProtocol = 1u << 2,
+    kMemberKey      = 1u << 3,
+    kMemberValue    = 1u << 4,
+    kMemberReason   = 1u << 5,
+    kMemberFields   = 1u << 6
+};
+
+inline unsigned memberBit(const std::string& name) {
+    if (name == "type")     return kMemberType;
+    if (name == "program")  return kMemberProgram;
+    if (name == "protocol") return kMemberProtocol;
+    if (name == "key")      return kMemberKey;
+    if (name == "value")    return kMemberValue;
+    if (name == "reason")   return kMemberReason;
+    if (name == "fields")   return kMemberFields;
+    return 0;   // not a member this version knows
+}
+
+// The members configProtocolEncode() emits for `type`, read back off its own
+// output. DERIVED RATHER THAN DECLARED: a second list of "which members does
+// `set` carry?" is a list that can drift from the encoder, and the half that
+// drifted would either refuse the window manager's own replies or reopen the
+// hole this exists to close.
+//
+// The scan is safe because of what an EMPTY message of each type encodes to:
+// every value is an empty string, a zero, or an empty array, so no quoted run
+// in the line is anything but a member name or an empty value. A member name
+// is the quoted word immediately followed by ':'.
+inline unsigned encodedMemberMask(ConfigMessageType type) {
+    ConfigMessage probe;
+    probe.type = type;
+    const std::string line = configProtocolEncode(probe);
+
+    unsigned mask = 0;
+    std::size_t p = 0;
+    for (;;) {
+        const std::size_t open = line.find('"', p);
+        if (open == std::string::npos) break;
+        const std::size_t close = line.find('"', open + 1);
+        if (close == std::string::npos) break;
+        if (close + 1 < line.size() && line[close + 1] == ':') {
+            mask |= memberBit(line.substr(open + 1, close - open - 1));
+        }
+        p = close + 1;
+    }
+    return mask;
+}
+
+// The same answer, computed once. Indexed by the enumerator, Unknown included
+// -- Unknown carries nothing, and no path consults it anyway, because an
+// unknown type is a verdict before its members are ever judged.
+inline unsigned allowedMemberMask(ConfigMessageType type) {
+    static const std::array<unsigned, 12> kTable = [] {
+        std::array<unsigned, 12> table{};
+        const ConfigMessageType kAll[] = {
+            ConfigMessageType::Hello,    ConfigMessageType::HelloAck,
+            ConfigMessageType::Get,      ConfigMessageType::Value,
+            ConfigMessageType::Set,      ConfigMessageType::Ack,
+            ConfigMessageType::Error,    ConfigMessageType::Reload,
+            ConfigMessageType::Reloaded, ConfigMessageType::Status,
+            ConfigMessageType::StatusReply
+        };
+        for (ConfigMessageType t : kAll) {
+            table[static_cast<std::size_t>(t)] = encodedMemberMask(t);
+        }
+        table[static_cast<std::size_t>(ConfigMessageType::Unknown)] = 0;
+        return table;
+    }();
+
+    const std::size_t index = static_cast<std::size_t>(type);
+    return index < kTable.size() ? kTable[index] : 0u;
+}
+
 }  // namespace config_protocol_detail
 
 
@@ -562,7 +667,10 @@ inline ConfigDecodeResult configProtocolDecode(const std::string& line, ConfigMe
     if (p >= end || line[p] != '{') return ConfigDecodeResult::Malformed;
     ++p;
 
-    bool sawType = false;
+    // WHICH MEMBERS HAVE BEEN SEEN, one bit each. Two questions are answered
+    // from it: was a member repeated (the bit is already set), and does the
+    // decoded type carry every member that arrived (the check after the loop).
+    unsigned seen = 0;
     std::string typeName;
     bool first = true;
 
@@ -587,10 +695,23 @@ inline ConfigDecodeResult configProtocolDecode(const std::string& line, ConfigMe
             ++p;
             skipSpace(line, end, p);
 
+            // REPEATED IS MALFORMED, for every member and not only for `type`.
+            // Last-one-wins is the JSON convention and the wrong answer here:
+            // two `key` members mean the sender and the receiver disagree about
+            // which setting is meant, and nothing on the wire says which of them
+            // is right. The bit is set before the value is parsed, so a member
+            // that appears twice is refused whether or not its second value
+            // would have parsed.
+            {
+                const unsigned bit = memberBit(name);
+                if (bit != 0) {
+                    if ((seen & bit) != 0) return ConfigDecodeResult::Malformed;
+                    seen |= bit;
+                }
+            }
+
             if (name == "type") {
-                if (sawType) return ConfigDecodeResult::Malformed;  // repeated member
                 if (!parseString(line, end, p, typeName)) return ConfigDecodeResult::Malformed;
-                sawType = true;
             } else if (name == "program") {
                 if (!parseString(line, end, p, out.program)) return ConfigDecodeResult::Malformed;
             } else if (name == "key") {
@@ -657,7 +778,7 @@ inline ConfigDecodeResult configProtocolDecode(const std::string& line, ConfigMe
     skipSpace(line, end, p);
     if (p != end) return ConfigDecodeResult::Malformed;
 
-    if (!sawType) return ConfigDecodeResult::Malformed;
+    if ((seen & kMemberType) == 0) return ConfigDecodeResult::Malformed;
 
     const ConfigMessageType type = configMessageTypeFromName(typeName);
     if (type == ConfigMessageType::Unknown) {
@@ -665,8 +786,26 @@ inline ConfigDecodeResult configProtocolDecode(const std::string& line, ConfigMe
         // members that WERE understood are left in `out` -- a caller logging
         // the rejection may want them -- but `out.type` stays Unknown, so
         // there is no path that returns a usable message here.
+        //
+        // BEFORE the member check below, deliberately: a version that cannot
+        // name the type cannot know which members that type carries either, so
+        // judging them would be guessing. UnknownType is also the verdict that
+        // lets a later version add a message additively, and turning it into
+        // Malformed for a member this version has no opinion about would take
+        // that back.
         return ConfigDecodeResult::UnknownType;
     }
+
+    // THE MEMBERS AGAINST THE TYPE (DISC-01c). A member the grammar knows but
+    // this type does not carry is malformed, exactly as an unknown member name
+    // is: `{"type":"reload","protocol":2}` is a later version qualifying a
+    // reload, and running it while dropping the qualifier is acting on a
+    // message this version did not understand. The allowed set comes from the
+    // encoder itself, so the two halves of the contract cannot drift.
+    //
+    // Presence is NOT required -- see the header comment. A member the type
+    // carries but the sender omitted decodes to its empty default.
+    if ((seen & ~allowedMemberMask(type)) != 0) return ConfigDecodeResult::Malformed;
 
     out.type = type;
     return ConfigDecodeResult::Ok;
