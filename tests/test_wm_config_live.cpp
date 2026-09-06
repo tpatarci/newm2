@@ -3036,3 +3036,78 @@ TEST_CASE("the same reload with a usable menu-font changes both fonts",
     CHECK(widthAfter > widthBefore);
     CHECK(fixture.wmAlive());
 }
+
+
+// ---------------------------------------------------------------------------
+// A live apply does not move geometry a modal grab has already cached (WR-13)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("a geometry setting is refused while the root menu is open, and "
+          "applies the moment it closes",
+          "[wm_config_live]")
+{
+    // DISC-06 services the configuration socket from modalWait() on purpose,
+    // so a `set` really is applied while the root menu is held open. That is
+    // the feature -- and it is also how a menu ends up painting labels at the
+    // new face's baselines in rows measured from the old one, with the
+    // pointer highlighting a different row from the one it activates:
+    // WindowManager::menu() computes its entry height ONCE, from m_menuFont.
+    const std::string home = makeConfigHome(
+        "menu-font=Sans:size=10\n"
+        "frame-thickness=7\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    const unsigned long bg = namedPixel(d, "#c8cacc");
+    REQUIRE(bg != ~0UL);
+
+    Window menu = None;
+    Rect menuRect;
+    REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect, bg));
+
+    // The grab is held right now. Each of the three settings that move
+    // geometry a grab has cached is refused, and says why.
+    CtlResult menuFont = ctl(fixture, {"set", "menu-font", "Sans:size=20"});
+    CtlResult tabFont  = ctl(fixture, {"set", "tab-font", "Sans:bold:size=20"});
+    CtlResult thick    = ctl(fixture, {"set", "frame-thickness", "17"});
+
+    // A setting that moves nothing a grab cached still applies instantly under
+    // one -- the guard is narrow on purpose, and D-06's "nothing waits" holds
+    // for everything else.
+    CtlResult delay = ctl(fixture, {"set", "auto-raise-delay", "600"});
+
+    closeRootMenu(d, driver);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO("menu-font "       << menuFont.describe());
+    INFO("tab-font "        << tabFont.describe());
+    INFO("frame-thickness " << thick.describe());
+    INFO("auto-raise-delay " << delay.describe());
+
+    CHECK(menuFont.exitCode == 1);
+    CHECK(tabFont.exitCode == 1);
+    CHECK(thick.exitCode == 1);
+    CHECK(menuFont.err.find("menu or a drag") != std::string::npos);
+
+    // Refused WHOLE: the reported values are the ones the grab was drawn with.
+    CHECK(ctlGet(fixture, "menu-font") == "Sans:size=10");
+    CHECK(ctlGet(fixture, "frame-thickness") == "7");
+
+    CHECK(delay.exitCode == 0);
+    CHECK(ctlGet(fixture, "auto-raise-delay") == "600");
+
+    // And "not now" really did mean not now: with the grab gone, the same
+    // request succeeds. A guard that refused for ever would satisfy every
+    // assertion above and break CGUI-04.
+    CtlResult again = ctl(fixture, {"set", "frame-thickness", "17"});
+    INFO("after the menu closed: " << again.describe());
+    CHECK(again.exitCode == 0);
+    CHECK(ctlGet(fixture, "frame-thickness") == "17");
+
+    CHECK(fixture.wmAlive());
+}

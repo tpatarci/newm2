@@ -333,9 +333,35 @@ void WindowManager::nextEvent(XEvent *e)
 }
 
 
+namespace {
+
+// Counts one modal wait for as long as it lasts, whichever of modalWait()'s
+// five exits it takes (WR-13).
+class ModalDepthGuard {
+public:
+    explicit ModalDepthGuard(std::size_t &depth) : m_depth(depth) { ++m_depth; }
+    ~ModalDepthGuard() { --m_depth; }
+    ModalDepthGuard(const ModalDepthGuard &) = delete;
+    ModalDepthGuard &operator=(const ModalDepthGuard &) = delete;
+private:
+    std::size_t &m_depth;
+};
+
+}  // namespace
+
+
 WindowManager::ModalWait WindowManager::modalWait(long mask, XEvent *out,
                                                  int timeoutMs)
 {
+    // WHILE THIS IS NON-ZERO, A GRAB IS HELD (WR-13). DISC-06 services the
+    // configuration socket from inside this function on purpose, so a `set`
+    // can arrive while the root menu is open or a move is being dragged -- and
+    // those grabs have already CACHED geometry the setting would move under
+    // them. applyConfig() reads the counter and refuses the three settings
+    // that do it. A counter rather than a flag because modal waits nest: the
+    // root menu's loop waits here, and so does the submenu's inside it.
+    const ModalDepthGuard modalDepth(m_modalDepth);
+
     using clock = std::chrono::steady_clock;
     const bool bounded = timeoutMs >= 0;
     const clock::time_point deadline =

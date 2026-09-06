@@ -2021,6 +2021,39 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
 
     const Config previous = m_config;
 
+    // --- Not while a grab is holding geometry it has already cached (WR-13) --
+    //
+    // DISC-06 services the configuration socket from modalWait() on purpose,
+    // so a `set` can be applied while the root menu is open or a move/resize
+    // drag is in progress. Three settings move geometry those grabs have
+    // already read once and will not read again:
+    //
+    //   menu-font        WindowManager::menu() computes its entry height once,
+    //                    from m_menuFont, and uses it for the row layout, for
+    //                    rowAt()'s hit test and for the label baselines. Swap
+    //                    the face under it and the pointer highlights a
+    //                    different row from the one it activates.
+    //   tab-font         moves m_tabWidth, and so every frame's indents.
+    //   frame-thickness  moves FRAME_WIDTH and relayouts every client,
+    //                    including the one being dragged: Client::move()
+    //                    cached xIndent() minus the pointer position, so the
+    //                    window jumps by the delta on the next motion and
+    //                    commits the wrong position on release.
+    //
+    // REFUSED, NOT QUEUED. A deferred apply would have to be replayed against
+    // whatever the configuration had become by the time the grab ended, and a
+    // refusal the client can retry is honest about what happened -- D-06
+    // allows a setting to say "not now" as long as it says so. The other
+    // settings are unaffected: a colour, a delay or a focus policy moves
+    // nothing a grab has cached, and still applies instantly under one.
+    if (m_modalDepth != 0 &&
+        (next.tabFont        != previous.tabFont ||
+         next.menuFont       != previous.menuFont ||
+         next.frameThickness != previous.frameThickness)) {
+        reasonOut = "a menu or a drag is in progress; try again in a moment";
+        return false;
+    }
+
     // --- Everything that can FAIL happens before anything is stored ---------
     //
     // Plan 09-04 stored `next` first, because the one live setting it applied

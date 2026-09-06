@@ -264,6 +264,15 @@ private:
     // rebuilds before it assembles the NEXT menu. A menu already open is left
     // undisturbed, which is also what D-08 asks for.
     bool m_menuOpen = false;
+
+    // How many modalWait() calls are on the stack (WR-13). Non-zero means a
+    // grab is held and something has cached geometry a live apply would move
+    // under it: WindowManager::menu() computes its entry height once from
+    // m_menuFont and reuses it for row layout, for the hit test and for the
+    // label baselines; Client::move() caches xIndent() minus the pointer
+    // position, which a frame-thickness change moves without moving the cached
+    // offset. Counted rather than flagged because modal waits nest.
+    std::size_t m_modalDepth = 0;
     bool m_appCategoriesStale = false;
 
     // Capability sentinel convention (Phase 8). Every optional X extension this
