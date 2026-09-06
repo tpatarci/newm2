@@ -484,3 +484,41 @@ bash scripts/capture-display-capabilities.sh :2 label
 `./wm2-born-again --help` lists every setting, and every setting it lists is one
 the binary will accept — the usage text is generated from the same table the
 option parser is handed, so the two cannot drift apart.
+
+### The configuration socket
+
+A running window manager listens on a Unix domain socket, so a configuration
+tool can ask it questions and, in a later release, change settings without a
+restart.
+
+The path is published on the root window as the property `_WM2_CONFIG_SOCKET`,
+a `STRING` holding the socket's filesystem path:
+
+```
+xprop -root _WM2_CONFIG_SOCKET
+```
+
+Read the property rather than reconstructing the path. The path itself is
+`$XDG_RUNTIME_DIR/wm2-born-again/socket<display>`, falling back to
+`/tmp/wm2-born-again-<uid>/socket<display>` when `XDG_RUNTIME_DIR` is not set to
+an absolute path, with every character of the display name outside
+`[A-Za-z0-9._-]` replaced by `_` — so `:1` becomes `socket_1`. Two window
+managers on two displays therefore never contend for one socket.
+
+Only the user running the window manager may connect. The socket lives in a
+directory created mode 0700 and is itself mode 0600, and every accepted
+connection's peer credentials are checked against the window manager's own uid
+before a single byte is read. Any other uid, root included, is closed and the
+refusal is logged once per uid. A refused connection never reaches the protocol
+at all.
+
+Messages are one JSON object per line, terminated by a newline, and a line
+longer than 4096 bytes is refused. The first message on a connection must be a
+`hello` naming the client program and the protocol version; anything else closes
+the connection. This release answers `hello` and `status`. The `status` reply
+carries the window manager version, the protocol version, uptime in seconds, the
+screen width and height, and counts of managed and hidden windows — and nothing
+else. No window title, class or geometry is ever sent over the socket.
+
+If the socket cannot be created the window manager says so on stderr and carries
+on managing windows normally; only the configuration connection is lost.

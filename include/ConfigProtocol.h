@@ -88,6 +88,37 @@ inline constexpr int kConfigProtocolVersion = 1;
 inline constexpr std::size_t kConfigProtocolMaxLine = 4096;
 
 
+// -----------------------------------------------------------------------------
+// X11 INTEROPERABILITY GUARD -- not part of the contract, required by it
+// -----------------------------------------------------------------------------
+//
+// Xlib.h contains `#define Status int` (X11/Xlib.h:83). It is a PREPROCESSOR
+// MACRO, not a typedef, so it rewrites the token `Status` everywhere it appears
+// after Xlib is included -- including inside the enumerator list below and
+// inside `ConfigMessageType::Status` at every use site.
+//
+// `status` is one of the eleven message types D-14 froze at the 09-02 decision
+// checkpoint, and D-8.5-01 makes that spelling permanent. So the collision
+// cannot be resolved by renaming the enumerator; it is resolved here, once, on
+// behalf of every consumer.
+//
+// The macro is REPLACED BY A TYPEDEF rather than merely removed, and that is
+// load-bearing: X11/extensions/shape.h and X11/extensions/Xrandr.h both declare
+// functions RETURNING `Status`, so a bare undef makes every one of them fail to
+// compile. `Status` is a bare `int` in Xlib, so the typedef is exactly what the
+// macro meant -- and a global typedef does not reach into a scoped enum's own
+// scope, which is what lets ConfigMessageType::Status and Xlib's Status coexist
+// in one translation unit.
+//
+// Deliberately narrow. `Bool`, `True` and `False` -- the other Xlib macros of
+// this kind -- are left completely alone, because the window manager uses all
+// three constantly and none of them collides with anything here.
+#ifdef Status
+#undef Status
+typedef int Status;
+#endif
+
+
 // Every message this version speaks, plus the named landing place for one it
 // does not. `Unknown` is not a wire spelling and is never transmitted; it is
 // the value a decode leaves behind when the type field held a string this

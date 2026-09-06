@@ -1,0 +1,386 @@
+// The configuration socket's display-free half (CGUI-02, plan 09-03).
+//
+// DISPLAY-FREE BY CONSTRUCTION, and that is the point rather than a convenience:
+// this binary links Catch2 plus src/SocketServer.cpp and nothing else, with no
+// PkgConfig::X11, no Xft include path and no display fixture. If it ever needs
+// an X server, the socket module has grown a dependency the window manager,
+// wm2-ctl and wm2-config would all have inherited -- and wm2-ctl in particular
+// must stay GTK-free and display-agnostic (D-17).
+//
+// Tags are registered as ctest LABELS via ADD_TAGS_AS_LABELS (D-33), so this
+// group is selectable with `ctest -L '^config_socket$' --no-tests=error`.
+//
+// The rules this file inherits:
+//
+//   NO NAME-PATTERN PROCESS CONTROL. Nothing here starts a second process at
+//   all; every socket it creates it also closes by the descriptor it opened.
+//
+//   NO FIXED /tmp NAME (T-8-TMP). Every temporary directory comes from
+//   mkdtemp(), so two concurrent runs cannot collide and no path is guessable.
+//
+//   THE ENVIRONMENT IS RESTORED. configSocketDirectory() reads XDG_RUNTIME_DIR,
+//   and Catch2 runs every case in one process, so a case that changed it and
+//   walked away would silently decide the next case's answer.
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "SocketServer.h"
+
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace {
+
+// Saves XDG_RUNTIME_DIR on construction and puts it back on destruction,
+// whether the case passed, failed or threw.
+class RuntimeDirEnv {
+public:
+    RuntimeDirEnv()
+    {
+        const char* v = std::getenv("XDG_RUNTIME_DIR");
+        m_had = (v != nullptr);
+        if (m_had) m_saved = v;
+    }
+    ~RuntimeDirEnv()
+    {
+        if (m_had) ::setenv("XDG_RUNTIME_DIR", m_saved.c_str(), 1);
+        else       ::unsetenv("XDG_RUNTIME_DIR");
+    }
+    RuntimeDirEnv(const RuntimeDirEnv&) = delete;
+    RuntimeDirEnv& operator=(const RuntimeDirEnv&) = delete;
+
+    static void set(const std::string& v) { ::setenv("XDG_RUNTIME_DIR", v.c_str(), 1); }
+    static void clear()                   { ::unsetenv("XDG_RUNTIME_DIR"); }
+
+private:
+    bool m_had = false;
+    std::string m_saved;
+};
+
+
+// A private directory with an unguessable name, removed on destruction along
+// with everything this file put in it.
+class TempDir {
+public:
+    TempDir()
+    {
+        char tmpl[] = "/tmp/wm2-socket-test-XXXXXX";
+        const char* made = ::mkdtemp(tmpl);
+        if (made != nullptr) m_path = made;
+    }
+    ~TempDir()
+    {
+        for (const std::string& child : m_children) ::unlink(child.c_str());
+        if (!m_path.empty()) ::rmdir(m_path.c_str());
+    }
+    TempDir(const TempDir&) = delete;
+    TempDir& operator=(const TempDir&) = delete;
+
+    bool valid() const { return !m_path.empty(); }
+    const std::string& path() const { return m_path; }
+
+    std::string child(const std::string& name)
+    {
+        const std::string p = m_path + "/" + name;
+        m_children.push_back(p);
+        return p;
+    }
+
+private:
+    std::string m_path;
+    std::vector<std::string> m_children;
+};
+
+
+// Bind a listening socket at `path`. Returns the descriptor, or -1.
+int bindListener(const std::string& path)
+{
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return -1;
+
+    struct sockaddr_un addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    std::memcpy(addr.sun_path, path.c_str(), path.size());
+
+    if (::bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) != 0) {
+        ::close(fd);
+        return -1;
+    }
+    if (::listen(fd, 4) != 0) {
+        ::close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+}  // namespace
+
+
+// -----------------------------------------------------------------------------
+// The decision
+// -----------------------------------------------------------------------------
+
+TEST_CASE("A readable connection is read and a readable listener accepts",
+          "[config_socket][decide]")
+{
+    CHECK(socketServerDecide(POLLIN) == SocketAction::ReadClient);
+    CHECK(socketServerDecide(POLLIN, SocketRole::Client) == SocketAction::ReadClient);
+    CHECK(socketServerDecide(POLLIN, SocketRole::Listener) == SocketAction::Accept);
+}
+
+TEST_CASE("Every failure revent closes, for both roles", "[config_socket][decide]")
+{
+    for (short bit : { static_cast<short>(POLLERR),
+                       static_cast<short>(POLLHUP),
+                       static_cast<short>(POLLNVAL) }) {
+        CHECK(socketServerDecide(bit) == SocketAction::CloseClient);
+        CHECK(socketServerDecide(bit, SocketRole::Listener) == SocketAction::CloseClient);
+    }
+}
+
+TEST_CASE("Nothing reported is nothing to do", "[config_socket][decide]")
+{
+    CHECK(socketServerDecide(0) == SocketAction::Idle);
+    CHECK(socketServerDecide(0, SocketRole::Listener) == SocketAction::Idle);
+    // POLLOUT alone is not this function's business -- the caller flushes on it
+    // directly -- so it must not be mistaken for readability.
+    CHECK(socketServerDecide(POLLOUT) == SocketAction::Idle);
+}
+
+TEST_CASE("A peer that wrote and hung up is read before it is closed",
+          "[config_socket][decide]")
+{
+    // The ORDER inside the decision, asserted rather than assumed. A client
+    // that sends a final request and closes reports both bits at once; reading
+    // first is what makes its last message answerable.
+    const short both = static_cast<short>(POLLIN | POLLHUP);
+    CHECK(socketServerDecide(both) == SocketAction::ReadClient);
+
+    // For the listener there is no payload to rescue, so the failure wins.
+    CHECK(socketServerDecide(both, SocketRole::Listener) == SocketAction::CloseClient);
+}
+
+TEST_CASE("No revents value produces an unnamed outcome", "[config_socket][decide]")
+{
+    // Exhaustive over every bit combination poll() can deliver in the low byte,
+    // for both roles: the claim is that the decision is TOTAL, and a claim
+    // about all inputs is worth checking over all inputs.
+    for (int bits = 0; bits < 256; ++bits) {
+        const short revents = static_cast<short>(bits);
+        for (SocketRole role : { SocketRole::Client, SocketRole::Listener }) {
+            const SocketAction a = socketServerDecide(revents, role);
+            const bool named = (a == SocketAction::Accept) ||
+                               (a == SocketAction::ReadClient) ||
+                               (a == SocketAction::CloseClient) ||
+                               (a == SocketAction::Idle);
+            CHECK(named);
+        }
+    }
+}
+
+
+// -----------------------------------------------------------------------------
+// The path (DISC-02)
+// -----------------------------------------------------------------------------
+
+TEST_CASE("An absolute XDG_RUNTIME_DIR names the socket directory",
+          "[config_socket][path]")
+{
+    RuntimeDirEnv guard;
+    RuntimeDirEnv::set("/run/user/4242");
+    CHECK(configSocketDirectory() == "/run/user/4242/wm2-born-again");
+}
+
+TEST_CASE("A relative or absent XDG_RUNTIME_DIR takes the one documented fallback",
+          "[config_socket][path]")
+{
+    RuntimeDirEnv guard;
+
+    const std::string expected =
+        "/tmp/wm2-born-again-" + std::to_string(static_cast<unsigned long>(::geteuid()));
+
+    // Relative: rejected exactly as xdgConfigHome() rejects a relative
+    // XDG_CONFIG_HOME -- the variable must be absolute or it is not honoured.
+    RuntimeDirEnv::set("run/user/4242");
+    CHECK(configSocketDirectory() == expected);
+
+    // Empty is not absolute either.
+    RuntimeDirEnv::set("");
+    CHECK(configSocketDirectory() == expected);
+
+    RuntimeDirEnv::clear();
+    CHECK(configSocketDirectory() == expected);
+}
+
+TEST_CASE("The display name is sanitised into the socket file name",
+          "[config_socket][path]")
+{
+    RuntimeDirEnv guard;
+    RuntimeDirEnv::set("/run/user/4242");
+    const std::string dir = "/run/user/4242/wm2-born-again";
+
+    // The ordinary case, and the reason this exists: two displays must not
+    // contend for one socket, which is what lets the fixtures run in parallel.
+    CHECK(configSocketPath(":1") == dir + "/socket_1");
+    CHECK(configSocketPath(":0") == dir + "/socket_0");
+    CHECK(configSocketPath(":123") != configSocketPath(":124"));
+
+    // A remote-style display, and a name carrying a path separator: neither may
+    // escape the directory.
+    CHECK(configSocketPath("host:0.0") == dir + "/sockethost_0.0");
+    // '.' is preserved and '/' is not, which is what makes escape impossible:
+    // the result is always a leaf name inside the directory.
+    CHECK(configSocketPath("../../etc/passwd") == dir + "/socket.._.._etc_passwd");
+
+    // Total: an absent or empty display still names a socket rather than
+    // yielding the directory itself.
+    CHECK(configSocketPath(nullptr) == dir + "/socket_");
+    CHECK(configSocketPath("") == dir + "/socket_");
+}
+
+TEST_CASE("A path too long for the address structure is refused, not truncated",
+          "[config_socket][path]")
+{
+    struct sockaddr_un probe;
+    const std::size_t limit = sizeof(probe.sun_path);   // 108 on Linux
+
+    CHECK(configSocketPathFits("/run/user/1000/wm2-born-again/socket_1"));
+
+    // The boundary itself, both sides of it: `limit - 1` bytes plus the
+    // terminator exactly fills the field; one more does not (RESEARCH Pitfall
+    // 4). Asserted here because bind() reports neither -- it truncates.
+    CHECK(configSocketPathFits(std::string(limit - 1, 'a')));
+    CHECK_FALSE(configSocketPathFits(std::string(limit, 'a')));
+    CHECK_FALSE(configSocketPathFits(std::string(limit + 200, 'a')));
+
+    // And the refusal is reachable through the real path builder, not only
+    // through a hand-made string.
+    RuntimeDirEnv guard;
+    RuntimeDirEnv::set("/run/" + std::string(200, 'x'));
+    CHECK_FALSE(configSocketPathFits(configSocketPath(":1")));
+}
+
+
+// -----------------------------------------------------------------------------
+// The peer verdict (D-16, T-9-11 / T-9-12)
+// -----------------------------------------------------------------------------
+
+TEST_CASE("A peer with this uid is admitted and any other uid is not",
+          "[config_socket][peer]")
+{
+    int sv[2] = { -1, -1 };
+    REQUIRE(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+    const uid_t self = ::geteuid();
+
+    uid_t peer = static_cast<uid_t>(-1);
+    CHECK(configSocketPeerUid(sv[0], peer));
+    CHECK(peer == self);
+
+    CHECK(configSocketPeerVerdict(sv[0], self) == PeerVerdict::SameUid);
+
+    // ANY other uid is foreign. Asserted from both directions, because the
+    // comparison is an equality and D-16 turns on that: uid 0 is root, and a
+    // window manager running as root refuses this user exactly as this user's
+    // window manager refuses root (T-9-12).
+    CHECK(configSocketPeerVerdict(sv[0], self + 1) == PeerVerdict::ForeignUid);
+    if (self != 0) {
+        CHECK(configSocketPeerVerdict(sv[0], 0) == PeerVerdict::ForeignUid);
+    }
+
+    ::close(sv[0]);
+    ::close(sv[1]);
+}
+
+TEST_CASE("A descriptor the kernel will not vouch for is not admitted",
+          "[config_socket][peer]")
+{
+    int pipefd[2] = { -1, -1 };
+    REQUIRE(::pipe(pipefd) == 0);
+
+    uid_t peer = 0;
+    CHECK_FALSE(configSocketPeerUid(pipefd[0], peer));
+
+    // Unknown is a distinct verdict from ForeignUid so a refusal can say why,
+    // but it is emphatically NOT SameUid -- an unanswerable question is never
+    // resolved in the connection's favour.
+    const PeerVerdict v = configSocketPeerVerdict(pipefd[0], ::geteuid());
+    CHECK(v == PeerVerdict::Unknown);
+    CHECK(v != PeerVerdict::SameUid);
+
+    ::close(pipefd[0]);
+    ::close(pipefd[1]);
+}
+
+
+// -----------------------------------------------------------------------------
+// The stale verdict (T-9-17)
+// -----------------------------------------------------------------------------
+
+TEST_CASE("Nothing at the path is nothing to reclaim", "[config_socket][stale]")
+{
+    TempDir dir;
+    REQUIRE(dir.valid());
+    CHECK(configSocketStaleVerdict(dir.path() + "/absent") == StaleVerdict::NoFile);
+}
+
+TEST_CASE("An abandoned socket is stale and a live one is not",
+          "[config_socket][stale]")
+{
+    TempDir dir;
+    REQUIRE(dir.valid());
+
+    // LIVE: bound, listening, and the descriptor still held. This is a running
+    // window manager, and its socket must survive a second one starting.
+    const std::string livePath = dir.child("live");
+    const int live = bindListener(livePath);
+    REQUIRE(live >= 0);
+    CHECK(configSocketStaleVerdict(livePath) == StaleVerdict::Live);
+
+    // STALE: bound, then the process went away without unlinking -- which is
+    // exactly what a crashed window manager leaves behind. The file is still
+    // there; nothing answers on it.
+    const std::string stalePath = dir.child("stale");
+    const int abandoned = bindListener(stalePath);
+    REQUIRE(abandoned >= 0);
+    ::close(abandoned);
+    struct stat st;
+    REQUIRE(::lstat(stalePath.c_str(), &st) == 0);   // the node really did survive
+    CHECK(configSocketStaleVerdict(stalePath) == StaleVerdict::Stale);
+
+    // The live one is STILL live after all that: the two verdicts are read from
+    // the sockets themselves, not from the order they were created in.
+    CHECK(configSocketStaleVerdict(livePath) == StaleVerdict::Live);
+
+    ::close(live);
+}
+
+TEST_CASE("A file that is not a socket is never reclaimed", "[config_socket][stale]")
+{
+    TempDir dir;
+    REQUIRE(dir.valid());
+
+    const std::string filePath = dir.child("regular");
+    const int fd = ::open(filePath.c_str(), O_CREAT | O_WRONLY, 0600);
+    REQUIRE(fd >= 0);
+    ::close(fd);
+
+    // Live, meaning "not mine to remove". Unlinking whatever happens to be in
+    // the way is how a pre-placed path gets quietly replaced (T-9-17), so the
+    // conservative verdict is the correct one even though nothing is listening.
+    CHECK(configSocketStaleVerdict(filePath) == StaleVerdict::Live);
+
+    // And the file is still there: the verdict function never unlinks anything.
+    struct stat st;
+    CHECK(::lstat(filePath.c_str(), &st) == 0);
+}

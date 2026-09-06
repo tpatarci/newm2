@@ -26,6 +26,7 @@ Atom Atoms::wm_delete = None;
 Atom Atoms::wm_takeFocus = None;
 Atom Atoms::wm_colormaps = None;
 Atom Atoms::wm2_running = None;
+Atom Atoms::wm2_configSocket = None;
 
 // EWMH atom static members
 Atom Atoms::net_supported = None;
@@ -85,6 +86,7 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     , m_timestampWaitTimeouts(0)
     , m_looping(false)
     , m_returnCode(0)
+    , m_startTime(std::chrono::steady_clock::now())
     , m_menuWindow(None)
     , m_menuFont(nullptr)
     , m_menuBorderPixel(0)
@@ -161,6 +163,7 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     Atoms::wm_takeFocus   = XInternAtom(display(), "WM_TAKE_FOCUS",       false);
     Atoms::wm_colormaps   = XInternAtom(display(), "WM_COLORMAP_WINDOWS", false);
     Atoms::wm2_running    = XInternAtom(display(), "_WM2_RUNNING",        false);
+    Atoms::wm2_configSocket = XInternAtom(display(), "_WM2_CONFIG_SOCKET",  false);
 
     // EWMH atoms
     Atoms::net_supported          = XInternAtom(display(), "_NET_SUPPORTED", false);
@@ -284,6 +287,16 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
                              "tab labels will be drawn through the core X11 glyph path\n");
     }
 
+    // CGUI-02: the configuration socket, started BEFORE initialiseScreen()
+    // because that is what publishes root-window properties -- the path has to
+    // exist before the property naming it is written. Nothing here needs the
+    // root window; the display name is all it takes.
+    //
+    // A failure is a warning and no socket, never a fatal. A window manager
+    // with no configuration socket still manages windows, which is the whole of
+    // its job; only wm2-ctl and the GUI lose their live connection.
+    startConfigSocket();
+
     initialiseScreen();
 
     // Claim WM selection
@@ -330,6 +343,13 @@ void WindowManager::buildAppCategories()
 void WindowManager::release()
 {
     if (m_returnCode != 0) return;
+
+    // The configuration socket goes first, before any X resource: it owns
+    // plain file descriptors and a filesystem node, neither of which depends on
+    // the display, and closing it here means no client can observe a half-torn
+    // window manager. close() unlinks the socket, so the next start finds
+    // nothing to reclaim.
+    m_socketServer.close();
 
     m_windowMap.clear();
 
@@ -807,6 +827,24 @@ void WindowManager::setupEwmhProperties()
     XChangeProperty(display(), m_root, Atoms::net_supportingWmCheck,
                     XA_WINDOW, 32, PropModeReplace,
                     reinterpret_cast<unsigned char*>(&m_wmCheckWindow), 1);
+
+    // DISC-03: the configuration socket's path, published in exactly the shape
+    // of the write above -- a root-window property, PropModeReplace, one atom
+    // and one payload. Written immediately after it so a client that has just
+    // established a window manager is present can ask where to talk to it in
+    // the same round trip.
+    //
+    // XA_STRING, format 8: the value is a filesystem path, and paths are bytes.
+    // Written ONLY when the socket actually bound, so the property's presence
+    // is itself the answer to "is there a socket?" -- a client never has to
+    // connect to find out.
+    if (m_socketServer.isListening()) {
+        const std::string &socketPath = m_socketServer.path();
+        XChangeProperty(display(), m_root, Atoms::wm2_configSocket,
+                        XA_STRING, 8, PropModeReplace,
+                        reinterpret_cast<const unsigned char*>(socketPath.c_str()),
+                        static_cast<int>(socketPath.size()));
+    }
 
     // Set _NET_SUPPORTING_WM_CHECK on check window pointing to ITSELF (Pitfall 1)
     XChangeProperty(display(), m_wmCheckWindow, Atoms::net_supportingWmCheck,
@@ -1614,4 +1652,174 @@ int WindowManager::computePollTimeout() const
     auto ms = duration_cast<milliseconds>(earliest - now).count();
     if (ms <= 0) return 0;
     return static_cast<int>(std::min(ms, static_cast<decltype(ms)>(30000)));
+}
+
+
+// =============================================================================
+// The configuration socket (CGUI-02)
+// =============================================================================
+//
+// The transport -- descriptors, buffers, the uid boundary, the framing bound --
+// lives in src/SocketServer.cpp and knows nothing about what a message means.
+// Everything below is POLICY: D-15's handshake rule and D-14's field ceiling.
+
+// The version this build reports over the socket. Supplied by CMake from the
+// project version so the two cannot drift; the fallback exists only so this
+// file still compiles outside the project's own build.
+#ifndef WM2_VERSION
+#define WM2_VERSION "0.0.0-unknown"
+#endif
+
+
+// D-14's CEILING, ASSEMBLED IN EXACTLY ONE PLACE.
+//
+// Seven fields and no eighth: window manager version, protocol version, uptime
+// in seconds, screen width, screen height, the count of managed windows and the
+// count of hidden ones. That is the whole of what D-14 permits to leave the
+// window manager over the socket.
+//
+// WHAT IS DELIBERATELY ABSENT: every per-window datum. No title, no class, no
+// instance name, no geometry, no window id -- not filtered out downstream, but
+// never gathered here at all (T-9-13). A per-window list is an explicitly
+// EXCLUDED FUTURE MESSAGE: D-14 records it as addable later as a NEW message
+// type without changing this one, so its omission is a decision rather than an
+// oversight. Anyone adding it should add a message, not a field here.
+//
+// This function is the single site a security review has to read, and a
+// region-scoped source check over it is part of this plan's acceptance: the
+// assembly must not reach the client label accessor at all.
+ConfigMessage WindowManager::statusReplyMessage() const
+{
+    ConfigMessage reply;
+    reply.type = ConfigMessageType::StatusReply;
+
+    const auto up = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - m_startTime).count();
+
+    // "managed" is every window under management, hidden ones included:
+    // addToHiddenList() MOVES a client out of m_clients rather than copying it,
+    // so the two vectors are disjoint and a bare m_clients.size() would report
+    // a window manager losing windows as the user hides them.
+    const std::size_t hidden  = m_hiddenClients.size();
+    const std::size_t managed = m_clients.size() + hidden;
+
+    reply.fields.emplace_back("version",       WM2_VERSION);
+    reply.fields.emplace_back("protocol",      std::to_string(kConfigProtocolVersion));
+    reply.fields.emplace_back("uptime",        std::to_string(static_cast<long long>(up)));
+    reply.fields.emplace_back("screen-width",  std::to_string(screenWidth()));
+    reply.fields.emplace_back("screen-height", std::to_string(screenHeight()));
+    reply.fields.emplace_back("managed",       std::to_string(managed));
+    reply.fields.emplace_back("hidden",        std::to_string(hidden));
+
+    return reply;
+}
+
+
+// One frame in, one decision out.
+//
+// D-15 IS ENFORCED HERE AND NOWHERE ELSE: a message arriving before a handshake
+// closes the connection with an error first, and so does a handshake naming a
+// protocol version this build does not speak. The window manager never answers
+// a stranger with anything but a refusal.
+ConfigSocketReply WindowManager::handleConfigRequest(const ConfigSocketRequest &request)
+{
+    ConfigSocketReply out;
+
+    ConfigMessage message;
+    const ConfigDecodeResult result = configProtocolDecode(request.line, message);
+
+    auto refuse = [&out](const char *reason, bool close) {
+        ConfigMessage error;
+        error.type = ConfigMessageType::Error;
+        error.reason = reason;
+        out.line = configProtocolEncode(error);
+        out.closeAfterSend = close;
+    };
+
+    switch (result) {
+    case ConfigDecodeResult::TooLong:
+        refuse("message too long", true);
+        return out;
+
+    case ConfigDecodeResult::Malformed:
+        refuse("malformed message", true);
+        return out;
+
+    case ConfigDecodeResult::UnknownType:
+        // A type this version does not speak is a NAMED verdict, not a
+        // malformation (DISC-01c): declining it is what lets a later version
+        // add a message additively. Before the handshake it is still a
+        // stranger's first word, so it is refused with the connection.
+        refuse("unsupported message type", !request.helloSeen);
+        return out;
+
+    case ConfigDecodeResult::Ok:
+        break;
+    }
+
+    if (!request.helloSeen && message.type != ConfigMessageType::Hello) {
+        refuse("handshake required", true);
+        return out;
+    }
+
+    switch (message.type) {
+    case ConfigMessageType::Hello: {
+        if (message.protocol != kConfigProtocolVersion) {
+            refuse("unsupported protocol version", true);
+            return out;
+        }
+        ConfigMessage ack;
+        ack.type = ConfigMessageType::HelloAck;
+        ack.program = "wm2-born-again";
+        ack.protocol = kConfigProtocolVersion;
+        out.line = configProtocolEncode(ack);
+        out.helloAccepted = true;
+        return out;
+    }
+
+    case ConfigMessageType::Status:
+        out.line = configProtocolEncode(statusReplyMessage());
+        return out;
+
+    case ConfigMessageType::Get:
+    case ConfigMessageType::Set:
+    case ConfigMessageType::Reload:
+        // Frozen in the contract, served by a LATER PLAN in this phase (the
+        // wm2-ctl verbs and live apply). Refused by name rather than ignored,
+        // and WITHOUT closing the connection: a client that asks early learns
+        // this build does not serve it yet and can carry on with status.
+        refuse("not served by this build", false);
+        return out;
+
+    case ConfigMessageType::HelloAck:
+    case ConfigMessageType::Value:
+    case ConfigMessageType::Ack:
+    case ConfigMessageType::Error:
+    case ConfigMessageType::Reloaded:
+    case ConfigMessageType::StatusReply:
+        // Replies. A client sending one is confused about which end it is;
+        // named individually rather than left to a default arm so a twelfth
+        // message type is a compile error here instead of silence.
+        refuse("not a request", false);
+        return out;
+
+    case ConfigMessageType::Unknown:
+        // Unreachable: the UnknownType verdict above already returned.
+        refuse("unsupported message type", true);
+        return out;
+    }
+
+    refuse("unsupported message type", true);
+    return out;
+}
+
+
+void WindowManager::startConfigSocket()
+{
+    // DisplayString() rather than getenv("DISPLAY"): the window manager may
+    // have been given a display by some other route, and the socket has to be
+    // named after the display it is actually managing -- that per-display name
+    // is what lets two window managers on two displays coexist, and what lets
+    // the ctest suite run window-manager fixtures in parallel.
+    m_socketServer.listen(DisplayString(display()));
 }

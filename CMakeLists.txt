@@ -45,6 +45,7 @@ add_executable(${PROJECT_NAME}
     src/Events.cpp
     src/Config.cpp
     src/Rules.cpp
+    src/SocketServer.cpp
     src/AppCache.cpp
     src/DesktopEntry.cpp
     src/BinaryScanner.cpp
@@ -54,6 +55,13 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${XFT_INCLUDE_DIRS}
     ${FONTCONFIG_INCLUDE_DIRS}
+)
+
+# The version the window manager reports over the configuration socket (D-14).
+# Taken from the project version above so the two cannot drift; src/Manager.cpp
+# carries a fallback only so the file still compiles outside this build.
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    WM2_VERSION="${PROJECT_VERSION}"
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -495,6 +503,53 @@ if(BUILD_TESTS)
                 TIMEOUT 240
         )
 
+        # --- Configuration socket, against the real WM (CGUI-02) ---
+        #
+        # Cloned from test_wm_focus above, XTEST included: the held-grab case
+        # opens the root menu with a REAL button press, and the WM takes a
+        # pointer grab while the menu is up, so the fake events have to come
+        # from a connection with grab control enabled (RESEARCH Pitfall 10).
+        #
+        # Own display per fixture instance, so deliberately NO shared-display
+        # binding and NO `FIXTURES_REQUIRED xvfb_display`. The socket is named
+        # after the display, which is what lets these run beside every other
+        # fixture-bound target.
+        # src/SocketServer.cpp is compiled straight in (the test_config pattern)
+        # so a case can assert the PUBLISHED path is the one this build's own
+        # DISC-02 resolution produces -- an agreement, not two independent
+        # spellings that happen to match today.
+        add_executable(test_wm_socket
+            tests/test_wm_socket.cpp
+            src/SocketServer.cpp
+        )
+        target_link_libraries(test_wm_socket PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+            PkgConfig::XTST
+        )
+        target_include_directories(test_wm_socket PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/tests
+            ${XFT_INCLUDE_DIRS}
+        )
+
+        target_compile_definitions(test_wm_socket PRIVATE
+            WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
+            WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
+            WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+        )
+
+        # The tests exec the binary, so it must exist before they run.
+        add_dependencies(test_wm_socket wm2-born-again)
+
+        # ADD_TAGS_AS_LABELS is required by D-33, or [wm_socket] is not
+        # selectable by the anchored label gates this plan's criteria use.
+        catch_discover_tests(test_wm_socket ADD_TAGS_AS_LABELS
+            PROPERTIES
+                FIXTURES_REQUIRED preflight_ok
+                TIMEOUT 240
+        )
+
         # --- Window-rule application tests (RULES-02) ---
         #
         # Cloned from test_wm_focus above, minus XTEST: nothing here is driven by
@@ -805,6 +860,33 @@ if(BUILD_TESTS)
     # ADD_TAGS_AS_LABELS is required, or the [config_protocol] tag is not
     # selectable by the anchored `-L '^config_protocol$'` gate this plan uses.
     catch_discover_tests(test_config_protocol ADD_TAGS_AS_LABELS)
+
+    # --- Configuration socket decision, paths and boundary verdicts (CGUI-02) ---
+    #
+    # Display-free BY CONSTRUCTION, exactly like the codec target above: no
+    # PkgConfig::X11, no Xft include path, no display fixture and no
+    # FIXTURES_REQUIRED, because neither include/SocketServer.h nor
+    # src/SocketServer.cpp includes an X11, Xft, GTK or GLib header. This target
+    # must be runnable on a host with no X server at all -- if it ever needs
+    # one, the socket module has grown a dependency the window manager, wm2-ctl
+    # and wm2-config would all have inherited.
+    #
+    # The implementation is compiled straight into the executable (the
+    # test_config pattern) rather than linked from a library, because the
+    # project ships no library target.
+    add_executable(test_config_socket
+        tests/test_config_socket.cpp
+        src/SocketServer.cpp
+    )
+    target_link_libraries(test_config_socket PRIVATE
+        Catch2::Catch2WithMain
+    )
+    target_include_directories(test_config_socket PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    # ADD_TAGS_AS_LABELS is required, or the [config_socket] tag is not
+    # selectable by the anchored `-L '^config_socket$'` gate this plan uses.
+    catch_discover_tests(test_config_socket ADD_TAGS_AS_LABELS)
 
     # --- Surgical config-file writer (CGUI-03, D-02/D-13, D-20's file half) ---
     #

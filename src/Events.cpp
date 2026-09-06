@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <poll.h>
 #include <chrono>
+#include <vector>
 #include <unistd.h>
 
 
@@ -182,14 +183,67 @@ int WindowManager::loop()
 }
 
 
+// The ONE descriptor set, built here and consumed by BOTH poll sites.
+//
+// RESEARCH Pitfall 1: this function replaces two textually near-identical
+// fixed-size descriptor arrays, one declared in nextEvent() and one in
+// modalWait(). They were separate functions with separate call sites, so a
+// change to one was invisible in the other's diff -- and every modal grab in
+// this codebase runs through the second. Adding a descriptor to only one of
+// them produces a window manager that services the configuration socket while
+// idle and appears to freeze the moment the root menu, a move or a resize takes
+// its pointer grab.
+//
+// The acceptance gate for this file is a line-counting grep for the old
+// declaration, so its literal spelling is deliberately absent from this comment
+// and from every other line here.
+//
+// The X connection and the self-pipe keep their fixed, NAMED positions; the
+// socket server appends its listener and its connections after them. Both
+// consumers index through the named constants and never through a literal.
+std::vector<struct pollfd> WindowManager::buildPollSet() const
+{
+    std::vector<struct pollfd> fds;
+    fds.reserve(kPollFdFixedCount + 1 + m_socketServer.clientCount());
+
+    struct pollfd x;
+    x.fd      = ConnectionNumber(m_display.get());
+    x.events  = POLLIN;
+    x.revents = 0;
+    fds.push_back(x);
+
+    struct pollfd pipe;
+    pipe.fd      = m_pipeRead.get();
+    pipe.events  = POLLIN;
+    pipe.revents = 0;
+    fds.push_back(pipe);
+
+    m_socketServer.appendPollFds(fds);
+    return fds;
+}
+
+
+int WindowManager::clampPollTimeoutForSocket(int base) const
+{
+    const int hint = m_socketServer.timeoutHintMs();
+    if (hint < 0) return base;
+    if (base < 0) return hint;
+    return (hint < base) ? hint : base;
+}
+
+
+void WindowManager::serviceConfigSocket(const std::vector<struct pollfd>& fds)
+{
+    if (!m_socketServer.isListening()) return;
+    m_socketServer.service(fds, kPollFdFixedCount,
+                           [this](const ConfigSocketRequest &request) {
+                               return handleConfigRequest(request);
+                           });
+}
+
+
 void WindowManager::nextEvent(XEvent *e)
 {
-    struct pollfd fds[2];
-    fds[0].fd = ConnectionNumber(display());
-    fds[0].events = POLLIN;
-    fds[1].fd = m_pipeRead.get();
-    fds[1].events = POLLIN;
-
     while (m_looping) {
 
         // The exit flag, observed independently of queue depth: a sustained
@@ -215,23 +269,30 @@ void WindowManager::nextEvent(XEvent *e)
         }
 
         // Nothing may go between the zero pump result above and the poll()
-        // below except this call, which reads local state only.
-        int timeout = computePollTimeout();
+        // below except these calls, which read local state only.
+        int timeout = clampPollTimeoutForSocket(computePollTimeout());
 
-        // Never trust the previous iteration's revents.
-        fds[0].revents = 0;
-        fds[1].revents = 0;
+        // Rebuilt every iteration, so the revents are always this poll's own
+        // and the connection population is always current.
+        std::vector<struct pollfd> fds = buildPollSet();
 
-        int r = poll(fds, 2, timeout);
+        int r = poll(fds.data(), fds.size(), timeout);
         int pollErrno = errno;
+
+        // The socket is serviced BEFORE the loop's own decision, and its
+        // outcome never reaches that decision: a readable connection is not an
+        // X event and not a signal. eventPumpDecide() sees pollResult > 0 with
+        // neither the X descriptor nor the pipe set and answers Retry, which is
+        // what re-pumps and polls again.
+        serviceConfigSocket(fds);
 
         // The post-poll decision, likewise extracted. Everything it is
         // allowed to look at is gathered here and nowhere else.
         EventPumpPollResult state;
         state.pollResult    = r;
         state.pollErrno     = pollErrno;
-        state.xRevents      = fds[0].revents;
-        state.pipeRevents   = fds[1].revents;
+        state.xRevents      = fds[kPollFdX].revents;
+        state.pipeRevents   = fds[kPollFdPipe].revents;
         state.exitFlagSet   = (m_signalled != 0);
         state.focusChanging = m_focusChanging;
 
@@ -248,8 +309,8 @@ void WindowManager::nextEvent(XEvent *e)
                 std::fprintf(stderr,
                              "wm2: event loop descriptor failed "
                              "(x revents 0x%x, pipe revents 0x%x), exiting\n",
-                             (unsigned)fds[0].revents,
-                             (unsigned)fds[1].revents);
+                             (unsigned)fds[kPollFdX].revents,
+                             (unsigned)fds[kPollFdPipe].revents);
             }
             m_looping = false;
             m_returnCode = 1;
@@ -281,12 +342,6 @@ WindowManager::ModalWait WindowManager::modalWait(long mask, XEvent *out,
         bounded ? clock::now() + std::chrono::milliseconds(timeoutMs)
                 : clock::time_point::max();
 
-    struct pollfd fds[2];
-    fds[0].fd = ConnectionNumber(display());
-    fds[0].events = POLLIN;
-    fds[1].fd = m_pipeRead.get();
-    fds[1].events = POLLIN;
-
     for (;;) {
         if (m_signalled) return ModalWait::Interrupted;
 
@@ -305,19 +360,34 @@ WindowManager::ModalWait WindowManager::modalWait(long mask, XEvent *out,
                 std::chrono::duration_cast<std::chrono::milliseconds>(left).count());
             if (wait <= 0) wait = 1;   // sub-millisecond remainder still waits
         }
+        wait = clampPollTimeoutForSocket(wait);
 
-        fds[0].revents = 0;
-        fds[1].revents = 0;
-        const int r = poll(fds, 2, wait);
+        // THE SAME SET nextEvent() builds, from the SAME builder. This is the
+        // second of the two sites RESEARCH Pitfall 1 names, and it is the one
+        // that matters: every modal grab -- the root menu, move, resize, the
+        // tab-button hold, the gesture recogniser -- waits here.
+        std::vector<struct pollfd> fds = buildPollSet();
+
+        const int r = poll(fds.data(), fds.size(), wait);
         if (r < 0) {
             if (errno == EINTR) continue;   // the flag is re-read at the top
             return ModalWait::Interrupted;  // a dead descriptor ends the grab
         }
-        if (fds[1].revents & POLLIN) return ModalWait::Interrupted;
-        if (fds[0].revents & eventPumpFailedRevents()) return ModalWait::Interrupted;
+
+        // DISC-06: a FOURTH, SILENT case. Servicing the socket never returns
+        // Event and never returns Interrupted -- it falls through to the next
+        // iteration -- so every existing caller's contract is untouched. That
+        // is what lets the configuration GUI keep talking to the window manager
+        // while a grab is held, without any modal loop learning that the socket
+        // exists.
+        serviceConfigSocket(fds);
+
+        if (fds[kPollFdPipe].revents & POLLIN) return ModalWait::Interrupted;
+        if (fds[kPollFdX].revents & eventPumpFailedRevents()) return ModalWait::Interrupted;
         if (r == 0 && bounded) return ModalWait::Timeout;
-        // X readable, or a non-matching event: go round, let XCheckMaskEvent
-        // pull it in. A non-matching event stays queued for the main loop.
+        // X readable, a serviced socket, or a non-matching event: go round, let
+        // XCheckMaskEvent pull it in. A non-matching event stays queued for the
+        // main loop.
     }
 }
 

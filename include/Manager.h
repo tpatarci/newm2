@@ -3,6 +3,7 @@
 #include "x11wrap.h"
 #include "Config.h"
 #include "AppEntry.h"
+#include "SocketServer.h"
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <X11/Xft/Xft.h>
@@ -14,6 +15,7 @@
 #include <unordered_map>
 #include <csignal>
 #include <chrono>
+#include <poll.h>
 #include <unistd.h>
 
 // RAII wrapper for POSIX file descriptors (not X11 resources -- those are in x11wrap.h)
@@ -262,6 +264,57 @@ private:
     FdGuard m_pipeWrite{-1};
     static int s_pipeWriteFd;  // accessed from signal handler (static for async-signal-safety)
 
+    // CGUI-02: the configuration socket, and the ONE descriptor set both poll
+    // sites consume.
+    //
+    // RESEARCH Pitfall 1 is the whole reason these live here rather than as two
+    // stack-local arrays. Before this phase src/Events.cpp declared
+    // `struct pollfd fds[2]` TWICE -- once in nextEvent() and once in
+    // modalWait() -- and every modal grab in this codebase (the root menu, move,
+    // resize, the tab-button hold, the gesture recogniser) funnels through the
+    // second one. A socket added to only the first produces a window manager
+    // that answers when idle and appears to freeze the moment a menu is held:
+    // exactly the defect class ledger 8 already fixed once for signal delivery.
+    // The two arrays are now one builder called from both, and the indices are
+    // named so neither site can drift from the other by a literal.
+    static constexpr std::size_t kPollFdX          = 0;  // the X connection
+    static constexpr std::size_t kPollFdPipe       = 1;  // the self-pipe read end
+    static constexpr std::size_t kPollFdFixedCount = 2;  // socket fds start here
+
+    ConfigSocketServer m_socketServer;
+
+    // When this process started, for the status reply's uptime. Steady rather
+    // than wall-clock, so a clock adjustment cannot make uptime run backwards.
+    std::chrono::steady_clock::time_point m_startTime{};
+
+    // The shared poll set: X connection at kPollFdX, self-pipe at kPollFdPipe,
+    // the socket server's own descriptors appended after kPollFdFixedCount.
+    // Rebuilt each iteration because the connection population changes.
+    std::vector<struct pollfd> buildPollSet() const;
+
+    // Clamp a poll timeout so the socket server's silence deadline can fire.
+    // A deadline that expires on the passage of time alone is never reached by
+    // a poll() that blocks forever.
+    int clampPollTimeoutForSocket(int base) const;
+
+    // Service whatever the socket server put in `fds`. In modalWait() this is a
+    // FOURTH, SILENT case (DISC-06): it never returns Event and never returns
+    // Interrupted, exactly as ServiceFocusTick is silent in nextEvent(), so no
+    // existing caller of modalWait() observes any change.
+    void serviceConfigSocket(const std::vector<struct pollfd>& fds);
+
+    // The protocol policy. Owns D-15's handshake rule and D-14's field ceiling;
+    // the transport in src/SocketServer.cpp owns descriptors and buffers and
+    // knows nothing about what a message means.
+    ConfigSocketReply handleConfigRequest(const ConfigSocketRequest& request);
+
+    // D-14's ceiling, assembled in exactly one place so there is exactly one
+    // site to review.
+    ConfigMessage statusReplyMessage() const;
+
+    // Start the socket and publish its path on the root window (DISC-03).
+    void startConfigSocket();
+
     static bool m_initialising;
     static int errorHandler(Display*, XErrorEvent*);
     static void sigHandler(int);
@@ -375,6 +428,12 @@ struct Atoms {
     static Atom wm_takeFocus;
     static Atom wm_colormaps;
     static Atom wm2_running;
+
+    // DISC-03 / DISC-01: the socket's filesystem path, published on the root
+    // window as an XA_STRING so a client DISCOVERS it rather than
+    // reconstructing it. A window manager started with an unusual
+    // XDG_RUNTIME_DIR is still findable.
+    static Atom wm2_configSocket;
 
     // EWMH atoms
     static Atom net_supported;
