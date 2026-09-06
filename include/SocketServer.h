@@ -392,6 +392,15 @@ private:
     // one, and service() pays the debt once, after every handler has returned.
     // The window manager has one thread, so this is a re-entrancy counter and
     // not a lock: it counts nesting, never contention.
+    //
+    // RAISED AND LOWERED BY AN RAII GUARD, never by a ++/-- pair (W-01). A
+    // handler that throws -- std::bad_alloc out of the string, Config and
+    // vector copies WindowManager::handleConfigRequest performs, on the
+    // 512 MB VPS this project's constraints name -- would skip a bare
+    // decrement and leave this stuck at one for the life of the process. From
+    // there reap() defers on every call, dead connections accumulate to
+    // kConfigSocketMaxClients, and the socket accepts nothing for the rest of
+    // the session with no diagnostic at all.
     std::size_t m_serviceDepth = 0;
     bool        m_reapPending  = false;
 };

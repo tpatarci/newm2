@@ -36,6 +36,27 @@
 
 namespace {
 
+// The servicing-depth bracket, as an object rather than as a pair of
+// statements (W-01, CR-01).
+//
+// service() may not leave m_serviceDepth raised on ANY exit. A handler that
+// throws -- std::bad_alloc from the string, Config and vector copies
+// WindowManager::handleConfigRequest performs -- would skip a bare
+// `--m_serviceDepth` and wedge reap() into deferring for ever, which ends as a
+// configuration socket that accepts nothing for the rest of the session. The
+// window manager has one thread, so this counts nesting and never contention.
+class ServiceDepthGuard {
+public:
+    explicit ServiceDepthGuard(std::size_t& depth) : m_depth(depth) { ++m_depth; }
+    ~ServiceDepthGuard() { --m_depth; }
+
+    ServiceDepthGuard(const ServiceDepthGuard&) = delete;
+    ServiceDepthGuard& operator=(const ServiceDepthGuard&) = delete;
+
+private:
+    std::size_t& m_depth;
+};
+
 // steady_clock milliseconds. Steady rather than wall-clock so the silence
 // deadline survives a clock adjustment, exactly as the timestamp wait's
 // deadline does (include/TimestampWait.h).
@@ -454,30 +475,42 @@ void ConfigSocketServer::service(const std::vector<struct pollfd>& fds,
         // running under this loop would erase, shift and destroy the very
         // elements it is indexing. So reap() defers while the depth is
         // non-zero and is paid once, below, when every handler has returned.
-        ++m_serviceDepth;
-        for (std::size_t i = 0; i < m_clients.size(); ++i) {
-            const struct pollfd& p = fds[firstIndex + 1 + i];
-            if (p.fd != m_clients[i].fd) continue;
+        //
+        // RAII, NOT A ++/-- PAIR (W-01). The handler is
+        // WindowManager::handleConfigRequest, which builds and copies
+        // std::strings, a whole Config and a std::vector<AppEntry>: on the
+        // 512 MB VPS this project's constraints name, std::bad_alloc is
+        // reachable. An exception past a bare `--m_serviceDepth` leaves the
+        // depth stuck at one for the life of the process, reap() then defers
+        // on EVERY later call, dead connections accumulate to
+        // kConfigSocketMaxClients, and the configuration socket is
+        // permanently deaf with no diagnostic. The same shape as
+        // ModalDepthGuard in src/Events.cpp, for the same reason.
+        {
+            const ServiceDepthGuard depth(m_serviceDepth);
+            for (std::size_t i = 0; i < m_clients.size(); ++i) {
+                const struct pollfd& p = fds[firstIndex + 1 + i];
+                if (p.fd != m_clients[i].fd) continue;
 
-            if (p.revents & POLLOUT) flush(m_clients[i]);
-            if (m_clients[i].dead) continue;
+                if (p.revents & POLLOUT) flush(m_clients[i]);
+                if (m_clients[i].dead) continue;
 
-            switch (socketServerDecide(p.revents)) {
-            case SocketAction::ReadClient:
-                readConnection(i, handler);
-                break;
-            case SocketAction::CloseClient:
-                closeConnection(m_clients[i]);
-                break;
-            case SocketAction::Accept:
-                // Unreachable for a connection role; named rather than left to
-                // a default arm so a fifth action is a compile error here.
-                break;
-            case SocketAction::Idle:
-                break;
+                switch (socketServerDecide(p.revents)) {
+                case SocketAction::ReadClient:
+                    readConnection(i, handler);
+                    break;
+                case SocketAction::CloseClient:
+                    closeConnection(m_clients[i]);
+                    break;
+                case SocketAction::Accept:
+                    // Unreachable for a connection role; named rather than left to
+                    // a default arm so a fifth action is a compile error here.
+                    break;
+                case SocketAction::Idle:
+                    break;
+                }
             }
-        }
-        --m_serviceDepth;
+        }   // released here, on EVERY exit including an unwind
 
         reap();
 

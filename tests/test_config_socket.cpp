@@ -38,6 +38,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -673,6 +674,93 @@ TEST_CASE("A broadcast from inside a handler does not disturb the connection "
 
     server.close();
 }
+
+
+// -----------------------------------------------------------------------------
+// An escaped exception does not wedge the servicing depth (W-01)
+// -----------------------------------------------------------------------------
+//
+// The depth counter is what makes CR-01's deferred reap correct, and a bare
+// ++/-- bracket around the servicing loop is skipped by an exception thrown
+// out of a handler. WindowManager::handleConfigRequest copies std::strings, a
+// whole Config and a std::vector<AppEntry>, so std::bad_alloc is reachable on
+// exactly the 512 MB VPS this project names in its constraints -- and once the
+// depth is stuck at one, reap() defers for ever, the dead connections
+// accumulate to kConfigSocketMaxClients, and the configuration socket is
+// permanently deaf with no diagnostic.
+//
+// The case does not need bad_alloc. It needs A handler that throws, which is
+// the whole of the reachability question: whether the bracket survives the
+// unwind.
+
+TEST_CASE("a handler that throws leaves the servicing depth balanced",
+          "[config_socket][reentrancy]")
+{
+    RuntimeDirEnv guard;
+    TempDir home;
+    REQUIRE(home.valid());
+    ServerHome server_home(home);
+
+    ConfigSocketServer server;
+    REQUIRE(server.listen(":throwing"));
+
+    ReentrantHandler base(server);
+    bool throwNext = false;
+    const ConfigSocketServer::Handler fn =
+        [&base, &throwNext](const ConfigSocketRequest& r) -> ConfigSocketReply {
+            if (throwNext) throw std::runtime_error("the handler threw");
+            return base(r);
+        };
+
+    ClientEnd a(server.path());
+    REQUIRE(a.open());
+    pump(server, fn);
+    REQUIRE(server.clientCount() == 1);
+    REQUIRE(a.send(helloLine()));
+    pump(server, fn);
+    std::string fromA;
+    a.drain(fromA);
+    REQUIRE(countLines(fromA, "{\"type\":\"hello-ack\",\"program\":\"wm2-born-again\","
+                              "\"protocol\":1}") == 1);
+
+    // The throw, from inside the servicing pass, exactly where the window
+    // manager's own handler runs.
+    throwNext = true;
+    REQUIRE(a.send(getLine("tab-font")));
+    bool threw = false;
+    try {
+        pump(server, fn);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    REQUIRE(threw);
+    throwNext = false;
+
+    // THE ASSERTION. The connection goes away, and a later pass must be able to
+    // REAP it. With a bare ++/-- bracket the depth is stuck at one, reap()
+    // takes the deferral branch on every later call, and this count never
+    // falls -- which is the first step of the permanent deafness.
+    a.close();
+    pump(server, fn);
+    pump(server, fn);
+    CHECK(server.clientCount() == 0);
+
+    // And the server still accepts: the slot the reap freed is usable, which is
+    // the consequence the user would actually meet.
+    ClientEnd b(server.path());
+    REQUIRE(b.open());
+    pump(server, fn);
+    CHECK(server.clientCount() == 1);
+    REQUIRE(b.send(helloLine()));
+    pump(server, fn);
+    std::string fromB;
+    b.drain(fromB);
+    CHECK(countLines(fromB, "{\"type\":\"hello-ack\",\"program\":\"wm2-born-again\","
+                            "\"protocol\":1}") == 1);
+
+    server.close();
+}
+
 
 
 // -----------------------------------------------------------------------------
