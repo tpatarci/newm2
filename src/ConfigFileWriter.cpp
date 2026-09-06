@@ -140,6 +140,21 @@ bool editsAreAcceptable(const std::vector<ConfigEdit>& edits, std::string& error
                        std::to_string(kMaxValueBytes) + " characters and would not be read back";
             return false;
         }
+        // A value the FILE FORMAT CANNOT CARRY, refused in the writer's own
+        // vocabulary rather than lost silently (WR-03). Config::applyFile()
+        // trims the value it reads, so " xterm" is written as
+        // `new-window-command =  xterm` and read back as "xterm": the running
+        // window manager holds one string, the file says another, and `get`
+        // disagrees with the file the moment anything reloads. A value that is
+        // entirely whitespace becomes the empty string. Refusing is the only
+        // outcome that does not quietly change what the user typed.
+        if (!e.value.empty() &&
+            (e.value.front() == ' ' || e.value.front() == '\t' ||
+             e.value.back()  == ' ' || e.value.back()  == '\t')) {
+            errorOut = "the value for '" + e.key + "' begins or ends with a space, "
+                       "which the configuration file cannot preserve";
+            return false;
+        }
     }
     return true;
 }

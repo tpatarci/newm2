@@ -1024,3 +1024,47 @@ TEST_CASE("a save waits for a concurrent saver rather than overwriting it",
     CHECK(content.find("# hand written") != std::string::npos);
     CHECK(content.find("frame-thickness = 7") != std::string::npos);
 }
+
+
+// ---------------------------------------------------------------------------
+// A value the file format cannot carry is refused where it is typed (WR-03)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("a value with leading or trailing whitespace is refused",
+          "[config_writer][refusal]") {
+    TempDir dir;
+    const std::string path = dir.file("config");
+    writeFile(path, "frame-thickness = 7\n");
+
+    // Config::applyFile() trims what it reads, so a value written with an
+    // outer space comes back without it. The window manager would hold one
+    // string and the file another, and `get` would disagree with the file the
+    // moment anything reloaded.
+    for (const std::string& value : { std::string(" xterm"),
+                                      std::string("xterm "),
+                                      std::string("\txterm"),
+                                      std::string("xterm\t"),
+                                      std::string("   ") }) {
+        std::string error;
+        INFO("value '" << value << "'");
+        CHECK(save(path, {set("new-window-command", value)}, error) ==
+              ConfigWriteResult::InvalidEdit);
+        CHECK(error.find("begins or ends with a space") != std::string::npos);
+    }
+
+    // Refused BEFORE anything is opened: the file is byte-for-byte what it was.
+    CHECK(readFile(path) == "frame-thickness = 7\n");
+
+    // And an inner space is untouched -- it round-trips perfectly, and
+    // refusing it would break every multi-word command.
+    std::string error;
+    CHECK(save(path, {set("new-window-command", "xterm -ls")}, error) ==
+          ConfigWriteResult::Ok);
+    CHECK(readFile(path).find("new-window-command = xterm -ls") != std::string::npos);
+
+    // The round trip the refusal exists to protect: what the writer accepted
+    // is what the parser reads back, through the parser itself.
+    Config parsed;
+    parsed.applyKeyValue("new-window-command", "xterm -ls");
+    CHECK(parsed.newWindowCommand == "xterm -ls");
+}
