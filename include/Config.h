@@ -75,10 +75,17 @@ struct Config {
     // one of these strings and you have changed the shipped look of the window
     // manager, not merely a default.
     //
-    // D-8.5-01: `tab-font` is a permanent spelling. Key names are free to choose
-    // before v1.0 and fixed after, and there will be no deprecated aliases.
+    // D-8.5-01: `tab-font` and `menu-font` are permanent spellings. Key names are
+    // free to choose before v1.0 and fixed after, and there will be no
+    // deprecated aliases.
+    //
+    // The two differ by exactly one token: the tab is drawn BOLD and the menu is
+    // not. That is not an oversight to tidy up -- bold survives a RENDER-less
+    // remote server where lighter weights go ragged (measured, 08.5-02), and the
+    // tab label is the text that has to stay legible sideways at 12 px.
     // ------------------------------------------------------------------
-    std::string tabFont = "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12";
+    std::string tabFont  = "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12";
+    std::string menuFont = "Ubuntu,Noto Sans,DejaVu Sans,Sans:size=12";
 
     // Focus policy
     //

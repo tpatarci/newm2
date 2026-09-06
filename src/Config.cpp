@@ -162,6 +162,7 @@ void Config::applyKeyValue(const std::string& key, const std::string& value,
     // applies to every line. See include/Config.h for why there is no separate
     // size key.
     if (key == "tab-font")            { tabFont = value; return; }
+    if (key == "menu-font")           { menuFont = value; return; }
 
     // String settings (commands)
     if (key == "new-window-command")  { newWindowCommand = value; return; }
@@ -496,6 +497,7 @@ static const OptionSpec kOptionSpecs[] = {
     {"menu-highlight",            OptType::String,  "colour of the selected menu row"},
     {"menu-borders",              OptType::String,  "colour of the root menu border"},
     {"tab-font",                  OptType::String,  "fontconfig pattern for the sideways tab label"},
+    {"menu-font",                 OptType::String,  "fontconfig pattern for the root menu"},
     {"new-window-command",        OptType::String,  "command the menu's New entry runs"},
 
     // Integer settings
@@ -654,6 +656,7 @@ void Config::applyCliArgs(int argc, char** argv) {
         else if (std::strcmp(name, "menu-highlight") == 0)      menuHighlight = optarg;
         else if (std::strcmp(name, "menu-borders") == 0)        menuBorders = optarg;
         else if (std::strcmp(name, "tab-font") == 0)            tabFont = optarg;
+        else if (std::strcmp(name, "menu-font") == 0)           menuFont = optarg;
         else if (std::strcmp(name, "new-window-command") == 0)  newWindowCommand = optarg;
 
         // Integer settings (with clamping and error handling)

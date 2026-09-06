@@ -681,8 +681,16 @@ void WindowManager::initialiseScreen()
 
     // Load menu font via Xft with fontconfig fallback chain (D-02)
     // Font size 12 matches Lucida Bold 14pt visual footprint (D-03)
+    //
+    // The preferred pattern comes from config since plan 09-01; its default is
+    // the literal this call spelled inline before, so a user with no config file
+    // gets the same face. The generic-sans SECOND rung below keeps its own
+    // literal, and the fatal() below it stands: the menu measures every row
+    // against this font, so unlike the tab there is no "carry on without it".
+    // Only a host with no sans font at all reaches that exit -- the same
+    // condition that already ended startup before this key existed (T-9-02).
     x11::XftFontPtr menuFont = x11::make_xft_font_name(display(),
-        "Ubuntu,Noto Sans,DejaVu Sans,Sans:size=12");
+        m_config.menuFont.c_str());
     if (!menuFont) {
         menuFont = x11::make_xft_font_name(display(), "sans-serif:size=12");
     }
