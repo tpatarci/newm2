@@ -376,6 +376,28 @@ ConfigWriteResult configFileWrite(const std::string& path,
         }
     }
 
+    // --- A symlinked target is REFUSED, and said so (WR-05) -----------------
+    //
+    // rename() replaces the LINK, not what it points at. A user who keeps
+    // ~/.config/wm2-born-again/config as a symlink into a dotfiles repository
+    // -- a common arrangement -- lost the link on the first Save, and every
+    // later edit went to the real file while the repository copy silently
+    // stopped being the source of truth.
+    //
+    // NOT writing through the symlink is the security-correct choice and is
+    // kept; the defect was doing it silently. Refusing and naming the
+    // situation lets the user edit the file the link points at, which is what
+    // they meant.
+    {
+        struct stat lst {};
+        if (::lstat(path.c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
+            errorOut = "'" + path + "' is a symbolic link. Saving would replace "
+                       "the link with a regular file; edit the file it points "
+                       "at instead.";
+            return ConfigWriteResult::WriteFailed;
+        }
+    }
+
     // --- The lock, held from before the read until after the rename ---------
     //
     // Declared here so it covers every return below: the read the output is

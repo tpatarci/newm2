@@ -1068,3 +1068,37 @@ TEST_CASE("a value with leading or trailing whitespace is refused",
     parsed.applyKeyValue("new-window-command", "xterm -ls");
     CHECK(parsed.newWindowCommand == "xterm -ls");
 }
+
+
+// ---------------------------------------------------------------------------
+// A symlinked target is refused rather than silently replaced (WR-05)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("saving over a symlinked config file is refused, and the link survives",
+          "[config_writer][refusal]") {
+    TempDir dir;
+
+    // The arrangement this protects: the real file lives in a dotfiles
+    // repository and the configuration path is a link into it.
+    const std::string real = dir.file("dotfiles-config");
+    const std::string link = dir.file("config");
+    writeFile(real, "# from the dotfiles repository\nframe-thickness = 7\n");
+    REQUIRE(::symlink(real.c_str(), link.c_str()) == 0);
+
+    std::string error;
+    const ConfigWriteResult r = save(link, {set("frame-thickness", "11")}, error);
+
+    INFO("result " << static_cast<int>(r) << ", error '" << error << "'");
+    CHECK(r == ConfigWriteResult::WriteFailed);
+    CHECK(error.find("symbolic link") != std::string::npos);
+
+    // The link is still a link -- rename() would have replaced it with a
+    // regular file, and every later edit would have gone somewhere the
+    // repository could not see.
+    struct stat lst {};
+    REQUIRE(::lstat(link.c_str(), &lst) == 0);
+    CHECK(S_ISLNK(lst.st_mode));
+
+    // And the file it points at is untouched.
+    CHECK(readFile(real) == "# from the dotfiles repository\nframe-thickness = 7\n");
+}
