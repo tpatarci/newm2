@@ -903,7 +903,11 @@ at all.
 Messages are one JSON object per line, terminated by a newline, and a line
 longer than 4096 bytes is refused. The first message on a connection must be a
 `hello` naming the client program and the protocol version; anything else closes
-the connection. This release answers `hello`, `status`, `get`, `set` and
+the connection. The check runs both ways: `wm2-config` and `wm2-ctl` require the
+window manager's acknowledgement to name `wm2-born-again` at their own protocol
+version before they send a single setting, so a same-user process squatting the socket
+path, or whatever `--socket` points at, is refused by the name it gave itself.
+This release answers `hello`, `status`, `get`, `set` and
 `reload`. The `status` reply carries the window manager version, the protocol
 version, uptime in seconds, the screen width and height, and counts of managed
 and hidden windows — and nothing else. No window title, class or geometry is

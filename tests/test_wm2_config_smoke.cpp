@@ -330,7 +330,9 @@ class FakeServer {
 public:
     enum class Reply {
         Nothing,       // accepts, reads, and says nothing at all
-        WrongVersion   // a well-formed hello-ack naming a version nobody speaks
+        WrongVersion,  // a well-formed hello-ack naming a version nobody speaks
+        WrongProgram   // a well-formed hello-ack at OUR version, from something
+                       // that is not the window manager (T-9-34)
     };
 
     FakeServer(const std::string& path, Reply reply)
@@ -387,11 +389,15 @@ private:
             const int fd = ::accept(m_listenFd, nullptr, nullptr);
             if (fd < 0) continue;
 
-            if (m_reply == FakeServer::Reply::WrongVersion) {
+            if (m_reply == FakeServer::Reply::WrongVersion ||
+                m_reply == FakeServer::Reply::WrongProgram) {
                 ConfigMessage ack;
                 ack.type = ConfigMessageType::HelloAck;
                 ack.program = "not-really-a-window-manager";
-                ack.protocol = 99;
+                // WrongProgram speaks OUR version: the only thing wrong with
+                // it is who it says it is, which is what T-9-34 is about.
+                ack.protocol = m_reply == FakeServer::Reply::WrongVersion
+                                   ? 99 : kConfigProtocolVersion;
                 const std::string bytes = configProtocolEncode(ack);
                 ssize_t ignored = ::send(fd, bytes.data(), bytes.size(), MSG_NOSIGNAL);
                 (void)ignored;
@@ -1421,6 +1427,26 @@ TEST_CASE("a peer speaking a protocol version this build does not is refused by 
         connectionBannerText(ConnectionState::FileOnlyRefused, client.reason());
     CHECK(banner.rfind(kFileOnlyBannerText, 0) == 0);
     CHECK(banner.find("99") != std::string::npos);
+}
+
+TEST_CASE("a peer that speaks our version but is not the window manager is refused by name",
+          "[wm2_config_smoke]")
+{
+    // T-9-34. The peer-uid check on the SERVER side keeps other users out; it
+    // says nothing about a same-uid process squatting the socket path, or
+    // about whatever `--socket <path>` points at. The handshake's `program`
+    // member is the client's half of that mitigation, and a hello-ack that
+    // gets everything right except who it claims to be must not be handed a
+    // single `set`.
+    FakeServer server(shortSocketPath("wrongprog"), FakeServer::Reply::WrongProgram);
+    REQUIRE(server.listening());
+
+    ProtocolClient client;
+    CHECK_FALSE(client.connect(server.path()));
+    CHECK(client.state() == ProtocolClient::State::Refused);
+    INFO("reason: " << client.reason());
+    CHECK(client.reason().find("not-really-a-window-manager") != std::string::npos);
+    CHECK(client.reason().find(kConfigProtocolWindowManagerProgram) != std::string::npos);
 }
 
 TEST_CASE("writing an empty edit set WOULD move the file's modification time",

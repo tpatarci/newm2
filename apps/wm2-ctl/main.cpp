@@ -290,6 +290,14 @@ int shakeHands(Connection& conn)
              std::to_string(kConfigProtocolVersion));
         return kExitRefused;
     }
+    // T-9-34: same check as wm2-config's client. The peer-uid check on the
+    // server keeps other users out; nothing but this keeps a same-uid
+    // impostor on the socket path (or on --socket) from being sent a `set`.
+    if (ack.program != kConfigProtocolWindowManagerProgram) {
+        warn(std::string("the peer calls itself \"") + ack.program +
+             "\", not " + kConfigProtocolWindowManagerProgram);
+        return kExitRefused;
+    }
     return kExitOk;
 }
 

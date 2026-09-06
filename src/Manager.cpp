@@ -2512,7 +2512,7 @@ ConfigSocketReply WindowManager::handleConfigRequest(const ConfigSocketRequest &
         }
         ConfigMessage ack;
         ack.type = ConfigMessageType::HelloAck;
-        ack.program = "wm2-born-again";
+        ack.program = kConfigProtocolWindowManagerProgram;
         ack.protocol = kConfigProtocolVersion;
         out.line = configProtocolEncode(ack);
         out.helloAccepted = true;

@@ -112,6 +112,15 @@
 // The version this build speaks. Sent in the hello, echoed in the hello-ack.
 inline constexpr int kConfigProtocolVersion = 1;
 
+// The `program` the window manager names in its hello-ack, and the name a
+// client requires before it sends a single setting (T-9-34). The server-side
+// peer-uid check keeps other USERS out; this is the client's half, and the
+// only thing standing between a client and a same-uid process squatting the
+// socket path or named by `--socket`. Not a wire-format change: the member
+// has been on the wire since the contract was frozen, and this is the value
+// the window manager has always put in it.
+inline constexpr const char* kConfigProtocolWindowManagerProgram = "wm2-born-again";
+
 // The longest line the decoder will look at, INCLUDING its terminating
 // newline. 4096 is not an arbitrary round number: it is the same per-line
 // guard Config::applyFile() already enforces on the config file

@@ -202,6 +202,16 @@ bool ProtocolClient::connect(const std::string& path)
                        std::to_string(kConfigProtocolVersion));
         return false;
     }
+    // T-9-34: the version alone does not say WHO answered. A same-uid process
+    // on the socket path, or whatever `--socket` named, gets past the server
+    // side's peer-uid check by construction; the name it gives itself is the
+    // only thing left to refuse it on, and it is refused before any setting.
+    if (ack.program != kConfigProtocolWindowManagerProgram) {
+        disconnect(State::Refused,
+                   "it calls itself \"" + ack.program + "\", not " +
+                       kConfigProtocolWindowManagerProgram);
+        return false;
+    }
 
     setState(State::Connected, std::string());
     return true;
