@@ -365,13 +365,46 @@ Gap-closure wave 5 (round 2) *(blocked on wave 4)*:
   3. The WM runs perfectly without GTK3 installed -- the config GUI is an optional separate package
   4. Changes made in the config GUI are persisted to the config file so they survive WM restarts
 
-**Plans**: 3 plans
+**Plans**: 9 plans
+
+*(Planned 2026-09-06. The roadmap's original estimate of 3 plans predated the research, which found that fonts are not configurable at all today — a precondition for CGUI-03 — and that the event loop's descriptor set is declared twice, making the socket integration a structural change to two functions rather than an additive one. Nine plans at fine granularity, 2-4 tasks each, in eight waves; only wave 1 runs two plans in parallel, because this phase is a genuine dependency chain.)*
 
 Plans:
+**Wave 1**
 
-- [ ] 09-01: TBD
-- [ ] 09-02: TBD
-- [ ] 09-03: TBD
+- [ ] 09-01-PLAN.md — wave 1 — Fonts become configuration: `tab-font` and `menu-font` keys, closing CONF-02's outstanding box and CGUI-03's precondition
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 09-02-PLAN.md — wave 2 — The display-free halves: the newline-delimited JSON codec and the surgical config-file writer, behind a wire-contract decision checkpoint
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 09-03-PLAN.md — wave 3 — The socket the window manager answers on: one shared descriptor set across both poll sites, same-uid access control, status only
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 09-04-PLAN.md — wave 4 — `wm2-ctl` and the first setting that changes the running desktop, with validation shared with the config-file path
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 09-05-PLAN.md — wave 5 — Everything else applies live: colours, fonts, focus policy, delays, menu entries, and the reload notice
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 09-06-PLAN.md — wave 6 — `wm2-config`: the GTK window, the connection, the Appearance page, and the AUTO build option
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 09-07-PLAN.md — wave 7 — The Behaviour and Menu pages, and the three moments where the file and the desktop can disagree
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [ ] 09-08-PLAN.md — wave 8 — Two install components, and the GTK-absent build proven as a gate
+
+**Wave 9** *(blocked on Wave 8 completion)*
+
+- [ ] 09-09-PLAN.md — wave 9 — "Configure…" on the root menu, the documentation-parity gate, checklist rows, and the measured remote-desktop pass
 
 ## Progress
 
@@ -389,4 +422,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
 | 8. Xrandr + VNC + Focus/Rules | 14/14 | Verified with gaps | 2026-08-30 |
 | 8.5 v1.0 Closeout *(INSERTED)* | 12/13 (08.5-07 superseded) | Shipped: PR #6 merged `0fec5db`; verification `human_needed`; security review pending | 2026-09-05 |
-| 9. Config GUI + IPC | 0/3 | Not started | - |
+| 9. Config GUI + IPC | 0/9 | Planning complete | - |

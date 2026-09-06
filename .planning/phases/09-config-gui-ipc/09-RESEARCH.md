@@ -580,9 +580,11 @@ target_include_directories(wm2-ctl PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 **If this table is empty:** N/A — see rows above.
 
-## Open Questions
+## Open Questions (RESOLVED at planning, 2026-09-06)
 
-1. **Exact wire spelling of the protocol's message `type` field values and error taxonomy**
+> All three were settled by the plans: Q1 by the `checkpoint:decision` in `09-02-PLAN.md` (wire-contract freeze, DISC-01); Q2 by `09-03-PLAN.md` DISC-04 (`SIGHUP` stays the exit signal; reload is socket-only); Q3 by `09-09-PLAN.md` Task 4 (RSS measured on the droplet over VNC, halt rather than estimate). Kept below as written for the record.
+
+1. **RESOLVED (09-02 checkpoint, DISC-01)** — **Exact wire spelling of the protocol's message `type` field values and error taxonomy**
    - What we know: D-14/D-15 name the required operations (hello, get, set, reload, status, one
      broadcast notice) and require idempotency and clear error replies.
    - What's unclear: the precise JSON key names and error-code vocabulary are explicitly left to
@@ -592,7 +594,7 @@ target_include_directories(wm2-ctl PRIVATE ${CMAKE_SOURCE_DIR}/include)
      design artifact (perhaps a comment block in `ConfigProtocol.h` enumerating every message type),
      since `wm2-ctl`, `wm2-config` and the WM's dispatcher all need to agree on it exactly.
 
-2. **Whether `SIGHUP` is repurposed for "reload config"**
+2. **RESOLVED (09-03 DISC-04: stays exit)** — **Whether `SIGHUP` is repurposed for "reload config"**
    - What we know: today `SIGHUP` shares the WM's exit handler with `SIGTERM`/`SIGINT`
      (`src/Manager.cpp:150-153`); CONTEXT.md leaves this to Claude's Discretion.
    - What's unclear: whether repurposing it is worth the behavioural change and release-note burden,
@@ -603,7 +605,7 @@ target_include_directories(wm2-ctl PRIVATE ${CMAKE_SOURCE_DIR}/include)
      but `wm2-ctl reload` can simply be a protocol message like any other `wm2-ctl` command, which
      does not require touching signal handling at all).
 
-3. **Actual RSS of `wm2-config` under a real VNC/XRDP session**
+3. **RESOLVED (09-09 Task 4: measured, never estimated)** — **Actual RSS of `wm2-config` under a real VNC/XRDP session**
    - What we know: comparable GTK3 apps observed on this workstation via `/proc/<pid>/status` VmRSS
      range from ~31 MB (gnome-system-monitor) to ~48 MB (gnome-terminal, gedit) — real, currently
      running processes on this host, not launched for this research, sampled read-only via `/proc`.

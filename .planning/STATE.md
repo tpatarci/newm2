@@ -1,18 +1,18 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-current_phase: 08.5
-current_phase_name: v1.0 Closeout
+current_phase: 09
+current_phase_name: Config GUI + IPC
 status: executing
 stopped_at: Phase 9 context gathered
-last_updated: "2026-09-05T23:17:11.296Z"
+last_updated: "2026-09-06T00:15:19.434Z"
 last_activity: 2026-09-05
 last_activity_desc: Phase 8.5 shipped -- PR
-state_head: 947a7fca6e652ca7bfa10f6c0de391d99852c3e6
+state_head: 77dbb791d967b6d021458cd1946d31ed9338a97c
 progress:
   total_phases: 10
   completed_phases: 4
-  total_plans: 49
+  total_plans: 58
   completed_plans: 48
 milestone_name: milestone
 ---
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 ## Current Position
 
-Phase: 08.5 (v1.0 Closeout) — SHIPPED (PR #6 merged 0fec5db, 2026-09-05T18:05Z); verification `human_needed` awaits the operator; security review of the phase pending
+Phase: 09 (Config GUI + IPC) — READY TO EXECUTE
 
 **Position as of 2026-09-05 (evening).** On 2026-09-05 the operator instructed the
 delegated project lead to finish everything planned without stopping for
