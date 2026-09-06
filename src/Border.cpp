@@ -1818,6 +1818,16 @@ void Border::stripForFullscreen()
 
 void Border::restoreFromFullscreen(int x, int y, int w, int h)
 {
+    // WHAT THIS DOES NOT DO. It re-parents and re-configures at the indents in
+    // force NOW, so a thickness that changed during the fullscreen spell is
+    // honoured for the parent and for where the child sits inside it -- but the
+    // tab, the button and the grabber are merely remapped, keeping the geometry
+    // and the shape they had when stripForFullscreen() unmapped them, and no
+    // window's background pixel is touched. The re-layout and the repaint that
+    // a live change would have performed are replayed by
+    // Client::applyDeferredFrameRefresh(), which setFullscreen(false) calls
+    // straight after this returns.
+
     // Reparent child back into frame
     x11::ServerGrab grab(display());
     XReparentWindow(display(), m_child, m_parent, xIndent(), yIndent());

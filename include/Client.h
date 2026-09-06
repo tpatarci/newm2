@@ -199,6 +199,18 @@ private:
     void stripNetWmStates(Atom a, Atom b);
     bool m_reparenting;
 
+    // relayoutFrame(), relayoutFrameForFont() and repaintForColourChange() are
+    // all SKIPPED for a client that is fullscreen: there is no frame to lay
+    // out, because Border::stripForFullscreen() unmapped every component of it
+    // and reparented the window to root. A skip is not a discard: each of them
+    // records here what it could not do, and applyDeferredFrameRefresh() --
+    // called from setFullscreen(false) -- does it the moment there is a frame
+    // again. See src/Client.cpp for what restoreFromFullscreen() does, and does
+    // not, put back by itself.
+    bool m_frameLayoutStale{false};      // a thickness or tab-face change
+    bool m_frameColoursStale{false};     // a palette change
+    void applyDeferredFrameRefresh();
+
     // EWMH state
     WindowType m_windowType{WindowType::Normal};
     bool m_isFullscreen{false};

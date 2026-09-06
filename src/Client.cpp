@@ -598,6 +598,13 @@ void Client::setFullscreen(bool fullscreen)
         m_y = m_preFullscreenY;
         m_w = m_preFullscreenW;
         m_h = m_preFullscreenH;
+
+        // Any live configuration change that arrived while there was no frame
+        // to put it on. restoreFromFullscreen() puts the frame back at the
+        // CURRENT indents but re-runs no component geometry, no shape and no
+        // background, so without this the window returns wearing the thickness
+        // and the palette it went fullscreen with (PR review, P2).
+        applyDeferredFrameRefresh();
     }
 
     updateNetWmState();
@@ -1609,13 +1616,20 @@ void Client::relayoutFrame()
     //   * a FRAMELESS client (a dock, a notification, a rule-no-decorate
     //     window) is managed with its own window as parent, deliberately;
     //   * a FULLSCREEN client has had its frame STRIPPED and its window
-    //     reparented to root -- Border::restoreFromFullscreen() rebuilds the
-    //     frame later, and by then it reads the new thickness through
-    //     xIndent()/yIndent() like everything else, so the change is not lost.
+    //     reparented to root, so there is nothing here to configure.
+    //
+    // The third skip DEFERS rather than discards. An earlier comment here
+    // claimed Border::restoreFromFullscreen() "rebuilds the frame" and would
+    // pick the new thickness up on its own; it does not. It reparents the
+    // child and configures the PARENT at the current indents -- which is why
+    // the client does come back at the right offset -- and then maps the tab,
+    // the button and the grabber exactly as they were, with the old
+    // thickness's geometry and the old thickness's shape. So the work is
+    // recorded and done on the way out of fullscreen instead.
     if (!m_managed) return;
     if (m_frameless) return;
-    if (m_isFullscreen) return;
     if (!m_border) return;
+    if (m_isFullscreen) { m_frameLayoutStale = true; return; }
 
     // m_x/m_y/m_w/m_h are the CLIENT's geometry, not the frame's, and they are
     // passed through unchanged: a thickness change moves decoration, never the
@@ -1630,13 +1644,14 @@ void Client::relayoutFrameForFont()
 {
     // The same three skips as above, for the same three reasons: an unmanaged
     // client has no frame, a frameless one is managed with its own window as
-    // parent by design, and a fullscreen one has had its frame stripped and
-    // will rebuild it -- reading the new tab width through xIndent()/yIndent()
-    // like everything else -- when it leaves fullscreen.
+    // parent by design, and a fullscreen one has had its frame stripped -- so
+    // the re-layout is recorded and run when the frame comes back, by the same
+    // flag a thickness change uses. A tab face moves m_tabWidth, which moves
+    // xIndent(), which moves every window the frame is made of.
     if (!m_managed) return;
     if (m_frameless) return;
-    if (m_isFullscreen) return;
     if (!m_border) return;
+    if (m_isFullscreen) { m_frameLayoutStale = true; return; }
 
     m_border->relayoutForTabFont(m_x, m_y, m_w, m_h);
 }
@@ -1648,12 +1663,44 @@ void Client::repaintForColourChange()
     // has nothing to do -- but unlike the two re-layouts above there is no
     // geometry involved at all, so there is nothing that could move the user's
     // window even by accident.
+    //
+    // The fullscreen skip is deferred for the same reason and under its own
+    // flag: the tab's and the frame's BACKGROUND PIXELS are what a palette
+    // change moves, the server paints those surfaces from them, and mapping a
+    // stripped frame again repaints it in whatever pixels it still carries.
     if (!m_managed) return;
     if (m_frameless) return;
-    if (m_isFullscreen) return;
     if (!m_border) return;
+    if (m_isFullscreen) { m_frameColoursStale = true; return; }
 
     m_border->repaintForColourChange();
+}
+
+
+// The other half of the three skips above: what could not be applied while the
+// frame was stripped, applied now that it is back.
+//
+// Called from setFullscreen(false) AFTER Border::restoreFromFullscreen() and
+// after m_x/m_y/m_w/m_h have been put back, because both entry points below
+// take this client's geometry and would otherwise be handed the screen-sized
+// rectangle fullscreen left behind.
+//
+// relayoutForTabFont() rather than relayoutForFrameThickness() even for a
+// thickness-only change: it IS the thickness path plus a repaint of the label,
+// and a frame that has just been re-shaped and remapped needs its label drawn
+// anyway. The colour refresh runs last, so its XClearWindow() lands after the
+// reshape rather than before it.
+void Client::applyDeferredFrameRefresh()
+{
+    const bool layout  = m_frameLayoutStale;
+    const bool colours = m_frameColoursStale;
+    m_frameLayoutStale = false;
+    m_frameColoursStale = false;
+
+    if (m_frameless || !m_border) return;
+
+    if (layout)  m_border->relayoutForTabFont(m_x, m_y, m_w, m_h);
+    if (colours) m_border->repaintForColourChange();
 }
 
 

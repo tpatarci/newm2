@@ -913,6 +913,63 @@ void closeRootMenu(Display* d, XTestDriver& driver)
     settleWm(d);
 }
 
+// ---------------------------------------------------------------------------
+// Fullscreen, driven the way a real client drives it
+// ---------------------------------------------------------------------------
+
+// _NET_WM_STATE_ADD / _NET_WM_STATE_REMOVE of _NET_WM_STATE_FULLSCREEN, sent to
+// the ROOT window as the specification requires. The same five fields the two
+// [wm_geometry] fullscreen cases fill in; spelled again here rather than
+// shared, because the two files have no header in common and one more copy of
+// a client message is cheaper than a header that exists to hold it.
+void sendFullscreen(Display* d, Window client, bool on)
+{
+    Atom netWmState = XInternAtom(d, "_NET_WM_STATE", False);
+    Atom fullscreen = XInternAtom(d, "_NET_WM_STATE_FULLSCREEN", False);
+    if (netWmState == None || fullscreen == None) return;
+
+    XEvent ev;
+    std::memset(&ev, 0, sizeof(ev));
+    ev.type = ClientMessage;
+    ev.xclient.window = client;
+    ev.xclient.message_type = netWmState;
+    ev.xclient.format = 32;
+    ev.xclient.data.l[0] = on ? 1 : 0;          // _NET_WM_STATE_ADD / _REMOVE
+    ev.xclient.data.l[1] = static_cast<long>(fullscreen);
+    ev.xclient.data.l[2] = 0;
+    ev.xclient.data.l[3] = 1;                   // source: application
+    XSendEvent(d, DefaultRootWindow(d), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &ev);
+    XSync(d, False);
+}
+
+// Poll until the client's own rectangle is exactly this size. Used on both
+// sides of a fullscreen round trip, so each half of the case starts from an
+// observation rather than from a wait.
+bool awaitClientSize(Display* d, Window w, int width, int height, int timeoutMs = 8000)
+{
+    return WmFixture::pollUntil([&] {
+        pumpWm(d);
+        const Rect r = rectOf(d, w);
+        return r.w == width && r.h == height;
+    }, timeoutMs);
+}
+
+// The resize grabber. Border::configure() creates it as a child of the CLIENT
+// window -- not of the frame -- and sizes it FRAME_WIDTH*2 square, so its size
+// is a direct reading of the thickness this frame was last laid out with. The
+// test client is created with no children of its own, so the frame's grabber is
+// the only child there is.
+Window findResizeHandle(Display* d, Window client)
+{
+    for (Window child : childrenOf(d, client)) {
+        Rect r;
+        if (!localRect(d, child, r)) continue;
+        if (r.w > 0 && r.w == r.h) return child;
+    }
+    return None;
+}
+
 }  // namespace
 
 
@@ -3282,6 +3339,145 @@ TEST_CASE("a geometry setting is refused while the root menu is open, and "
     INFO("after the menu closed: " << again.describe());
     CHECK(again.exitCode == 0);
     CHECK(ctlGet(fixture, "frame-thickness") == "17");
+
+    CHECK(fixture.wmAlive());
+}
+
+// -----------------------------------------------------------------------------
+// The frame that was not there when the change arrived (PR review, P2)
+// -----------------------------------------------------------------------------
+
+TEST_CASE("a client that was fullscreen while the configuration moved comes back "
+          "wearing the new one", "[wm_config_live]")
+{
+    // A FULLSCREEN client has had its frame STRIPPED: every frame component is
+    // unmapped and the client window itself is a direct child of root. The
+    // three live-change entry points on Client therefore have nothing to lay
+    // out at the moment the change arrives, and each returns early.
+    //
+    // What they must NOT do is drop the change. Border::restoreFromFullscreen()
+    // reparents and re-configures the PARENT at the current indents, so the
+    // client comes back at the right offset -- but it re-runs no geometry for
+    // the tab, the button or the resize grabber, no shape, and no background:
+    // those keep whatever the thickness and the palette were when the window
+    // went fullscreen. This case is the round trip, with a thickness change and
+    // a colour change applied while there was no frame to apply them to.
+    const std::string home = makeConfigHome(
+        "frame-thickness=7\n"
+        "tab-foreground=#ff00ff\n"
+        "tab-background=#c8cacc\n"
+        "frame-background=#dcdee0\n"
+        "button-background=#dcdee0\n"
+        "borders=#ff8000\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    // A long run of narrow glyphs, for the same reason the palette case gives:
+    // drawLabel() draws nothing at all for a window with no name.
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d, 260, 180, 320, 240, client,
+                                          "IIIIIIIIIIIIIIIIIIII");
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    const Window tab = findFrameChild(d, frame, client, false);
+    REQUIRE(tab != None);
+    const Window grabber = findResizeHandle(d, client);
+    REQUIRE(grabber != None);
+
+    const Rect frameBefore  = rectOf(d, frame);
+    const Rect clientBefore = rectOf(d, client);
+    Rect tabBefore, grabberBefore;
+    REQUIRE(localRect(d, tab, tabBefore));
+    REQUIRE(localRect(d, grabber, grabberBefore));
+
+    // The two readings this case turns into assertions later, taken now so the
+    // "it moved" half is against a measured starting point rather than an
+    // assumed one. Both follow from the file's frame-thickness of 7:
+    // Border::configure() sizes the tab w + xIndent() wide and creates the
+    // grabber FRAME_WIDTH*2 square.
+    const int xIndentBefore = clientBefore.x - frameBefore.x;
+    REQUIRE(tabBefore.w == clientBefore.w + xIndentBefore);
+    REQUIRE(grabberBefore.w == 7 * 2);
+
+    const unsigned long newTabBg = namedPixel(d, "#ff0000");
+    REQUIRE(newTabBg != ~0UL);
+    const Rect bandBeforeRect = tabBandRect(frameBefore, clientBefore, 7);
+    const Histogram bandBefore = captureRoot(d, bandBeforeRect);
+    INFO("tab band before: " << describeTop(bandBefore));
+    REQUIRE(countOf(bandBefore, newTabBg) == 0);
+
+    // --- Fullscreen, then the two changes, then back ------------------------
+    sendFullscreen(d, client, true);
+    REQUIRE(awaitClientSize(d, client, kScreenW, kScreenH));
+
+    CtlResult thickness = ctl(fixture, {"set", "frame-thickness", "15"});
+    CtlResult colour    = ctl(fixture, {"set", "tab-background", "#ff0000"});
+
+    sendFullscreen(d, client, false);
+    REQUIRE(awaitClientSize(d, client, clientBefore.w, clientBefore.h));
+    settleWm(d);
+
+    const Rect frameAfter  = rectOf(d, frame);
+    const Rect clientAfter = rectOf(d, client);
+    Rect tabAfter, grabberAfter;
+    const bool haveTab     = localRect(d, tab, tabAfter);
+    const bool haveGrabber = localRect(d, grabber, grabberAfter);
+    const int xIndentAfter = clientAfter.x - frameAfter.x;
+    const int yIndentAfter = clientAfter.y - frameAfter.y;
+
+    const Rect bandAfterRect = tabBandRect(frameAfter, clientAfter, 15);
+    const Histogram bandAfter = awaitPixelIn(d, bandAfterRect, newTabBg, 20);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO("frame-thickness " << thickness.describe());
+    INFO("tab-background  " << colour.describe());
+    INFO("frame  before " << describe(frameBefore)  << " after " << describe(frameAfter));
+    INFO("client before " << describe(clientBefore) << " after " << describe(clientAfter));
+    INFO("tab    before " << describe(tabBefore)    << " after " << describe(tabAfter));
+    INFO("grabber before " << describe(grabberBefore) << " after " << describe(grabberAfter));
+    INFO("x indent before " << xIndentBefore << " after " << xIndentAfter);
+    INFO("tab band before " << describeTop(bandBefore)
+         << " after " << describeTop(bandAfter));
+
+    CHECK(thickness.exitCode == 0);
+    CHECK(colour.exitCode == 0);
+    CHECK(ctlGet(fixture, "frame-thickness") == "15");
+    CHECK(ctlGet(fixture, "tab-background") == "#ff0000");
+
+    // The user's own window is back where and how big it was: a thickness
+    // change moves decoration, and a fullscreen round trip moves nothing at
+    // all.
+    CHECK(clientAfter.w == clientBefore.w);
+    CHECK(clientAfter.h == clientBefore.h);
+
+    // (a) THE INSET IS THE NEW THICKNESS. yIndent() is FRAME_WIDTH + 1 and
+    // xIndent() is that plus the tab's width, so the vertical inset reads the
+    // thickness directly and the horizontal one moved by exactly the same
+    // amount -- the tab's width is a property of the FONT, which this case
+    // never touches.
+    REQUIRE(haveTab);
+    REQUIRE(haveGrabber);
+    CHECK(yIndentAfter == 15 + 1);
+    CHECK(xIndentAfter == xIndentBefore + (15 - 7));
+
+    // ...and the frame's own components agree with that inset, which is the
+    // half restoreFromFullscreen() does not do: the tab is w + xIndent() wide
+    // and the grabber is FRAME_WIDTH*2 square, both of them re-laid out from
+    // the thickness in force NOW.
+    CHECK(tabAfter.w == clientAfter.w + xIndentAfter);
+    CHECK(grabberAfter.w == 15 * 2);
+    CHECK(grabberAfter.h == 15 * 2);
+
+    // (b) AND THE PALETTE. The tab's top band is painted by the SERVER from
+    // the tab window's background pixel, so this asserts the restored frame
+    // was re-backgrounded and cleared, not merely that a label was redrawn.
+    CHECK(dominantPixel(bandAfter) == newTabBg);
+    CHECK(dominantShare(bandAfter) >= kDominanceFloor);
 
     CHECK(fixture.wmAlive());
 }
