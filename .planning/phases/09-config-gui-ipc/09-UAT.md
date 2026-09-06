@@ -3,7 +3,7 @@ status: testing
 phase: 09-config-gui-ipc
 source: [09-VERIFICATION.md]
 started: 2026-09-06T20:10:00Z
-updated: 2026-09-06T20:10:00Z
+updated: 2026-09-06T20:26:00Z
 ---
 
 ## Current Test
@@ -34,8 +34,8 @@ expected: Open `wm2-config` in a real remote-desktop session with a viewer attac
 result: [pending]
 
 ### 4. Re-run the four build gates at HEAD
-expected: `debug`, `asan`, `nogtk`, `release` all green at 573 tests; nogtk skips exactly six cases with stated reasons; release link audit OK (24 entries). The orchestrator ran `debug` at `b68c207` (573/573) and started `asan`, `nogtk`, `release` at `cc74439`; results are appended below when they finish.
-result: [pending]
+expected: `debug`, `asan`, `nogtk`, `release` all green at 573 tests; nogtk skips exactly six cases with stated reasons; release link audit OK (24 entries).
+result: passed 2026-09-06 (orchestrator): debug 573/573 at `b68c207`; at `cc74439` asan 573/573 with no sanitizer findings, nogtk 573 registered / 567 passed / 6 skipped with reasons, release 573/573 with link audit OK (24 entries). Logs under /tmp/w12/gate-head-*.log for this session.
 
 ### 5. Arrival order of two overlapping `set` messages (09-04 truth 7)
 expected: Two connections write `set frame-thickness 11` and `set frame-thickness 21` back to back before reading either reply; the later-arriving write wins, neither is dropped, the window manager stays alive, and every window is re-framed once per applied `set`. No automated case issues two overlapping sets; 09-04's SUMMARY records the ordering claim as human judgement resting on "no second thread and no queue".
@@ -48,9 +48,9 @@ result: [pending]
 ## Summary
 
 total: 6
-passed: 0
+passed: 1
 issues: 0
-pending: 6
+pending: 5
 skipped: 0
 blocked: 0
 
