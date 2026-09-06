@@ -55,9 +55,13 @@ public:
     };
 
     // Called with the window manager's reply to one request. A reply is
-    // delivered exactly once, in the order the requests were sent, which is the
-    // protocol's own guarantee: the socket is a stream and the window manager
-    // answers one line per line it reads.
+    // delivered exactly once, in the order the requests were sent -- but the
+    // STREAM is not only replies. D-08's reload notice shares its type with a
+    // reload reply and is injected unsolicited, so correlation is by the head
+    // request's EXPECTED type (`error` accepted for any head, since that is how
+    // a refusal comes back) and never by queue depth. A line that matches no
+    // outstanding request is a notice or is dropped; it never pops the queue
+    // and shifts every reply behind it by one (CR-02).
     using ReplyHandler = std::function<void(const ConfigMessage&)>;
 
     // D-08: the window manager reloaded its files, so every effective value may
@@ -114,6 +118,9 @@ public:
 
 private:
     struct Pending {
+        // READ BY dispatch(), which is the whole of the correlation rule: a
+        // decodable line only pops this entry when its type is the one the
+        // request asked for (or `error`, which answers anything).
         ConfigMessageType expected = ConfigMessageType::Ack;
         ReplyHandler      handler;
     };

@@ -276,6 +276,20 @@ private:
         return G_SOURCE_CONTINUE;
     }
 
+    // Said ONCE per session, whatever else goes wrong. A window manager
+    // answering a `get` with some other key's value is a defect in the window
+    // manager, and repeating the complaint for each of the twenty-odd keys the
+    // window reads would bury it.
+    void warnOnceAboutKeyMismatch(const std::string& asked, const std::string& got)
+    {
+        if (m_warnedKeyMismatch) return;
+        m_warnedKeyMismatch = true;
+        std::fprintf(stderr,
+                     "wm2-config: warning: asked the window manager for '%s' and "
+                     "was answered with '%s'; that value was not adopted\n",
+                     asked.c_str(), got.c_str());
+    }
+
     // D-04: connected, the effective values are the ones the WINDOW MANAGER
     // reports -- which include its own command-line layer, something no file
     // read can see. The layered read has already run, so what a reply changes
@@ -287,6 +301,18 @@ private:
             const std::string k = key;
             m_client.sendGet(k, [this, k](const ConfigMessage& reply) {
                 if (reply.type != ConfigMessageType::Value) return;
+                // BELT TO THE TRANSPORT'S BRACES (CR-02). ProtocolClient now
+                // correlates by the head request's expected type, so a reply
+                // cannot reach the wrong handler through the queue -- but a
+                // value adopted under the wrong key is written to the user's
+                // configuration file on the next Save, and that consequence is
+                // worth a second, local check that costs one comparison.
+                // Reported once rather than per key, so a window manager that
+                // has genuinely lost the plot says so without filling the log.
+                if (reply.key != k) {
+                    warnOnceAboutKeyMismatch(k, reply.key);
+                    return;
+                }
                 const FormField* field = m_form.field(k);
                 if (!field) return;
                 if (field->effective == reply.value) return;
@@ -301,6 +327,10 @@ private:
         // three-key block rather than as an edit (D-12).
         m_client.sendGet(kMenuEntriesKey, [this](const ConfigMessage& reply) {
             if (reply.type != ConfigMessageType::Value) return;
+            if (reply.key != kMenuEntriesKey) {
+                warnOnceAboutKeyMismatch(kMenuEntriesKey, reply.key);
+                return;
+            }
             std::vector<AppEntry> entries;
             std::string reason;
             if (!parseMenuEntriesValue(reply.value, entries, reason)) return;
@@ -317,6 +347,10 @@ private:
     {
         m_client.sendGet(kMenuCategoriesKey, [this](const ConfigMessage& reply) {
             if (reply.type != ConfigMessageType::Value) return;
+            if (reply.key != kMenuCategoriesKey) {
+                warnOnceAboutKeyMismatch(kMenuCategoriesKey, reply.key);
+                return;
+            }
             if (m_menu) {
                 m_menu->setCategoriesFromWindowManager(
                     menuCategoriesFromValue(reply.value));
@@ -595,6 +629,7 @@ private:
     ProtocolClient   m_client;
     ConnectionState  m_state = ConnectionState::FileOnlyNoSocket;
     guint            m_socketSource = 0;
+    bool             m_warnedKeyMismatch = false;
 
     GtkWidget* m_window = nullptr;
     GtkWidget* m_banner = nullptr;

@@ -252,10 +252,27 @@ void ProtocolClient::dispatch(const ConfigMessage& message)
 {
     // D-08's broadcast and the reply to our own `reload` are the SAME message
     // type, which is what let the phase avoid a twelfth one. They are told
-    // apart by whether anything is waiting for a reply: a `reloaded` that
-    // arrives with no outstanding request is somebody else's reload, and is the
-    // notice this window must react to.
-    if (m_pending.empty()) {
+    // apart BY TYPE AGAINST THE HEAD OF THE QUEUE, never by queue depth: the
+    // window manager injects its broadcast into a stream that may already have
+    // requests in flight, and wm2-config has 23 of them outstanding in its
+    // first main-loop turn. Popping the head for any decodable line shifts
+    // every reply behind the notice by one, and the per-key handlers then
+    // adopt a colour under a font key -- into the form, and from there into
+    // the user's configuration file on the next Save (CR-02).
+    //
+    // `error` is accepted for ANY head, spelled explicitly: the window manager
+    // answers a refused `get` or `set` with `error` rather than with the type
+    // the request asked for, and dropping it would leave that request's
+    // handler unrun forever.
+    const bool matchesHead =
+        !m_pending.empty() &&
+        (message.type == m_pending.front().expected ||
+         message.type == ConfigMessageType::Error);
+
+    if (!matchesHead) {
+        // Not an answer to anything this client asked for. A `reloaded` here is
+        // D-08's notice; anything else is a line the window manager had no
+        // business sending, and is ignored rather than mistaken for a reply.
         if (message.type == ConfigMessageType::Reloaded && m_onNotice) m_onNotice();
         return;
     }

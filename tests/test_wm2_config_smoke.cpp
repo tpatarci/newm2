@@ -2542,3 +2542,299 @@ TEST_CASE("wm2-config's resident memory is measured against a stated budget",
     gui.shutdown();   // by the PID spawnConfigGui() created, never by name
 #endif
 }
+
+
+// ---------------------------------------------------------------------------
+// Reply correlation across an unsolicited notice (CR-02)
+// ---------------------------------------------------------------------------
+//
+// D-08 reuses `reloaded` as BOTH the reply to a client's own `reload` and an
+// unsolicited broadcast to every hello-completed connection, which is what let
+// the phase avoid a twelfth message type. The stream is therefore not a pure
+// request/response sequence, and a client that pops the head of its pending
+// queue for any decodable line desynchronises the moment a broadcast lands
+// while requests are outstanding.
+//
+// The consequence is not cosmetic. wm2-config pushes 23 pending gets in one
+// main-loop turn at startup; one interposed `reloaded` shifts every reply by
+// one, and the per-key handlers adopt colours under font keys and integers
+// under colour keys -- which the user then saves to their configuration file.
+
+namespace {
+
+// A peer that completes the handshake on a thread and then hands the accepted
+// descriptor to the case, so the case can script exactly what arrives and in
+// exactly what order. Distinct from FakeServer above, which exists to be a
+// STRANGER; this one is a well-behaved window manager whose timing is the
+// point.
+class ScriptedPeer {
+public:
+    explicit ScriptedPeer(const std::string& path) : m_path(path)
+    {
+        makeParents(path);
+
+        m_listenFd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (m_listenFd < 0) return;
+
+        struct sockaddr_un addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        if (path.size() + 1 > sizeof(addr.sun_path)) return;
+        std::memcpy(addr.sun_path, path.c_str(), path.size());
+
+        ::unlink(path.c_str());
+        if (::bind(m_listenFd, reinterpret_cast<struct sockaddr*>(&addr),
+                   sizeof(addr)) != 0) {
+            return;
+        }
+        if (::listen(m_listenFd, 4) != 0) return;
+
+        m_listening = true;
+        m_thread = std::thread([this]() { serve(); });
+    }
+
+    ~ScriptedPeer()
+    {
+        m_stop = true;
+        if (m_listenFd >= 0) ::shutdown(m_listenFd, SHUT_RDWR);
+        if (m_thread.joinable()) m_thread.join();
+        if (m_connFd >= 0) ::close(m_connFd);
+        if (m_listenFd >= 0) ::close(m_listenFd);
+        ::unlink(m_path.c_str());
+    }
+
+    ScriptedPeer(const ScriptedPeer&) = delete;
+    ScriptedPeer& operator=(const ScriptedPeer&) = delete;
+
+    bool listening() const { return m_listening; }
+    const std::string& path() const { return m_path; }
+
+    // The accepted descriptor, once the handshake thread has answered and
+    // retired. Waits up to `timeoutMs`; -1 on the deadline.
+    int connection(int timeoutMs)
+    {
+        for (int waited = 0; waited < timeoutMs; waited += 10) {
+            if (m_handshakeDone) {
+                if (m_thread.joinable()) m_thread.join();
+                return m_connFd;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return -1;
+    }
+
+    static bool writeLine(int fd, const ConfigMessage& message)
+    {
+        const std::string bytes = configProtocolEncode(message);
+        std::size_t sent = 0;
+        while (sent < bytes.size()) {
+            const ssize_t n = ::send(fd, bytes.data() + sent, bytes.size() - sent,
+                                     MSG_NOSIGNAL);
+            if (n <= 0) return false;
+            sent += static_cast<std::size_t>(n);
+        }
+        return true;
+    }
+
+    // One frame from the client, or "" on the deadline.
+    static std::string readLine(int fd, int timeoutMs)
+    {
+        std::string line;
+        for (int waited = 0; waited < timeoutMs; waited += 10) {
+            char c = 0;
+            const ssize_t n = ::recv(fd, &c, 1, MSG_DONTWAIT);
+            if (n == 1) {
+                line += c;
+                if (c == '\n') return line;
+                continue;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return std::string();
+    }
+
+private:
+    void serve()
+    {
+        struct pollfd p;
+        p.fd = m_listenFd;
+        p.events = POLLIN;
+        p.revents = 0;
+        for (int waited = 0; waited < 5000 && !m_stop; waited += 50) {
+            const int r = ::poll(&p, 1, 50);
+            if (r <= 0) continue;
+
+            const int fd = ::accept(m_listenFd, nullptr, nullptr);
+            if (fd < 0) continue;
+
+            // The hello, then the ack. Nothing here is dishonest: the point of
+            // this peer is the ORDER of what comes afterwards.
+            (void)readLine(fd, 2000);
+
+            ConfigMessage ack;
+            ack.type = ConfigMessageType::HelloAck;
+            ack.program = "wm2-born-again";
+            ack.protocol = kConfigProtocolVersion;
+            (void)writeLine(fd, ack);
+
+            m_connFd = fd;
+            m_handshakeDone = true;
+            return;
+        }
+        m_handshakeDone = true;
+    }
+
+    std::string       m_path;
+    int               m_listenFd = -1;
+    int               m_connFd = -1;
+    bool              m_listening = false;
+    std::atomic<bool> m_stop{false};
+    std::atomic<bool> m_handshakeDone{false};
+    std::thread       m_thread;
+};
+
+}  // namespace
+
+
+TEST_CASE("An unsolicited reload notice does not shift the replies behind it",
+          "[wm2_config_smoke][protocol][notice]")
+{
+    ScriptedPeer peer(shortSocketPath("cr02notice"));
+    REQUIRE(peer.listening());
+
+    ProtocolClient client;
+    REQUIRE(client.connect(peer.path()));
+    REQUIRE(client.state() == ProtocolClient::State::Connected);
+
+    const int fd = peer.connection(5000);
+    REQUIRE(fd >= 0);
+
+    int notices = 0;
+    client.setNoticeHandler([&notices]() { ++notices; });
+
+    // TWO gets in one turn, which is the shape wm2-config's startup has: 23 of
+    // them, pushed before a single reply has come back.
+    std::string keyA, valueA, keyB, valueB;
+    bool doneA = false;
+    bool doneB = false;
+    REQUIRE(client.sendGet("tab-foreground", [&](const ConfigMessage& reply) {
+        keyA = reply.key;
+        if (reply.type == ConfigMessageType::Value) valueA = reply.value;
+        doneA = true;
+    }));
+    REQUIRE(client.sendGet("tab-background", [&](const ConfigMessage& reply) {
+        keyB = reply.key;
+        if (reply.type == ConfigMessageType::Value) valueB = reply.value;
+        doneB = true;
+    }));
+
+    // Both requests really did reach the peer, so what follows is a reply
+    // ordering question and not a lost write.
+    REQUIRE_FALSE(ScriptedPeer::readLine(fd, 2000).empty());
+    REQUIRE_FALSE(ScriptedPeer::readLine(fd, 2000).empty());
+
+    // SOMEBODY ELSE'S reload lands first: a second settings window pressing
+    // "Re-read files", or `wm2-ctl reload` from a shell.
+    ConfigMessage reloaded;
+    reloaded.type = ConfigMessageType::Reloaded;
+    REQUIRE(ScriptedPeer::writeLine(fd, reloaded));
+
+    ConfigMessage valueOne;
+    valueOne.type = ConfigMessageType::Value;
+    valueOne.key = "tab-foreground";
+    valueOne.value = "#111111";
+    REQUIRE(ScriptedPeer::writeLine(fd, valueOne));
+
+    ConfigMessage valueTwo;
+    valueTwo.type = ConfigMessageType::Value;
+    valueTwo.key = "tab-background";
+    valueTwo.value = "#222222";
+    REQUIRE(ScriptedPeer::writeLine(fd, valueTwo));
+
+    CHECK(client.pumpUntil([&]() { return doneA && doneB; }, 5000));
+
+    // Each reply reaches the request that asked for it. A colour adopted under
+    // the wrong key is what ends up in the user's configuration file.
+    CHECK(keyA == "tab-foreground");
+    CHECK(valueA == "#111111");
+    CHECK(keyB == "tab-background");
+    CHECK(valueB == "#222222");
+
+    // And D-08's whole point survives: the notice fired, exactly once, rather
+    // than being eaten as somebody's reply.
+    CHECK(notices == 1);
+}
+
+
+TEST_CASE("A reload this client asked for is its reply and not a notice",
+          "[wm2_config_smoke][protocol][notice]")
+{
+    ScriptedPeer peer(shortSocketPath("cr02reply"));
+    REQUIRE(peer.listening());
+
+    ProtocolClient client;
+    REQUIRE(client.connect(peer.path()));
+
+    const int fd = peer.connection(5000);
+    REQUIRE(fd >= 0);
+
+    int notices = 0;
+    client.setNoticeHandler([&notices]() { ++notices; });
+
+    bool answered = false;
+    ConfigMessageType seen = ConfigMessageType::Unknown;
+    REQUIRE(client.sendReload([&](const ConfigMessage& reply) {
+        seen = reply.type;
+        answered = true;
+    }));
+    REQUIRE_FALSE(ScriptedPeer::readLine(fd, 2000).empty());
+
+    ConfigMessage reloaded;
+    reloaded.type = ConfigMessageType::Reloaded;
+    REQUIRE(ScriptedPeer::writeLine(fd, reloaded));
+
+    CHECK(client.pumpUntil([&]() { return answered; }, 5000));
+    CHECK(seen == ConfigMessageType::Reloaded);
+    // The reply is not ALSO a notice: telling them apart by type alone would
+    // have made every reload fire the window's "somebody else changed things"
+    // banner at itself.
+    CHECK(notices == 0);
+}
+
+
+TEST_CASE("An error answers whichever request is at the head",
+          "[wm2_config_smoke][protocol][notice]")
+{
+    // The window manager answers a refused `get` or `set` with `error`, so the
+    // head-matching rule has to accept it for ANY expected type or a refusal
+    // would be dropped and the request's handler would never run -- which is
+    // how a control ends up stuck in a pending state nothing clears.
+    ScriptedPeer peer(shortSocketPath("cr02error"));
+    REQUIRE(peer.listening());
+
+    ProtocolClient client;
+    REQUIRE(client.connect(peer.path()));
+
+    const int fd = peer.connection(5000);
+    REQUIRE(fd >= 0);
+
+    bool answered = false;
+    std::string reason;
+    REQUIRE(client.sendSet("tab-foreground", "nonsense",
+                           [&](const ConfigMessage& reply) {
+                               if (reply.type == ConfigMessageType::Error) {
+                                   reason = reply.reason;
+                               }
+                               answered = true;
+                           }));
+    REQUIRE_FALSE(ScriptedPeer::readLine(fd, 2000).empty());
+
+    ConfigMessage error;
+    error.type = ConfigMessageType::Error;
+    error.key = "tab-foreground";
+    error.reason = "the X server cannot parse that colour";
+    REQUIRE(ScriptedPeer::writeLine(fd, error));
+
+    CHECK(client.pumpUntil([&]() { return answered; }, 5000));
+    CHECK(reason == "the X server cannot parse that colour");
+}
