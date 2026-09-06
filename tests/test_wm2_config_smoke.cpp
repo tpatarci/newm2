@@ -81,14 +81,26 @@ std::string makeTree(const std::string& suffix)
     return base;
 }
 
+// Create every missing component of `path`'s parent. mkdir(2) makes ONE
+// directory, so a two-deep leaf such as .../user/wm2-born-again/config needs
+// this walk -- and a single mkdir failing silently is how these cases first
+// went green against a config file that had never been written.
+void makeParents(const std::string& path)
+{
+    for (std::size_t i = 1; i < path.size(); ++i) {
+        if (path[i] != '/') continue;
+        ::mkdir(path.substr(0, i).c_str(), 0700);
+    }
+}
+
 void writeFile(const std::string& path, const std::string& contents)
 {
-    const std::size_t slash = path.find_last_of('/');
-    if (slash != std::string::npos) {
-        ::mkdir(path.substr(0, slash).c_str(), 0700);
-    }
+    makeParents(path);
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    REQUIRE(out.good());
     out << contents;
+    out.close();
+    REQUIRE(out.good());
 }
 
 std::string readFileOrEmpty(const std::string& path)
@@ -248,7 +260,13 @@ ChildProcess spawnConfigGui(const std::string& display,
         ::setenv("HOME", home.c_str(), 1);
         ::setenv("XDG_CONFIG_HOME", (home + "/.config").c_str(), 1);
         ::setenv("XDG_CACHE_HOME", (home + "/.cache").c_str(), 1);
-        ::setenv("XDG_RUNTIME_DIR", home.c_str(), 1);
+        // XDG_RUNTIME_DIR is deliberately INHERITED, not redirected: it is what
+        // configSocketDirectory() resolves the socket path from, and the window
+        // manager this GUI must find was started by the fixture with the
+        // ambient value. Pointing the child somewhere private would make it
+        // look for the socket in a directory nothing ever bound in -- which is
+        // a real file-only session, and would quietly turn the connected case
+        // into a second copy of the no-socket one.
         // No session bus on a fixture display; saying so up front is quieter
         // than letting GTK discover it, and changes nothing about the assertion
         // (DISC-09).
@@ -479,8 +497,16 @@ TEST_CASE("a save in file-only mode writes the user file and leaves the system f
             ConfigWriteResult::Ok);
     form.markSaved();
 
+    // Asserted through the PARSER rather than against a spelling: the writer
+    // appends "key = value" and rewrites an existing line in place keeping its
+    // own spacing, so a literal match here would be a test of the writer's
+    // whitespace rather than of what the window manager will read back.
+    Config readBack;
+    readBack.applyFile(userFile);
+    CHECK(readBack.tabBackground == "#ABCDEF");
+    CHECK(readBack.borders == "#00FF00");
+
     const std::string written = readFileOrEmpty(userFile);
-    CHECK(written.find("tab-background=#ABCDEF") != std::string::npos);
     CHECK(written.find("# a comment the writer must preserve") != std::string::npos);
     CHECK(written.find("borders=#00FF00") != std::string::npos);
 

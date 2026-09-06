@@ -1,0 +1,105 @@
+#pragma once
+
+// The Appearance page: what the desktop looks like (D-09, D-10, D-13).
+//
+// This is the ONE file in wm2-config that is allowed to be full of widgets. The
+// model it edits (FormState) and the client it commits through (ProtocolClient)
+// both know nothing about GTK, which is what keeps their behaviour testable
+// without a display; this class is the seam where the toolkit meets them.
+//
+// The GTK signal handlers are static member functions taking the owning object
+// through `user_data`, the standard plain-C-GTK-from-C++ idiom (09-RESEARCH.md
+// Pattern 1). gtkmm would give typed signals and RAII widget ownership for the
+// price of a second toolkit dependency, and this window is one window with
+// three pages.
+
+#include "FormState.h"
+
+#include <gtk/gtk.h>
+
+#include <functional>
+#include <string>
+#include <vector>
+
+
+class AppearancePage {
+public:
+    // A control committed a value (D-05: colour chosen, field left, slider
+    // released). The owner decides what that means -- in practice, sending it
+    // to the running window manager immediately and touching no file.
+    using CommitHandler =
+        std::function<void(const std::string& key, const std::string& value)>;
+
+    // Something worth telling the user, for the window's status line.
+    using StatusHandler = std::function<void(const std::string& message)>;
+
+    AppearancePage(FormState& form, CommitHandler onCommit, StatusHandler onStatus);
+    ~AppearancePage();
+
+    AppearancePage(const AppearancePage&) = delete;
+    AppearancePage& operator=(const AppearancePage&) = delete;
+
+    // The page's root widget, owned by the notebook it is added to.
+    GtkWidget* widget() const { return m_root; }
+
+    // Re-render every control from the model. Called after a revert, after a
+    // save, and when a reload notice moves the effective values underneath an
+    // open window (D-08).
+    void refreshFromForm();
+
+private:
+    // What kind of control a key gets, and therefore how its value is read
+    // back out of the toolkit's vocabulary and into the config file's.
+    enum class Kind { Colour };
+
+    struct Row {
+        std::string key;
+        Kind        kind = Kind::Colour;
+        GtkWidget*  chooser = nullptr;   // the native chooser
+        GtkWidget*  raw = nullptr;       // the config-file spelling, editable
+        GtkWidget*  reset = nullptr;
+        AppearancePage* owner = nullptr; // for the static callbacks
+    };
+
+    void addColourRow(GtkWidget* grid, int line, const std::string& key,
+                      const std::string& label);
+    void renderRow(Row& row);
+    void commit(Row& row, const std::string& value);
+    void reset(Row& row);
+    Row* rowFor(GtkWidget* widget);
+
+    static void onColourSet(GtkColorButton* button, gpointer userData);
+    static void onRawActivate(GtkEntry* entry, gpointer userData);
+    static gboolean onRawFocusOut(GtkWidget* entry, GdkEvent* event,
+                                  gpointer userData);
+    static void onResetClicked(GtkButton* button, gpointer userData);
+
+    void commitRawField(GtkWidget* entry);
+
+    FormState&    m_form;
+    CommitHandler m_onCommit;
+    StatusHandler m_onStatus;
+    GtkWidget*    m_root = nullptr;
+    std::vector<Row*> m_rows;
+
+    // True while the page is writing values INTO its own widgets. Every
+    // handler returns early when it is set, because a programmatic
+    // gtk_entry_set_text() emits the same signals a user's typing does, and
+    // without this a refresh would commit every value it displayed straight
+    // back to the window manager.
+    bool m_updating = false;
+};
+
+
+// The two vocabularies, converted in ONE place (D-10).
+//
+// A GdkRGBA is what the toolkit's colour chooser speaks; "#RRGGBB" is what the
+// config file spells and what XParseColor reads back. Alpha is dropped on
+// purpose: the window manager allocates opaque pixels, so a translucent choice
+// would be a promise the desktop cannot keep.
+std::string configColourFromRgba(const GdkRGBA& rgba);
+
+// The inverse. False for a spelling the toolkit cannot parse, leaving `out`
+// untouched -- which is how a raw field distinguishes "the user is mid-word"
+// from "the user meant black".
+bool rgbaFromConfigColour(const std::string& spelling, GdkRGBA& out);

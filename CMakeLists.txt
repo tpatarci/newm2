@@ -102,6 +102,74 @@ target_include_directories(wm2-ctl PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 
+# --- wm2-config: the optional GTK3 settings window (CGUI-01, CGUI-05, D-18) ---
+#
+# THREE STATES, not a boolean, and the third one is the default:
+#
+#   AUTO  probe for gtk+-3.0 and build the GUI if it is there. One status line
+#         either way, so a user who expected a settings window and did not get
+#         one is told why by the configure they already ran.
+#   ON    probe with REQUIRED. Somebody who asked for the GUI explicitly gets a
+#         named configure failure rather than a silent absence -- AUTO's
+#         forgiveness is exactly wrong for an explicit request.
+#   OFF   DO NOT PROBE AT ALL. A probe that runs when the answer is already
+#         known is how a dependency leaks into a build that asked not to have
+#         one: it populates GTK3_* variables that a later edit can reference
+#         from outside the gate without anything failing to configure.
+#
+# CGUI-05 is the requirement all of this serves: the window manager builds,
+# installs and runs exactly as today when GTK is absent. Nothing outside the
+# resolved-ON branch may reference PkgConfig::GTK3, and the window manager's own
+# link libraries are not touched by any of it -- asserted by a [wm2_config_smoke]
+# gate that runs ldd over the built binary.
+set(BUILD_CONFIG_GUI "AUTO" CACHE STRING
+    "Build the GTK3 configuration GUI (wm2-config): AUTO, ON or OFF")
+set_property(CACHE BUILD_CONFIG_GUI PROPERTY STRINGS AUTO ON OFF)
+
+set(CONFIG_GUI_ENABLED OFF)
+if(BUILD_CONFIG_GUI STREQUAL "AUTO")
+    pkg_check_modules(GTK3 IMPORTED_TARGET gtk+-3.0)
+    if(GTK3_FOUND)
+        set(CONFIG_GUI_ENABLED ON)
+        message(STATUS "wm2-config: gtk+-3.0 ${GTK3_VERSION} found -- building the configuration GUI")
+    else()
+        message(STATUS "wm2-config: pkg-config cannot find gtk+-3.0 -- the configuration GUI will NOT be built (install libgtk-3-dev to get it; the window manager and wm2-ctl are unaffected)")
+    endif()
+elseif(BUILD_CONFIG_GUI STREQUAL "ON")
+    pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
+    set(CONFIG_GUI_ENABLED ON)
+    message(STATUS "wm2-config: gtk+-3.0 ${GTK3_VERSION} -- building the configuration GUI")
+elseif(BUILD_CONFIG_GUI STREQUAL "OFF")
+    message(STATUS "wm2-config: BUILD_CONFIG_GUI=OFF -- the configuration GUI will NOT be built (the window manager and wm2-ctl are unaffected)")
+else()
+    message(FATAL_ERROR "BUILD_CONFIG_GUI must be AUTO, ON or OFF; got '${BUILD_CONFIG_GUI}'")
+endif()
+
+if(CONFIG_GUI_ENABLED)
+    # The same "compile the source straight into the consumer" pattern wm2-ctl
+    # and every test_config* target use; the project ships no library target.
+    # src/Config.cpp is the layered read and the key table, ConfigFileWriter.cpp
+    # the surgical save, SocketServer.cpp the socket path -- all three already
+    # display-free, none of them dragging X11 in behind them.
+    add_executable(wm2-config
+        apps/wm2-config/main.cpp
+        apps/wm2-config/AppearancePage.cpp
+        apps/wm2-config/FormState.cpp
+        apps/wm2-config/ProtocolClient.cpp
+        src/Config.cpp
+        src/ConfigFileWriter.cpp
+        src/SocketServer.cpp
+    )
+    target_include_directories(wm2-config PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    target_compile_definitions(wm2-config PRIVATE
+        WM2_VERSION="${PROJECT_VERSION}"
+    )
+    # The ONLY reference to the GTK imported target in this file.
+    target_link_libraries(wm2-config PRIVATE PkgConfig::GTK3)
+endif()
+
 # --- Tests (TEST-01, TEST-02, TEST-04) ---
 option(BUILD_TESTS "Build test suite" ON)
 
