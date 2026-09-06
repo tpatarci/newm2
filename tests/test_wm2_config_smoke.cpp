@@ -2877,6 +2877,65 @@ TEST_CASE("An error answers whichever request is at the head",
 }
 
 
+TEST_CASE("an error that answers nothing outstanding is surfaced, not dropped",
+          "[wm2_config_smoke][protocol][notice]")
+{
+    // W-04. `A line that matches no outstanding request is a notice or is
+    // dropped` had a hole in it: an `error` is neither. The reachable route is
+    // the reload correlation -- a foreign `reloaded` popped this client's own
+    // pending reload, and the `error` that then refused that reload arrived
+    // with an empty queue and was dropped by the bare `return`. The user
+    // pressed "Re-read files", it failed, and the settings window said nothing
+    // at all.
+    //
+    // The window manager no longer sends a requester both lines, so this is the
+    // second half of the same fix rather than the whole of it: an `error` that
+    // matches nothing is still a refusal of something this client asked for,
+    // and the user has to be told.
+    ScriptedPeer peer(shortSocketPath("w04error"));
+    REQUIRE(peer.listening());
+
+    ProtocolClient client;
+    REQUIRE(client.connect(peer.path()));
+
+    const int fd = peer.connection(5000);
+    REQUIRE(fd >= 0);
+
+    int notices = 0;
+    std::vector<std::string> surfaced;
+    client.setNoticeHandler([&notices]() { ++notices; });
+    client.setProtocolErrorHandler(
+        [&surfaced](const std::string& reason) { surfaced.push_back(reason); });
+
+    // Nothing outstanding at all: the queue is empty.
+    ConfigMessage error;
+    error.type = ConfigMessageType::Error;
+    error.reason = "cannot read /home/somebody/.config/wm2-born-again/config";
+    REQUIRE(ScriptedPeer::writeLine(fd, error));
+
+    CHECK(client.pumpUntil([&]() { return !surfaced.empty(); }, 5000));
+    REQUIRE(surfaced.size() == 1);
+    CHECK(surfaced.front() ==
+          "cannot read /home/somebody/.config/wm2-born-again/config");
+
+    // It is an ERROR, not a notice: the two go to different places in the
+    // window, and reporting a refusal as D-08's "the files were re-read"
+    // banner would be worse than silence.
+    CHECK(notices == 0);
+
+    // And the connection is still usable afterwards -- an unmatched error is a
+    // refusal to report, not a protocol violation to disconnect over.
+    CHECK(client.connected());
+
+    // A `reloaded` with an empty queue is still a notice, unchanged.
+    ConfigMessage notice;
+    notice.type = ConfigMessageType::Reloaded;
+    REQUIRE(ScriptedPeer::writeLine(fd, notice));
+    CHECK(client.pumpUntil([&]() { return notices == 1; }, 5000));
+    CHECK(surfaced.size() == 1);
+}
+
+
 // ---------------------------------------------------------------------------
 // Nothing this client does can freeze the settings window (WR-09, WR-10)
 // ---------------------------------------------------------------------------

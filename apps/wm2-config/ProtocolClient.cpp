@@ -9,6 +9,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -322,9 +323,23 @@ void ProtocolClient::dispatch(const ConfigMessage& message)
         const ConfigMessageType expected =
             m_pending.empty() ? ConfigMessageType::Unknown
                               : m_pending.front().expected;
-        if (configProtocolIsUnsolicitedNotice(message.type, expected) &&
-            m_onNotice) {
-            m_onNotice();
+        if (configProtocolIsUnsolicitedNotice(message.type, expected)) {
+            if (m_onNotice) m_onNotice();
+            return;
+        }
+        // AN ERROR IS NEVER DROPPED (W-04). `matchesHead` accepts an `error`
+        // for any head, so reaching here means the queue was EMPTY -- and an
+        // error on an empty queue is still a refusal of something this client
+        // asked for. The route that produced it was a reload whose reply had
+        // already been correlated away; dropping it silently is how a refused
+        // "Re-read files" leaves the window saying nothing at all.
+        if (message.type == ConfigMessageType::Error) {
+            std::fprintf(stderr,
+                         "wm2-config: warning: the window manager refused "
+                         "something with no request outstanding: %s\n",
+                         message.reason.c_str());
+            std::fflush(stderr);
+            if (m_onProtocolError) m_onProtocolError(message.reason);
         }
         return;
     }

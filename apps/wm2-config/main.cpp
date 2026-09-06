@@ -252,6 +252,15 @@ private:
         });
         m_client.setNoticeHandler([this]() { onReloadNotice(); });
 
+        // W-04: a refusal that answers no outstanding request is still a
+        // refusal of something this window asked for -- the route is a reload
+        // whose reply was correlated away -- and it goes to the status line
+        // rather than nowhere. Deliberately NOT to notice(): D-08's banner says
+        // the files were re-read, which is the opposite of what this says.
+        m_client.setProtocolErrorHandler([this](const std::string& reason) {
+            status("The window manager refused something: " + reason);
+        });
+
         if (!m_client.connect(path)) {
             // D-15: a refused handshake and an absent socket are DIFFERENT
             // situations for the person reading the banner, and only one of

@@ -2398,12 +2398,22 @@ bool WindowManager::reloadConfigFromDisk(std::string &reasonOut)
     // settings. ConfigSocketServer::broadcast() writes to hello-completed
     // connections only, so a stranger is told nothing (D-15).
     //
-    // The client that asked for the reload receives this AND its own
-    // `reloaded` reply. Both say the same thing, so a client reading one line
-    // is correct either way; wm2-ctl reads one and exits.
+    // THE CLIENT THAT ASKED IS ANSWERED, NOT ALSO BROADCAST TO (W-04, W-05).
+    // It receives exactly one `reloaded` -- the reply handleConfigRequest
+    // returns below -- because the two lines are indistinguishable on a frozen
+    // wire that has no correlation field and no twelfth type to add. Sending
+    // both made "is this reloaded mine?" unanswerable for every client:
+    // wm2-config popped its pending entry against the broadcast and then
+    // dropped the `error` that refused its own reload, and `wm2-ctl reload`
+    // broke on a foreign notice and exited 0 for a reload that did not happen.
+    //
+    // servingFd() is -1 when nothing is being served -- a reload from any
+    // future route that is not a socket request -- so the broadcast still
+    // reaches everybody in that case.
     ConfigMessage notice;
     notice.type = ConfigMessageType::Reloaded;
-    m_socketServer.broadcast(configProtocolEncode(notice));
+    m_socketServer.broadcastExcept(configProtocolEncode(notice),
+                                   m_socketServer.servingFd());
     return true;
 }
 

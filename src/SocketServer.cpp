@@ -57,6 +57,23 @@ private:
     std::size_t& m_depth;
 };
 
+// The `which connection is being served` bracket, as an object for the same
+// reason ServiceDepthGuard is one (W-01, W-04): a handler that throws must not
+// leave the server believing it is still answering a connection that is no
+// longer being read.
+class ServingFdGuard {
+public:
+    ServingFdGuard(int& slot, int fd) : m_slot(slot), m_previous(slot) { m_slot = fd; }
+    ~ServingFdGuard() { m_slot = m_previous; }
+
+    ServingFdGuard(const ServingFdGuard&) = delete;
+    ServingFdGuard& operator=(const ServingFdGuard&) = delete;
+
+private:
+    int& m_slot;
+    int  m_previous;
+};
+
 // steady_clock milliseconds. Steady rather than wall-clock so the silence
 // deadline survives a clock adjustment, exactly as the timestamp wait's
 // deadline does (include/TimestampWait.h).
@@ -673,6 +690,15 @@ void ConfigSocketServer::readConnection(std::size_t index, const Handler& handle
         req.line      = std::move(line);
         req.helloSeen = helloSeen;
 
+        // NAMED FOR THE HANDLER (W-04). The window manager's `reload` handler
+        // broadcasts D-08's notice from inside the call below, and the one
+        // connection that must NOT receive it is this one -- it is about to be
+        // handed its own `reloaded` as the reply, and two indistinguishable
+        // lines are what make "is this mine?" unanswerable for every client.
+        // Saved and restored rather than cleared, and restored on the unwind
+        // too, for the reason W-01 gives about the depth counter beside it.
+        const ServingFdGuard serving(m_servingFd, fdAtEntry);
+
         const ConfigSocketReply reply = handler(req);
 
         // The re-look-up. A handler that closed this connection, or a reap
@@ -727,9 +753,21 @@ void ConfigSocketServer::flush(Connection& c)
 
 void ConfigSocketServer::broadcast(const std::string& line)
 {
+    broadcastExcept(line, -1);
+}
+
+
+void ConfigSocketServer::broadcastExcept(const std::string& line, int exceptFd)
+{
     if (line.empty()) return;
     for (Connection& c : m_clients) {
         if (!c.helloSeen || c.closing || c.dead) continue;   // never to a stranger
+        // THE REQUESTER IS ANSWERED, NOT BROADCAST TO (W-04, W-05). It gets
+        // exactly one `reloaded` -- its reply -- so a `reloaded` arriving on a
+        // client's socket is unambiguously either its own answer or somebody
+        // else's notice, which is the correlation the frozen wire contract has
+        // no field to carry.
+        if (exceptFd >= 0 && c.fd == exceptFd) continue;
         deliver(c, line, false);
     }
     reap();

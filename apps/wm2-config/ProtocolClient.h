@@ -81,13 +81,22 @@ public:
     // reload reply and is injected unsolicited, so correlation is by the head
     // request's EXPECTED type (`error` accepted for any head, since that is how
     // a refusal comes back) and never by queue depth. A line that matches no
-    // outstanding request is a notice or is dropped; it never pops the queue
-    // and shifts every reply behind it by one (CR-02).
+    // outstanding request is a notice, a refusal reported through
+    // ProtocolErrorHandler, or dropped; it never pops the queue and shifts
+    // every reply behind it by one (CR-02, W-04).
     using ReplyHandler = std::function<void(const ConfigMessage&)>;
 
     // D-08: the window manager reloaded its files, so every effective value may
     // have moved under an open window.
     using NoticeHandler = std::function<void()>;
+
+    // An `error` that answers no outstanding request (W-04). It is still a
+    // refusal of something this client asked for -- the reachable route is a
+    // reload whose reply was correlated away -- and dropping it is how a
+    // refusal becomes a silence in a window the user is looking at. Reported
+    // rather than dropped, and never as D-08's notice: the two say opposite
+    // things and go to different places in the window.
+    using ProtocolErrorHandler = std::function<void(const std::string& reason)>;
 
     // The connection state changed -- the window re-renders its banner and
     // re-evaluates which controls are sensitive.
@@ -131,6 +140,10 @@ public:
     bool sendReload(ReplyHandler onReply);
 
     void setNoticeHandler(NoticeHandler handler) { m_onNotice = std::move(handler); }
+    void setProtocolErrorHandler(ProtocolErrorHandler handler)
+    {
+        m_onProtocolError = std::move(handler);
+    }
     void setStateHandler(StateHandler handler) { m_onState = std::move(handler); }
 
     // Poll the descriptor until `predicate` is true or `timeoutMs` expires.
@@ -158,5 +171,6 @@ private:
     std::string        m_in;
     std::deque<Pending> m_pending;
     NoticeHandler      m_onNotice;
+    ProtocolErrorHandler m_onProtocolError;
     StateHandler       m_onState;
 };

@@ -764,6 +764,110 @@ TEST_CASE("a handler that throws leaves the servicing depth balanced",
 
 
 // -----------------------------------------------------------------------------
+// One `reloaded` per reload of one's own, one notice per foreign reload (W-04,
+// W-05)
+// -----------------------------------------------------------------------------
+//
+// D-08 reuses `reloaded` as both the reply to a client's own `reload` and the
+// broadcast to everybody else, and the version-1 contract is frozen: there is
+// no correlation field to add and no twelfth type to add. So the ambiguity has
+// to go at the source. A requester that receives BOTH the broadcast and its
+// reply cannot tell which line is which -- neither wm2-config, which correlates
+// positionally, nor wm2-ctl, which breaks on the first `reloaded` it sees. A
+// requester that receives EXACTLY ONE has no ambiguity left to resolve.
+
+TEST_CASE("the client that asked for a reload is not also broadcast to",
+          "[config_socket][reentrancy]")
+{
+    RuntimeDirEnv guard;
+    TempDir home;
+    REQUIRE(home.valid());
+    ServerHome server_home(home);
+
+    ConfigSocketServer server;
+    REQUIRE(server.listen(":reloadonce"));
+
+    // reloadConfigFromDisk()'s shape: broadcast the notice to every
+    // hello-completed connection EXCEPT the one being served, then answer the
+    // requester with its own `reloaded`.
+    const ConfigSocketServer::Handler fn =
+        [&server](const ConfigSocketRequest& request) -> ConfigSocketReply {
+            ConfigSocketReply out;
+            ConfigMessage in;
+            REQUIRE(configProtocolDecode(request.line, in) == ConfigDecodeResult::Ok);
+            if (in.type == ConfigMessageType::Hello) {
+                ConfigMessage ack;
+                ack.type = ConfigMessageType::HelloAck;
+                ack.program = "wm2-born-again";
+                ack.protocol = kConfigProtocolVersion;
+                out.line = configProtocolEncode(ack);
+                out.helloAccepted = true;
+                return out;
+            }
+            if (in.type == ConfigMessageType::Reload) {
+                server.broadcastExcept(encode(ConfigMessageType::Reloaded),
+                                       server.servingFd());
+                out.line = encode(ConfigMessageType::Reloaded);
+                return out;
+            }
+            ConfigMessage error;
+            error.type = ConfigMessageType::Error;
+            error.reason = "unexpected";
+            out.line = configProtocolEncode(error);
+            return out;
+        };
+
+    ClientEnd watcher(server.path());
+    ClientEnd requester(server.path());
+    REQUIRE(watcher.open());
+    REQUIRE(requester.open());
+    pump(server, fn);
+    REQUIRE(server.clientCount() == 2);
+
+    REQUIRE(watcher.send(helloLine()));
+    REQUIRE(requester.send(helloLine()));
+    pump(server, fn);
+
+    std::string fromWatcher;
+    std::string fromRequester;
+    watcher.drain(fromWatcher);
+    requester.drain(fromRequester);
+    REQUIRE(countLines(fromWatcher, "{\"type\":\"hello-ack\",\"program\":\"wm2-born-again\","
+                                    "\"protocol\":1}") == 1);
+    REQUIRE(countLines(fromRequester, "{\"type\":\"hello-ack\",\"program\":\"wm2-born-again\","
+                                      "\"protocol\":1}") == 1);
+    fromWatcher.clear();
+    fromRequester.clear();
+
+    REQUIRE(requester.send(encode(ConfigMessageType::Reload)));
+    pump(server, fn);
+    pump(server, fn);
+    watcher.drain(fromWatcher);
+    requester.drain(fromRequester);
+
+    // EXACTLY ONE, both times. Two on the requester's socket is the ambiguity
+    // W-04 and W-05 are both instances of: the client cannot tell its own
+    // reply from somebody else's notice, so it takes the wrong one and
+    // reports a refused reload as a success. Zero on the watcher's socket
+    // would mean D-08's notice had been lost instead.
+    CHECK(countLines(fromRequester, "{\"type\":\"reloaded\"}") == 1);
+    CHECK(countLines(fromWatcher, "{\"type\":\"reloaded\"}") == 1);
+
+    // Outside a servicing pass there is no connection to exclude, so a
+    // broadcast still reaches everybody -- the exclusion is about WHO ASKED,
+    // not a permanent filter.
+    server.broadcast(encode(ConfigMessageType::Reloaded));
+    fromWatcher.clear();
+    fromRequester.clear();
+    watcher.drain(fromWatcher);
+    requester.drain(fromRequester);
+    CHECK(countLines(fromRequester, "{\"type\":\"reloaded\"}") == 1);
+    CHECK(countLines(fromWatcher, "{\"type\":\"reloaded\"}") == 1);
+
+    server.close();
+}
+
+// -----------------------------------------------------------------------------
 // The socket DIRECTORY is not followed through a symlink (CR-03)
 // -----------------------------------------------------------------------------
 //

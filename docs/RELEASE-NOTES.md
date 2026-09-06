@@ -736,9 +736,12 @@ with the first the moment a `.desktop` file changed.
 
 **When the files change under it, every connected tool is told.** After a
 `wm2-ctl reload` the window manager sends a notice to every program connected to
-its socket, so a settings window left open somewhere knows its picture is stale.
-The notice says only that a reload happened; whatever wants a value asks for it,
-so the notice can never become a second, drifting copy of your settings.
+its socket — **except the one that asked for the reload**, which gets its own
+reply and nothing else. So each program sees exactly one line per reload of its
+own and exactly one notice per reload somebody else asked for, and no program has
+to guess which of two identical lines was meant for it. The notice says only that
+a reload happened; whatever wants a value asks for it, so the notice can never
+become a second, drifting copy of your settings.
 
 **Nothing about your windows crosses the socket.** No window title, no
 application class, no window geometry, no window count broken down per window —

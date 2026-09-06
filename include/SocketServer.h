@@ -301,6 +301,31 @@ public:
     // Nothing is sent to a stranger (D-15).
     void broadcast(const std::string& line);
 
+    // The same, except for one descriptor: the connection whose request is
+    // being answered (W-04, W-05).
+    //
+    // WHY THE TRANSPORT OWNS THIS AND NOT THE POLICY. D-08 reuses `reloaded`
+    // as both the reply to a client's own `reload` and the broadcast to
+    // everybody else, which is what let this phase avoid a twelfth message
+    // type -- and the version-1 contract is frozen, so there is no correlation
+    // field to add and no new type to add. A requester that receives BOTH
+    // lines cannot tell which is which: wm2-config correlates positionally and
+    // pops its pending entry against the broadcast, wm2-ctl breaks on the
+    // first `reloaded` it sees. A requester that receives EXACTLY ONE has no
+    // ambiguity left to resolve, and both clients become correct with no wire
+    // change at all.
+    //
+    // `exceptFd` of -1 excludes nothing, which is what makes broadcast() the
+    // same call with no exception.
+    void broadcastExcept(const std::string& line, int exceptFd);
+
+    // The descriptor of the connection whose frame is being handled right now,
+    // or -1 when no handler is running. The window manager's `reload` handler
+    // broadcasts D-08's notice from inside the very request it is answering,
+    // and this is how it names the connection to leave out without the policy
+    // half having to track descriptors of its own.
+    int servingFd() const { return m_servingFd; }
+
     std::size_t clientCount() const { return m_clients.size(); }
 
     // How long the caller's poll() may block before this server needs attention
@@ -403,4 +428,10 @@ private:
     // the session with no diagnostic at all.
     std::size_t m_serviceDepth = 0;
     bool        m_reapPending  = false;
+
+    // The connection whose frame a handler is running against, or -1 (W-04).
+    // Set around the handler call in readConnection() and restored on the way
+    // out, so a handler that broadcasts can exclude the connection it is
+    // answering.
+    int         m_servingFd = -1;
 };
