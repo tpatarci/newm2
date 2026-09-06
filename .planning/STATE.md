@@ -4,15 +4,15 @@ milestone: v1.0
 current_phase: 09
 current_phase_name: Config GUI + IPC
 status: executing
-stopped_at: Completed 09-02-PLAN.md
-last_updated: "2026-09-06T07:41:18.557Z"
+stopped_at: Completed 09-03-PLAN.md
+last_updated: "2026-09-06T08:33:54.543Z"
 last_activity: 2026-09-06
-state_head: 0cfde8f88df9167cfa002a3d18ef7a03114f60bf
+state_head: 483547a7209384015069b65c8a9e1f823ca79b82
 progress:
   total_phases: 10
   completed_phases: 4
   total_plans: 58
-  completed_plans: 49
+  completed_plans: 51
 milestone_name: milestone
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 09 (Config GUI + IPC) — EXECUTING
-Plan: 3 of 9
+Plan: 4 of 9
 Status: Ready to execute
 Progress: [████████░░] 81% (7/9 phases complete)
 
@@ -360,6 +360,7 @@ Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
 | Phase 08.5-v1.0-closeout P13 | 65min | 4 tasks | 13 files |
 | Phase 09 P01 | 24 min | 3 tasks | 7 files |
 | Phase 09 P02 | 35 min | 4 tasks | 6 files |
+| Phase 09 P03 | 68 min | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -469,6 +470,12 @@ Recent decisions affecting current work:
 - [Phase 09]: 09-01: only the PREFERRED rung of the tab-font ladder is configurable; rungs 2 and 4 keep their literals — A fallback the user can also break is not a fallback. One bad value would otherwise take out the preferred face and every net under it, which is the outcome XDIS-04 exists to prevent. Rung 3 does read the value because rung 3 IS the preferred pattern, unrotated.
 - [Phase 09]: 09-01: the menu font keeps its fatal() on total failure; the tab font still cannot terminate the process — The menu measures every row against its font, so there is no carry-on-without-it the way there is for an unlabelled tab. Only a host with no sans font at all reaches the exit, which is the condition that already ended startup before menu-font existed (T-9-02).
 - [Phase 09]: 09-01: a font change takes effect at next start; RELEASE-NOTES.md says so and plan 09-05 must delete that sentence — It is the only setting in the release that does not apply immediately. The plan's own prohibition required the exception to be named in the release notes rather than left for a user to discover.
+- [Phase 09]: DISC-02: the configuration socket path is $XDG_RUNTIME_DIR/wm2-born-again/socket<display>, fallback /tmp/wm2-born-again-<uid>/socket<display>, display sanitised outside [A-Za-z0-9._-]
+- [Phase 09]: DISC-03: the socket path is published on the root window as _WM2_CONFIG_SOCKET (XA_STRING, format 8); its absence means there is no socket
+- [Phase 09]: DISC-04: SIGHUP keeps its existing exit behaviour; reload is a socket message and nothing else
+- [Phase 09]: DISC-06: servicing the socket is a fourth, silent case in modalWait() -- never Event, never Interrupted, so no existing caller's contract changes
+- [Phase 09]: Both poll sites in src/Events.cpp are ONE shared descriptor set built by WindowManager::buildPollSet(), with named indices; any future multiplexed descriptor is added once and reaches both
+- [Phase 09]: include/ConfigProtocol.h replaces Xlib's 'define Status int' macro with a typedef, because the frozen 'status' message type cannot be renamed and X11 extension headers return Status
 
 ### Pending Todos
 
@@ -515,6 +522,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-06T07:41:18.079Z
-Stopped at: Completed 09-02-PLAN.md
+Last session: 2026-09-06T08:33:40.947Z
+Stopped at: Completed 09-03-PLAN.md
 Resume file: None
