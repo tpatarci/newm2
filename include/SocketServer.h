@@ -152,6 +152,38 @@ PeerVerdict configSocketPeerVerdict(int fd, uid_t self);
 bool configSocketPeerUid(int fd, uid_t& out);
 
 
+// What a refusal should print, given everything already printed (T-9-19).
+//
+// The log-once rule exists so the warning cannot be floodable by a caller that
+// simply reconnects. It has a bound on how many uids it remembers, and that
+// bound used to be a refusal to REMEMBER rather than a refusal to WARN: once
+// 64 uids were held, a sixty-fifth was never recorded and was therefore warned
+// about on EVERY attempt -- which is the flood the rule exists to prevent, from
+// a process cycling uids or a machine with many service accounts (WR-07).
+//
+// Extracted as a decision for the reason the header states at the top: a
+// decision a test cannot reach is a decision nothing proves, and no test can
+// become sixty-five different users.
+enum class ForeignWarning {
+    Named,      // print the uid and remember it
+    Unnamed,    // print the uid-less spelling; the kernel would not say who
+    Saturated,  // print the "no further refusals are logged" line, once
+    Silent      // print nothing: already said, or already saturated
+};
+
+
+// `warnedUids` and `saturated` are the caller's memory and are UPDATED here, so
+// that the rule and the state it depends on cannot drift apart.
+ForeignWarning socketForeignWarningDecide(bool known, uid_t peer,
+                                          std::vector<uid_t>& warnedUids,
+                                          bool& saturated);
+
+
+// How many distinct refused uids are remembered before the log gives up
+// naming them.
+inline constexpr std::size_t kConfigSocketMaxWarnedUids = 64;
+
+
 // What a file already sitting at the socket path means.
 enum class StaleVerdict {
     NoFile,  // nothing there; bind straight away
@@ -319,6 +351,7 @@ private:
 
     std::vector<Connection> m_clients;
     std::vector<uid_t>      m_warnedUids;
+    bool                    m_warnedUidsSaturated = false;
 
     // --- Descriptor exhaustion (WR-06) --------------------------------------
     //

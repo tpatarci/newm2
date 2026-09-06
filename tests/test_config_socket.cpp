@@ -878,3 +878,72 @@ TEST_CASE("a listener that cannot accept is dropped from the readable set",
 
     server.close();
 }
+
+
+// -----------------------------------------------------------------------------
+// The refusal log cannot be flooded (WR-07, T-9-19)
+// -----------------------------------------------------------------------------
+
+TEST_CASE("a refused uid is warned about once and never again",
+          "[config_socket][warn]")
+{
+    std::vector<uid_t> warned;
+    bool saturated = false;
+
+    CHECK(socketForeignWarningDecide(true, 1000, warned, saturated) ==
+          ForeignWarning::Named);
+    CHECK(socketForeignWarningDecide(true, 1000, warned, saturated) ==
+          ForeignWarning::Silent);
+    CHECK(socketForeignWarningDecide(true, 1001, warned, saturated) ==
+          ForeignWarning::Named);
+    CHECK(socketForeignWarningDecide(true, 1000, warned, saturated) ==
+          ForeignWarning::Silent);
+
+    // The peer the kernel would not name is its own remembered entry, so it
+    // cannot flood either, and it does not consume the whole memory.
+    CHECK(socketForeignWarningDecide(false, 0, warned, saturated) ==
+          ForeignWarning::Unnamed);
+    CHECK(socketForeignWarningDecide(false, 0, warned, saturated) ==
+          ForeignWarning::Silent);
+    CHECK(warned.size() == 3);
+    CHECK_FALSE(saturated);
+}
+
+TEST_CASE("past the remembered bound the log gives up rather than repeating",
+          "[config_socket][warn]")
+{
+    std::vector<uid_t> warned;
+    bool saturated = false;
+
+    // Fill the memory. Each of these is a uid nothing has seen before, so each
+    // is worth exactly one line.
+    for (std::size_t i = 0; i < kConfigSocketMaxWarnedUids; ++i) {
+        INFO("uid index " << i);
+        CHECK(socketForeignWarningDecide(true, static_cast<uid_t>(5000 + i),
+                                         warned, saturated) ==
+              ForeignWarning::Named);
+    }
+    CHECK(warned.size() == kConfigSocketMaxWarnedUids);
+    CHECK_FALSE(saturated);
+
+    // THE DEFECT. With the bound as a refusal to REMEMBER only, every uid past
+    // this point was warned about on every single attempt -- which is the
+    // flood the log-once rule exists to prevent, from a process cycling uids
+    // or a machine with many service accounts.
+    CHECK(socketForeignWarningDecide(true, 9001, warned, saturated) ==
+          ForeignWarning::Saturated);
+    CHECK(saturated);
+
+    // Said ONCE, and then nothing, whoever keeps knocking.
+    for (int i = 0; i < 200; ++i) {
+        const uid_t uid = static_cast<uid_t>(9000 + i);
+        INFO("uid " << uid);
+        CHECK(socketForeignWarningDecide(true, uid, warned, saturated) ==
+              ForeignWarning::Silent);
+    }
+    CHECK(socketForeignWarningDecide(false, 0, warned, saturated) ==
+          ForeignWarning::Silent);
+
+    // And the memory is still bounded: it is not itself a growth lever.
+    CHECK(warned.size() == kConfigSocketMaxWarnedUids);
+}

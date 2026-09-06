@@ -735,36 +735,64 @@ void ConfigSocketServer::reap()
 }
 
 
+ForeignWarning socketForeignWarningDecide(bool known, uid_t peer,
+                                          std::vector<uid_t>& warnedUids,
+                                          bool& saturated)
+{
+    // The kernel would not name the peer. Reported once in total, using the
+    // uid-less spelling, and remembered under a sentinel so it cannot flood.
+    const uid_t sentinel = static_cast<uid_t>(-1);
+    const uid_t remembered = known ? peer : sentinel;
+
+    if (std::find(warnedUids.begin(), warnedUids.end(), remembered) !=
+        warnedUids.end()) {
+        return ForeignWarning::Silent;
+    }
+
+    // THE BOUND IS A REFUSAL TO WARN, NOT MERELY A REFUSAL TO REMEMBER
+    // (WR-07). Recording nothing while still printing left the warning
+    // floodable by exactly the caller the log-once rule was written against:
+    // one that reconnects, from uids the memory has no room for.
+    if (warnedUids.size() >= kConfigSocketMaxWarnedUids) {
+        if (saturated) return ForeignWarning::Silent;
+        saturated = true;
+        return ForeignWarning::Saturated;
+    }
+
+    warnedUids.push_back(remembered);
+    return known ? ForeignWarning::Named : ForeignWarning::Unnamed;
+}
+
+
 void ConfigSocketServer::warnForeign(uid_t peer, bool known)
 {
-    if (known) {
-        // ONCE PER UID, deliberately not once per attempt: the log records the
-        // event without being floodable by a caller that simply reconnects
-        // (T-9-19).
-        if (std::find(m_warnedUids.begin(), m_warnedUids.end(), peer) !=
-            m_warnedUids.end()) {
-            return;
-        }
-        // Bounded, so the set of remembered uids is not itself a growth lever.
-        if (m_warnedUids.size() < 64) m_warnedUids.push_back(peer);
+    // ONCE PER UID, deliberately not once per attempt: the log records the
+    // event without being floodable by a caller that simply reconnects
+    // (T-9-19). The rule itself is the decision above, so that a test can
+    // reach it -- no test can become sixty-five different users.
+    switch (socketForeignWarningDecide(known, peer, m_warnedUids,
+                                       m_warnedUidsSaturated)) {
+    case ForeignWarning::Named:
         std::fprintf(stderr, "wm2: warning: refused configuration socket "
                              "connection from uid %lu\n",
                      static_cast<unsigned long>(peer));
         std::fflush(stderr);
         return;
-    }
-
-    // The kernel would not name the peer. Reported once in total, using the
-    // uid-less spelling, and remembered under a sentinel so it cannot flood.
-    const uid_t sentinel = static_cast<uid_t>(-1);
-    if (std::find(m_warnedUids.begin(), m_warnedUids.end(), sentinel) !=
-        m_warnedUids.end()) {
+    case ForeignWarning::Unnamed:
+        std::fprintf(stderr, "wm2: warning: refused configuration socket "
+                             "connection from an unidentifiable peer\n");
+        std::fflush(stderr);
+        return;
+    case ForeignWarning::Saturated:
+        std::fprintf(stderr, "wm2: warning: more than %zu distinct uids have "
+                             "been refused on the configuration socket; "
+                             "further refusals are not logged\n",
+                     kConfigSocketMaxWarnedUids);
+        std::fflush(stderr);
+        return;
+    case ForeignWarning::Silent:
         return;
     }
-    m_warnedUids.push_back(sentinel);
-    std::fprintf(stderr, "wm2: warning: refused configuration socket "
-                         "connection from an unidentifiable peer\n");
-    std::fflush(stderr);
 }
 
 
@@ -775,6 +803,7 @@ void ConfigSocketServer::close()
     }
     m_clients.clear();
     m_warnedUids.clear();
+    m_warnedUidsSaturated = false;
 
     if (m_listenFd >= 0) {
         ::close(m_listenFd);
