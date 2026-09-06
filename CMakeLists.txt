@@ -656,6 +656,68 @@ if(BUILD_TESTS)
                 TIMEOUT 300
         )
 
+        # --- The settings window: its model, and that it opens (CGUI-01, D-20) ---
+        #
+        # REGISTERED UNCONDITIONALLY, not gated on the configuration GUI being
+        # built, and that is the whole point. D-20 asks for a GTK smoke test
+        # "skipped with a reason when the GUI was not built"; a target that only
+        # existed when the GUI did would make the skip unreachable, and on a
+        # GTK-less host the anchored `-L '^wm2_config_smoke$'` gate would select
+        # zero tests -- which --no-tests=error turns into a failure with no
+        # explanation rather than a skip with one.
+        #
+        # So the binary is always built, its display-free half (the form model,
+        # the reset and save semantics, the banner sentence) always runs, and
+        # only the cases that need a window to open skip -- with the reason
+        # printed. The path of the built GUI is handed in as a compile
+        # definition, so nothing ever searches PATH and a wm2-config installed
+        # on the developer's machine can never be the one under test; its
+        # ABSENCE is what the skip branch keys on.
+        #
+        # apps/wm2-config/FormState.cpp and ProtocolClient.cpp are compiled
+        # straight in (the test_config pattern). Neither includes a GTK, GLib or
+        # X11 header -- the GLib main-loop integration is a two-line adapter in
+        # apps/wm2-config/main.cpp -- which is what lets this target link
+        # Catch2 and X11 alone and still exercise the GUI's own client rather
+        # than a hand-rolled stand-in.
+        add_executable(test_wm2_config_smoke
+            tests/test_wm2_config_smoke.cpp
+            apps/wm2-config/FormState.cpp
+            apps/wm2-config/ProtocolClient.cpp
+            src/Config.cpp
+            src/ConfigFileWriter.cpp
+            src/SocketServer.cpp
+        )
+        target_link_libraries(test_wm2_config_smoke PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+        )
+        target_include_directories(test_wm2_config_smoke PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/tests
+            ${XFT_INCLUDE_DIRS}
+        )
+        target_compile_definitions(test_wm2_config_smoke PRIVATE
+            WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
+            WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
+            WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+        )
+        add_dependencies(test_wm2_config_smoke wm2-born-again)
+        if(CONFIG_GUI_ENABLED)
+            target_compile_definitions(test_wm2_config_smoke PRIVATE
+                WM2_CONFIG_PATH="$<TARGET_FILE:wm2-config>"
+            )
+            add_dependencies(test_wm2_config_smoke wm2-config)
+        endif()
+
+        # ADD_TAGS_AS_LABELS is required by D-33, or [wm2_config_smoke] is not
+        # selectable by the anchored label gates this plan's criteria use.
+        catch_discover_tests(test_wm2_config_smoke ADD_TAGS_AS_LABELS
+            PROPERTIES
+                FIXTURES_REQUIRED preflight_ok
+                TIMEOUT 300
+        )
+
         # --- Window-rule application tests (RULES-02) ---
         #
         # Cloned from test_wm_focus above, minus XTEST: nothing here is driven by
