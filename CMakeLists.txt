@@ -785,6 +785,27 @@ if(BUILD_TESTS)
     )
     catch_discover_tests(test_config ADD_TAGS_AS_LABELS)
 
+    # --- Version-1 wire contract codec (CGUI-02, D-20's protocol half) ---
+    #
+    # Display-free BY CONSTRUCTION, exactly like test_rules below: there is no
+    # PkgConfig::X11 here, no Xft include path, no display fixture and no
+    # FIXTURES_REQUIRED, because include/ConfigProtocol.h includes nothing but
+    # the C++ standard library. This target must be runnable on a host with no
+    # X server at all -- if it ever needs one, the header has grown a dependency
+    # the window manager, wm2-ctl and wm2-config would all have inherited.
+    #
+    # The codec is header-only, so there is no production .cpp to compile in.
+    add_executable(test_config_protocol tests/test_config_protocol.cpp)
+    target_link_libraries(test_config_protocol PRIVATE
+        Catch2::Catch2WithMain
+    )
+    target_include_directories(test_config_protocol PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    # ADD_TAGS_AS_LABELS is required, or the [config_protocol] tag is not
+    # selectable by the anchored `-L '^config_protocol$'` gate this plan uses.
+    catch_discover_tests(test_config_protocol ADD_TAGS_AS_LABELS)
+
     # --- Window-rule model, matcher and parser unit tests (RULES-01) ---
     #
     # Display-free BY CONSTRUCTION, not by luck: the rules header and its
