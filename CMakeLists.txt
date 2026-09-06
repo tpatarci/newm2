@@ -172,6 +172,76 @@ if(CONFIG_GUI_ENABLED)
     target_link_libraries(wm2-config PRIVATE PkgConfig::GTK3)
 endif()
 
+# --- Install components (D-19) ---
+#
+# The first install() rules this project has ever had, and they are split in two
+# from the outset because the COMPONENT, not the binary, is this project's
+# install identity:
+#
+#   wm          the window manager, wm2-ctl (D-17 ships the command-line client
+#               in the window-manager package, so a droplet reached over SSH can
+#               still drive a running WM), the session entry a display manager
+#               reads, and the documentation.
+#   config-gui  wm2-config and its application entry, and nothing else.
+#
+# A packager can therefore produce wm2-born-again and wm2-born-again-config from
+# ONE build tree, and the first of the two declares no GTK dependency. That last
+# clause is the whole point of the split and is not left as prose: every
+# executable the `wm` component installs is run through ldd by
+# scripts/gates/install-components.sh, which fails if libgtk, libglib or
+# libgobject is named.
+#
+# The config-gui rules are inside if(CONFIG_GUI_ENABLED) so a GUI-disabled tree
+# has nothing to install for that component -- `cmake --install --component
+# config-gui` there stages zero files and exits 0, which is what lets the same
+# gate run in both trees.
+include(GNUInstallDirs)
+
+# The window manager itself.
+install(TARGETS ${PROJECT_NAME}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT wm
+)
+
+# wm2-ctl is a SEPARATE rule from the window manager, not a second name on the
+# same line, because it is in this package for a different reason: D-17 puts the
+# display-free client in the window-manager package so a droplet with no desktop
+# and no toolkit can still be driven over SSH. Whoever later wonders whether it
+# belongs here should find the answer beside the rule.
+install(TARGETS wm2-ctl
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT wm
+)
+
+# The session entry a display manager reads to offer this window manager as a
+# session. share/xsessions is deliberately NOT share/applications: it is not on
+# the path this project's own scanner walks, so the session entry can never
+# appear in the root menu as though it were an application to launch.
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/wm2-born-again.desktop
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/xsessions
+    COMPONENT wm
+)
+
+# The documentation the package ships.
+install(FILES
+        ${CMAKE_SOURCE_DIR}/docs/RELEASE-NOTES.md
+        ${CMAKE_SOURCE_DIR}/LICENSE
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
+    COMPONENT wm
+)
+
+if(CONFIG_GUI_ENABLED)
+    install(TARGETS wm2-config
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        COMPONENT config-gui
+    )
+
+    install(FILES ${CMAKE_SOURCE_DIR}/packaging/wm2-config.desktop
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
+        COMPONENT config-gui
+    )
+endif()
+
 # --- Tests (TEST-01, TEST-02, TEST-04) ---
 option(BUILD_TESTS "Build test suite" ON)
 
