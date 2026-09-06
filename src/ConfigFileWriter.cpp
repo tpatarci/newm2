@@ -523,13 +523,22 @@ ConfigWriteResult configFileWrite(const std::string& path,
         }
     }
 
+    // THE ERRNO IS CAPTURED AT EACH FAILURE SITE, not once at the end (WR-04).
+    // A single read after the last call reports whatever errno happened to
+    // hold, which for a failing close() after a SUCCESSFUL fsync is commonly 0
+    // -- producing "could not write '...': Success", a save the user is told
+    // failed with no cause given. close() is exactly where deferred write
+    // errors surface on NFS and on some journalling filesystems, so it is the
+    // case that matters most.
     std::size_t written = 0;
     bool writeOk = true;
+    int failErrno = 0;
     while (written < content.size()) {
         const ssize_t n = ::write(fd, content.data() + written, content.size() - written);
         if (n < 0) {
             if (errno == EINTR) continue;
             writeOk = false;
+            failErrno = errno;
             break;
         }
         written += static_cast<std::size_t>(n);
@@ -538,13 +547,12 @@ ConfigWriteResult configFileWrite(const std::string& path,
     // fsync BEFORE the rename: a rename over a file whose contents are still
     // only in the page cache can survive a crash as an empty file, which is
     // exactly the corruption the temporary exists to prevent.
-    if (writeOk && ::fsync(fd) != 0) writeOk = false;
+    if (writeOk && ::fsync(fd) != 0) { writeOk = false; failErrno = errno; }
 
-    const int writeErrno = errno;
-    if (::close(fd) != 0 && writeOk) writeOk = false;
+    if (::close(fd) != 0 && writeOk) { writeOk = false; failErrno = errno; }
 
     if (!writeOk) {
-        errorOut = "could not write '" + tmpPath + "': " + std::strerror(writeErrno);
+        errorOut = "could not write '" + tmpPath + "': " + std::strerror(failErrno);
         (void)::unlink(tmpPath.c_str());
         return ConfigWriteResult::WriteFailed;
     }
