@@ -85,6 +85,23 @@ struct MenuEntryDraft {
             reasonOut = "Give the entry a command to run.";
             return false;
         }
+        // WR-15. The `menu-entries` WIRE grammar separates records with ';'
+        // and has no escape; the FILE grammar has no such separator, so
+        // `menu-entry-name = Foo;Bar` is a perfectly valid line. An entry
+        // saved with a semicolon is therefore read back by the window manager,
+        // returned by `get menu-entries`, and then fails to parse HERE -- for
+        // the rest of the session and every session after it, with the Menu
+        // page silently no longer tracking what the window manager holds.
+        //
+        // Refused where the user types it, which is the only place the
+        // sentence can name the field it is about.
+        for (const std::string* part : {&name, &command, &category}) {
+            if (part->find(';') != std::string::npos) {
+                reasonOut = "A ';' cannot be used here -- it is what separates "
+                            "entries when the list is sent to the window manager.";
+                return false;
+            }
+        }
         return true;
     }
 

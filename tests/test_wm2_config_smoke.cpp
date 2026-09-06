@@ -3013,3 +3013,54 @@ TEST_CASE("a disconnect from a request path still announces itself",
     // attached to its number dangerous.
     CHECK(client.fileDescriptor() < 0);
 }
+
+
+TEST_CASE("a menu entry containing a ';' is refused where it is typed",
+          "[wm2_config_smoke][menu]")
+{
+    // The `menu-entries` WIRE grammar separates records with ';' and has no
+    // escape. The FILE grammar has no such separator, so
+    // `menu-entry-name = Mail; News` is a perfectly valid line -- which means
+    // an entry saved with one is read back by the window manager, returned by
+    // `get menu-entries`, and then fails to parse in this program. The Menu
+    // page stops tracking what the window manager holds, for the rest of the
+    // session and every session after it.
+    std::string reason;
+
+    MenuEntryDraft inName;
+    inName.name = "Mail; News";
+    inName.command = "thunderbird";
+    CHECK_FALSE(inName.complete(reason));
+    CHECK(reason.find("';'") != std::string::npos);
+
+    MenuEntryDraft inCommand;
+    inCommand.name = "Mail";
+    inCommand.command = "sh -c thunderbird;true";
+    CHECK_FALSE(inCommand.complete(reason));
+
+    MenuEntryDraft inCategory;
+    inCategory.name = "Mail";
+    inCategory.command = "thunderbird";
+    inCategory.category = "Net;work";
+    CHECK_FALSE(inCategory.complete(reason));
+
+    // And an entry without one is still accepted: the refusal is about the one
+    // character the wire grammar reserves, not about punctuation in general.
+    MenuEntryDraft fine;
+    fine.name = "Mail & News";
+    fine.command = "thunderbird --safe-mode";
+    fine.category = "Network";
+    CHECK(fine.complete(reason));
+
+    // The round trip the refusal protects: what the dialog accepted survives
+    // the wire encoding it is about to travel over.
+    std::vector<AppEntry> entries{fine.toEntry()};
+    Config carrier;
+    carrier.manualMenuEntries = entries;
+    std::vector<AppEntry> back;
+    std::string parseReason;
+    REQUIRE(parseMenuEntriesValue(configMenuEntriesValue(carrier), back, parseReason));
+    REQUIRE(back.size() == 1);
+    CHECK(back[0].name == "Mail & News");
+    CHECK(back[0].category == "Network");
+}

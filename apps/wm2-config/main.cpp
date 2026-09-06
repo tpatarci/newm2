@@ -371,7 +371,15 @@ private:
             }
             std::vector<AppEntry> entries;
             std::string reason;
-            if (!parseMenuEntriesValue(reply.value, entries, reason)) return;
+            // SAID, NOT SWALLOWED (WR-15). A bare return here left the Menu
+            // page silently no longer tracking what the window manager holds
+            // -- for the rest of the session and every session after it, with
+            // no indication why.
+            if (!parseMenuEntriesValue(reply.value, entries, reason)) {
+                status("Could not read the menu entries the window manager "
+                       "reported: " + reason);
+                return;
+            }
             m_form.adoptEffectiveMenuEntries(entries);
             refreshPages();
         });
