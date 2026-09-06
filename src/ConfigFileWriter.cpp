@@ -180,6 +180,28 @@ bool menuEntriesAreAcceptable(const std::vector<AppEntry>& entries, std::string&
                            std::to_string(kMaxValueBytes) + " characters";
                 return false;
             }
+            // WR-03'S RULE, REACHED THROUGH THE MENU-ENTRY KEYS (W-03).
+            // appendMenuEntry writes `menu-entry-name = <name>` and
+            // Config::applyFile() trims what it reads back, so a name of
+            // " Mail" is written and returns as "Mail": the running window
+            // manager holds one string, the file says another, and the wire
+            // path -- which does NOT trim -- disagrees with both. Refused in
+            // the same words editsAreAcceptable() uses, because it is the same
+            // rule.
+            //
+            // The COMMAND is exempt. It is tokenised on whitespace by
+            // Config::applyKeyValue() on every route into the window manager,
+            // so an outer space in it is carried by neither representation and
+            // round-trips exactly; refusing it would state something about the
+            // file format that is not true of that field.
+            if (i != 1 && !parts[i]->empty() &&
+                (parts[i]->front() == ' ' || parts[i]->front() == '\t' ||
+                 parts[i]->back()  == ' ' || parts[i]->back()  == '\t')) {
+                errorOut = std::string("the menu entry ") + names[i] +
+                           " begins or ends with a space, which the configuration "
+                           "file cannot preserve";
+                return false;
+            }
         }
     }
     return true;

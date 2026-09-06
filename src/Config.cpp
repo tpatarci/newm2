@@ -837,6 +837,25 @@ bool parseMenuEntriesValue(const std::string& value,
                 reasonOut = "'" + key + "' before any menu-entry-name";
                 return false;
             }
+            // THE WIRE PATH DOES NOT TRIM AND THE FILE PATH DOES (W-03).
+            // applyFile() trims every value before applyKeyValue() sees it;
+            // this function hands the value over verbatim. So a name of
+            // " Mail" is accepted live and saved as `menu-entry-name =  Mail`,
+            // and the next reload reads it back as "Mail" -- `get
+            // menu-entries` then disagrees with what the window manager held a
+            // moment ago. Refused here so the two grammars carry the same set
+            // of names and categories.
+            //
+            // menu-entry-command is exempt: applyKeyValue tokenises it on
+            // whitespace, so its outer spaces survive nothing on either route
+            // and it round-trips exactly.
+            if (key != "menu-entry-command" && !val.empty() &&
+                (val.front() == ' ' || val.front() == '\t' ||
+                 val.back()  == ' ' || val.back()  == '\t')) {
+                reasonOut = "'" + key + "' begins or ends with a space, which "
+                            "the configuration file cannot preserve";
+                return false;
+            }
             scratch.applyKeyValue(key, val);
         }
 

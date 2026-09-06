@@ -1121,6 +1121,48 @@ TEST_CASE("a save refuses rather than waiting for ever on a held lock",
 // A value the file format cannot carry is refused where it is typed (WR-03)
 // ---------------------------------------------------------------------------
 
+TEST_CASE("a menu entry name or category with an outer space is refused",
+          "[config_writer][refusal]") {
+    // W-03. WR-03's guard covers ConfigEdit::value, and menu entries reach the
+    // same file by a different route: appendMenuEntry writes
+    // `menu-entry-name = <name>`, and Config::applyFile() trims what it reads
+    // back. A name of " Mail" is written and returns as "Mail" -- the running
+    // window manager holds one string and the file says another, which is
+    // WR-03's own sentence reached through the menu-entry keys.
+    TempDir dir;
+    const std::string path = dir.file("config");
+    const std::string before = "frame-thickness = 7\n";
+    writeFile(path, before);
+
+    const std::vector<AppEntry> refused = {
+        entry(" Mail",   {"thunderbird"}, "Network"),
+        entry("Mail ",   {"thunderbird"}, "Network"),
+        entry("\tMail",  {"thunderbird"}, "Network"),
+        entry("Mail",    {"thunderbird"}, " Network"),
+        entry("Mail",    {"thunderbird"}, "Network\t"),
+    };
+
+    for (const AppEntry& e : refused) {
+        std::string error;
+        INFO("name '" << e.name << "' category '" << e.category << "'");
+        CHECK(configFileWrite(path, {}, {e}, true, error) ==
+              ConfigWriteResult::InvalidEdit);
+        CHECK(error.find("space") != std::string::npos);
+        // Refused BEFORE anything is opened, so the file is untouched.
+        CHECK(readFile(path) == before);
+    }
+
+    // The command is deliberately NOT refused: it is tokenised on whitespace by
+    // Config::applyKeyValue() on every route into the window manager, so an
+    // outer space in it is not carried by either representation and round-trips
+    // exactly. Refusing it would tell the user something untrue about the file.
+    std::string error;
+    CHECK(configFileWrite(path, {}, {entry("Mail", {"thunderbird"}, "Network")},
+                          true, error) == ConfigWriteResult::Ok);
+    CHECK(readFile(path).find("menu-entry-name = Mail") != std::string::npos);
+}
+
+
 TEST_CASE("a value with leading or trailing whitespace is refused",
           "[config_writer][refusal]") {
     TempDir dir;

@@ -96,6 +96,27 @@ struct MenuEntryDraft {
         //
         // Refused where the user types it, which is the only place the
         // sentence can name the field it is about.
+        // W-03. The file grammar trims the value it reads and the wire grammar
+        // does not, so a field that begins or ends with a space means one thing
+        // to the running window manager and another to the file it was saved
+        // in. Refused where it is typed, for the same reason the ';' above is:
+        // it is the only place the sentence can name the field it is about.
+        //
+        // The COMMAND is not in this list. It is tokenised on whitespace on
+        // every route, so its outer spaces are carried by neither
+        // representation and it round-trips exactly.
+        for (const std::string* part : {&name, &category}) {
+            if (!part->empty() &&
+                (part->front() == ' ' || part->front() == '\t' ||
+                 part->back()  == ' ' || part->back()  == '\t')) {
+                reasonOut = "This cannot begin or end with a space -- the "
+                            "configuration file trims one off as it reads the "
+                            "file back, so the file and the running desktop "
+                            "would quietly disagree.";
+                return false;
+            }
+        }
+
         for (const std::string* part : {&name, &command, &category}) {
             if (part->find(';') != std::string::npos) {
                 reasonOut = "A ';' cannot be used here -- it is what separates "

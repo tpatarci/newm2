@@ -3052,6 +3052,79 @@ TEST_CASE("a disconnect from a request path still announces itself",
 }
 
 
+TEST_CASE("a menu entry field with an outer space is refused where it is typed "
+          "and on the wire",
+          "[wm2_config_smoke][menu]")
+{
+    // W-03. The FILE grammar trims the value it reads
+    // (Config::applyFile -> trim), and the WIRE grammar does not
+    // (parseMenuEntriesValue calls applyKeyValue directly). So a name of
+    // " Mail" is accepted live, shows in the root menu with its space, is
+    // saved as `menu-entry-name =  Mail`, and comes back as "Mail" the next
+    // time anything reloads -- at which point `get menu-entries` disagrees with
+    // what the window manager held a moment ago and the Menu page silently
+    // rewrites the user's row.
+    //
+    // Both directions are asserted here, because agreement between them is the
+    // property: the dialog refuses it where it is typed, and the wire refuses
+    // it for anything that reaches the window manager by another route.
+    std::string reason;
+
+    MenuEntryDraft leadingName;
+    leadingName.name = " Mail";
+    leadingName.command = "thunderbird";
+    CHECK_FALSE(leadingName.complete(reason));
+    CHECK(reason.find("space") != std::string::npos);
+
+    MenuEntryDraft trailingName;
+    trailingName.name = "Mail ";
+    trailingName.command = "thunderbird";
+    CHECK_FALSE(trailingName.complete(reason));
+
+    MenuEntryDraft outerCategory;
+    outerCategory.name = "Mail";
+    outerCategory.command = "thunderbird";
+    outerCategory.category = "Network ";
+    CHECK_FALSE(outerCategory.complete(reason));
+
+    // The command is exempt, in the dialog and everywhere else: it is tokenised
+    // on whitespace on every route, so an outer space in it is not carried by
+    // either representation. A refusal there would be a sentence about the file
+    // format that is not true of that field.
+    MenuEntryDraft paddedCommand;
+    paddedCommand.name = "Mail";
+    paddedCommand.command = "  thunderbird  ";
+    paddedCommand.category = "Network";
+    CHECK(paddedCommand.complete(reason));
+
+    // The wire direction. This is the value a `set menu-entries` carries and
+    // the value `get menu-entries` returns.
+    std::vector<AppEntry> parsed;
+    std::string parseReason;
+    CHECK_FALSE(parseMenuEntriesValue(
+        "menu-entry-name= Mail;menu-entry-command=thunderbird;"
+        "menu-entry-category=Network", parsed, parseReason));
+    CHECK(parseReason.find("space") != std::string::npos);
+
+    parseReason.clear();
+    CHECK_FALSE(parseMenuEntriesValue(
+        "menu-entry-name=Mail;menu-entry-command=thunderbird;"
+        "menu-entry-category=Network ", parsed, parseReason));
+
+    // And the ordinary value still parses, with the command's own spacing
+    // tokenised away exactly as before.
+    parseReason.clear();
+    REQUIRE(parseMenuEntriesValue(
+        "menu-entry-name=Mail;menu-entry-command=  thunderbird  --safe-mode;"
+        "menu-entry-category=Network", parsed, parseReason));
+    REQUIRE(parsed.size() == 1);
+    CHECK(parsed[0].name == "Mail");
+    CHECK(parsed[0].category == "Network");
+    REQUIRE(parsed[0].execArgv.size() == 2);
+    CHECK(parsed[0].execArgv[0] == "thunderbird");
+}
+
+
 TEST_CASE("a menu entry containing a ';' is refused where it is typed",
           "[wm2_config_smoke][menu]")
 {
