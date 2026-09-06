@@ -697,9 +697,15 @@ if(BUILD_TESTS)
             tests/test_wm_socket.cpp
             src/SocketServer.cpp
         )
+        # PkgConfig::XEXT is for the shape extension, and only for it: the
+        # overlapping-sets case counts re-frames as ShapeNotify events, for the
+        # reason 09-04 established -- the server suppresses ConfigureNotify for
+        # a reconfigure that changes nothing, so that counter cannot see a
+        # redundant re-layout and a case resting on it could not fail.
         target_link_libraries(test_wm_socket PRIVATE
             Catch2::Catch2WithMain
             PkgConfig::X11
+            PkgConfig::XEXT
             PkgConfig::XTST
         )
         target_include_directories(test_wm_socket PRIVATE

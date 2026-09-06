@@ -41,6 +41,11 @@
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
+// The shape extension is here for ONE reason: the overlapping-sets case at the
+// end of this file counts re-frames, and 09-04 established that ShapeNotify is
+// the only counter that sees the WORK -- the server suppresses ConfigureNotify
+// for a reconfigure that changes nothing.
+#include <X11/extensions/shape.h>
 
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -1549,4 +1554,348 @@ TEST_CASE("The status assembly does not reach any per-window identity",
         INFO("expected field missing from the region: " << field);
         CHECK(region.find(field) != std::string::npos);
     }
+}
+
+
+// -----------------------------------------------------------------------------
+// TWO OVERLAPPING `set` MESSAGES (09-04 truth 7, 09-VERIFICATION item 5)
+// -----------------------------------------------------------------------------
+//
+// The claim 09-04 could not observe: two `set` messages that are in flight at
+// the same time are both applied, in the order they were written, on the event
+// loop's own thread -- so the LATER write is the one the window manager ends up
+// using, neither is dropped, and the window manager is still a window manager
+// afterwards. 09-04-SUMMARY.md records this as `human_judgment: true`, resting
+// on "there is no second thread and no queue to reorder": structural, and
+// therefore unable to fail. This case is the behavioural half.
+//
+// WHAT "ARRIVAL ORDER" CAN HONESTLY MEAN HERE, and why the two connections are
+// opened in the order they are written to. `poll()` reports a SET of readable
+// descriptors; it does not record which of them became readable first, and
+// ConfigSocketServer::service() (src/SocketServer.cpp) walks its connections in
+// ACCEPT order within one servicing pass. So when both messages land before the
+// window manager next runs -- which is the whole point of writing them back to
+// back -- the order the messages are applied in is the accept order, and no
+// implementation on a level-triggered poll could make it anything else. The two
+// candidate orders are therefore deliberately ALIGNED: the connection that
+// writes first is the connection that connected first. Whether the window
+// manager wakes once (both pending, accept order) or twice (one pending each
+// time, write order), the answer is the same, and the case is deterministic
+// instead of being a coin toss over which happened.
+//
+// THE MIRROR is what stops this passing by coincidence of a constant: the same
+// exchange is run twice, once writing 11 then 21 and once writing 21 then 11,
+// and the winner is the later write BOTH times. A window manager that ignored
+// the second message, or that kept the smaller value, or that had frozen at
+// 21 for some unrelated reason, fails one of the two halves.
+//
+// GREEN ON ITS FIRST RUN, because the implementation is correct, so the
+// evidence that it can fail is a MUTATION rather than a red run: reversing the
+// order ConfigSocketServer::service() walks its connections in reddens both
+// halves, three runs out of three, with the LOSING value in force each time
+// (11 where 21 was written second, 21 where 11 was). That also settles the
+// dynamics -- both messages really are pending in ONE servicing pass, which is
+// exactly why the accept order above is aligned with the write order and not
+// left to chance.
+//
+// MEASURED, and stable across five runs before the mutation and three after:
+// four ShapeNotify events per applied `set` on this frame, eight for the pair.
+// The assertion is the RATIO against a single `set` measured in the same run,
+// so it survives a change to how many rectangle-combining requests one
+// re-layout issues.
+
+namespace {
+
+// An XDG tree of this case's own, under the CMake binary directory rather than
+// a bare /tmp name (threat T-8-TMP), unique per process and per call. Cloned
+// from tests/test_wm_config_live.cpp, which is where the rest of this file's
+// frame-thickness knowledge comes from.
+std::string makeSocketConfigHome(const std::string& contents)
+{
+    static int counter = 0;
+    const std::string base = std::string(WM2_TEST_WORKDIR) + "/socket-cfg-" +
+                             std::to_string(::getpid()) + "-" +
+                             std::to_string(++counter);
+    ::mkdir(base.c_str(), 0700);
+    ::mkdir((base + "/wm2-born-again").c_str(), 0700);
+
+    FILE* f = std::fopen((base + "/wm2-born-again/config").c_str(), "wb");
+    if (f) {
+        std::fwrite(contents.data(), 1, contents.size(), f);
+        std::fclose(f);
+    }
+    return base;
+}
+
+// XDG_CONFIG_DIRS is overridden as well as XDG_CONFIG_HOME: the fallback is
+// /etc/xdg, so on a machine with a system-wide config the host's settings would
+// be layered under this case and quietly change the baseline it measures from.
+WmFixtureOptions socketFixtureWithConfigHome(const std::string& home)
+{
+    WmFixtureOptions o;
+    o.childEnv["XDG_CONFIG_HOME"] = home;
+    o.childEnv["XDG_CONFIG_DIRS"] = home + "/no-system-config";
+    return o;
+}
+
+// The thickness the config file below names, so every geometry expectation is a
+// DIFFERENCE from a known starting point rather than a magic number.
+constexpr int kBaselineThickness = 7;
+
+// A third value, distinct from both of the overlapping ones, used to calibrate
+// the re-frame counter at the end of the exchange.
+constexpr int kCalibrationThickness = 15;
+
+// How far the client sits inside its frame, horizontally.
+//
+// Border::xIndent() is m_tabWidth + FRAME_WIDTH + 1, and only FRAME_WIDTH moves
+// when the thickness changes -- the tab width is a font measurement and is the
+// same before and after. So the inset changes by EXACTLY the change in
+// thickness, and the caller needs to know nothing about how a font is measured.
+// Read from the server through XTranslateCoordinates (rectOf), not from
+// anything the window manager says about itself.
+int clientInset(Display* d, Window frame, Window client)
+{
+    const Rect f = rectOf(d, frame);
+    const Rect c = rectOf(d, client);
+    return c.x - f.x;
+}
+
+bool sendSet(Conn& c, const std::string& key, const std::string& value)
+{
+    ConfigMessage m;
+    m.type  = ConfigMessageType::Set;
+    m.key   = key;
+    m.value = value;
+    return c.send(m);
+}
+
+// The window manager's own answer to "what are you using now?", over the
+// socket, as a client would ask it.
+bool requestGet(Conn& c, const std::string& key, ConfigMessage& reply,
+                std::string& rawLine)
+{
+    ConfigMessage get;
+    get.type = ConfigMessageType::Get;
+    get.key  = key;
+    if (!c.send(get)) return false;
+    if (!c.readLine(rawLine)) return false;
+    return configProtocolDecode(rawLine, reply) == ConfigDecodeResult::Ok;
+}
+
+// Every ShapeNotify this connection has been sent, counted and removed. The
+// window manager re-shapes a frame only when it re-lays it out, so this counts
+// RE-FRAMES; other events (this file's own nudge windows) are discarded.
+int drainShapeNotify(Display* d, int shapeEventBase)
+{
+    int shapes = 0;
+    while (XPending(d)) {
+        XEvent e;
+        XNextEvent(d, &e);
+        if (e.type == shapeEventBase + ShapeNotify) ++shapes;
+    }
+    return shapes;
+}
+
+// One run of the exchange. `firstValue` is written first, on the connection
+// that connected first; `secondValue` is written second, on the connection that
+// connected second; `secondValue` is expected to win.
+void runOverlappingSets(int firstValue, int secondValue)
+{
+    INFO("writing " << firstValue << " then " << secondValue
+         << ", expecting " << secondValue << " to win");
+
+    const std::string home =
+        makeSocketConfigHome("frame-thickness=" + std::to_string(kBaselineThickness) + "\n");
+    WmFixture fixture(socketFixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    // MAPPED FIRST, for 09-04's reason: a window mapped after the messages
+    // would pick the new thickness up at map time even from a window manager
+    // that stored the value and never applied it to anything on screen.
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d, 200, 150, 300, 220, client, "overlapping-sets");
+    REQUIRE(frame != None);
+
+    const std::string path = awaitPublishedSocketPath(d);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(path.empty());
+    }
+
+    // A CONNECTS AND SHAKES HANDS BEFORE B EVEN CONNECTS. That is what makes
+    // the accept order known, and the accept order is what the servicing pass
+    // walks -- see the note above this namespace.
+    Conn a(path);
+    REQUIRE(a.connected());
+    std::string programA;
+    int protocolA = 0;
+    REQUIRE(shakeHands(a, programA, protocolA));
+
+    Conn b(path);
+    REQUIRE(b.connected());
+    std::string programB;
+    int protocolB = 0;
+    REQUIRE(shakeHands(b, programB, protocolB));
+
+    settleWm(d);
+    const Rect frameBefore  = rectOf(d, frame);
+    const Rect clientBefore = rectOf(d, client);
+    const int insetBefore   = clientBefore.x - frameBefore.x;
+
+    int shapeEventBase = 0, shapeErrorBase = 0;
+    REQUIRE(XShapeQueryExtension(d, &shapeEventBase, &shapeErrorBase));
+    XShapeSelectInput(d, frame, ShapeNotifyMask);
+    XSync(d, False);
+    settleWm(d);
+    drainShapeNotify(d, shapeEventBase);   // everything before the pair is noise
+
+    // THE OVERLAP. Two separate send() calls, the second issued as soon as the
+    // first has returned, and NEITHER reply read in between -- so both messages
+    // are outstanding at once and the window manager is holding two
+    // conversations rather than being handed one at a time.
+    const bool sentA = sendSet(a, "frame-thickness", std::to_string(firstValue));
+    const bool sentB = sendSet(b, "frame-thickness", std::to_string(secondValue));
+
+    ConfigMessage ackA, ackB;
+    ConfigDecodeResult rA = ConfigDecodeResult::Malformed;
+    ConfigDecodeResult rB = ConfigDecodeResult::Malformed;
+    const bool gotA = sentA && a.receive(ackA, rA);
+    const bool gotB = sentB && b.receive(ackB, rB);
+
+    // The geometry the LATER write asks for, waited for by observation and
+    // never by elapsed time.
+    const int expectedInset = insetBefore + (secondValue - kBaselineThickness);
+    WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return clientInset(d, frame, client) == expectedInset;
+    }, 8000);
+
+    // ...and then settled and read AGAIN, because a poll that stopped at the
+    // first sighting would be satisfied by a transient. What is asserted below
+    // is the state the exchange came to REST in.
+    settleWm(d);
+    const int pairShapes    = drainShapeNotify(d, shapeEventBase);
+    const Rect frameAfter   = rectOf(d, frame);
+    const Rect clientAfter  = rectOf(d, client);
+    const int insetAfter    = clientAfter.x - frameAfter.x;
+
+    // The window manager's own answer, on a connection that had nothing to do
+    // with either write.
+    Conn observer(path);
+    const bool observerConnected = observer.connected();
+    std::string programC;
+    int protocolC = 0;
+    const bool observerShook = observerConnected && shakeHands(observer, programC, protocolC);
+
+    ConfigMessage valueReply;
+    std::string valueRaw;
+    const bool valueRead = observerShook &&
+                           requestGet(observer, "frame-thickness", valueReply, valueRaw);
+
+    // THE CALIBRATION, and the reason the re-frame count is not a magic number:
+    // one `set`, alone, from the observer connection, counted the same way. How
+    // many ShapeNotify events one re-layout produces is an internal detail
+    // (shapeParent() combines a bounding and a clipping region, today), so the
+    // claim asserted is the one that matters -- the pair did exactly TWICE the
+    // work of a single applied `set`, which is one re-frame each and neither
+    // message dropped nor applied twice.
+    drainShapeNotify(d, shapeEventBase);
+    const bool sentCalibration =
+        observerShook && sendSet(observer, "frame-thickness",
+                                 std::to_string(kCalibrationThickness));
+    ConfigMessage ackCalibration;
+    ConfigDecodeResult rCalibration = ConfigDecodeResult::Malformed;
+    const bool gotCalibration = sentCalibration &&
+                                observer.receive(ackCalibration, rCalibration);
+    const int calibrationInset = insetBefore + (kCalibrationThickness - kBaselineThickness);
+    WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return clientInset(d, frame, client) == calibrationInset;
+    }, 8000);
+    settleWm(d);
+    const int oneSetShapes = drainShapeNotify(d, shapeEventBase);
+    const int insetAfterCalibration = clientInset(d, frame, client);
+
+    // Still a window manager: alive, and still framing something new.
+    const bool alive   = fixture.wmAlive();
+    const bool framing = stillFraming(fixture, d, "after-overlapping-sets");
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO("value reply: " << valueRaw);
+    INFO("frame  before " << frameBefore.x << "," << frameBefore.y
+         << " " << frameBefore.w << "x" << frameBefore.h
+         << " after " << frameAfter.x << "," << frameAfter.y
+         << " " << frameAfter.w << "x" << frameAfter.h);
+    INFO("inset before " << insetBefore << " after " << insetAfter
+         << " expected " << expectedInset);
+    INFO("re-frames: pair " << pairShapes << ", single " << oneSetShapes);
+    INFO("X errors so far: " << g_xErrorCount);
+
+    // NEITHER MESSAGE WAS DROPPED: both were acknowledged, each on its own
+    // connection, and each acknowledgement names the key it answers.
+    CHECK(sentA);
+    CHECK(sentB);
+    CHECK(gotA);
+    CHECK(gotB);
+    CHECK(rA == ConfigDecodeResult::Ok);
+    CHECK(rB == ConfigDecodeResult::Ok);
+    CHECK(ackA.type == ConfigMessageType::Ack);
+    CHECK(ackB.type == ConfigMessageType::Ack);
+    CHECK(ackA.key == "frame-thickness");
+    CHECK(ackB.key == "frame-thickness");
+
+    // THE LATER WRITE WON, on the screen: the client's inset grew by exactly
+    // the change the second value asks for...
+    CHECK(insetAfter == expectedInset);
+    // ...and not by the change the FIRST value asks for, named explicitly so
+    // the loser is part of the assertion rather than merely absent from it.
+    CHECK(insetAfter != insetBefore + (firstValue - kBaselineThickness));
+
+    // The user's own window is where it was, at the size it was: a thickness
+    // change moves decoration, not content (09-04's central claim, re-checked
+    // here because two overlapping applications are the case most likely to
+    // leave a client displaced).
+    CHECK(clientAfter.x == clientBefore.x);
+    CHECK(clientAfter.y == clientBefore.y);
+    CHECK(clientAfter.w == clientBefore.w);
+    CHECK(clientAfter.h == clientBefore.h);
+
+    // ...and in the window manager's own words.
+    CHECK(observerConnected);
+    CHECK(observerShook);
+    CHECK(valueRead);
+    CHECK(valueReply.type == ConfigMessageType::Value);
+    CHECK(valueReply.key == "frame-thickness");
+    CHECK(valueReply.value == std::to_string(secondValue));
+
+    // ONE RE-FRAME PER APPLIED `set`, measured against a single `set` in the
+    // same run rather than against a constant.
+    CHECK(gotCalibration);
+    CHECK(ackCalibration.type == ConfigMessageType::Ack);
+    CHECK(insetAfterCalibration == calibrationInset);
+    CHECK(oneSetShapes > 0);
+    CHECK(pairShapes == 2 * oneSetShapes);
+
+    CHECK(alive);
+    CHECK(framing);
+}
+
+}  // namespace
+
+
+TEST_CASE("Two overlapping sets are applied in arrival order", "[wm_socket]")
+{
+    // Written 11 then 21: 21 wins.
+    runOverlappingSets(11, 21);
+
+    // THE MIRROR, written 21 then 11: 11 wins. A fresh window manager, so the
+    // second run starts from the same baseline as the first and neither value
+    // is already in force.
+    runOverlappingSets(21, 11);
 }
