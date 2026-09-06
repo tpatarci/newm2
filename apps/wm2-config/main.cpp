@@ -81,7 +81,7 @@ public:
 
     ~ConfigWindow()
     {
-        if (m_socketSource != 0) g_source_remove(m_socketSource);
+        detachSocketSource();
     }
 
     ConfigWindow(const ConfigWindow&) = delete;
@@ -228,7 +228,28 @@ private:
                                      ? ProtocolClient::resolveSocketPath()
                                      : m_socketOverride;
 
-        m_client.setStateHandler([this]() { render(); });
+        // THE SOURCE IS OWNED IN ONE PLACE, TIED TO THE DESCRIPTOR'S LIFE
+        // (WR-11). ProtocolClient::disconnect() close()s the descriptor, and
+        // it is reachable from request() when a send fails -- which runs from
+        // a GTK button or entry handler, not from the source callback. The
+        // source was cleared only inside onSocketReadable(), so after that
+        // path GLib went on polling a closed descriptor number, got POLLNVAL,
+        // and fired the callback repeatedly; and in the interval that number
+        // may have been reused by GDK, cairo or fontconfig, leaving the source
+        // watching an unrelated subsystem's descriptor.
+        //
+        // setState() runs on EVERY state transition, including the one
+        // disconnect() performs, so hanging the detach here covers every
+        // caller without any of them having to know GLib exists.
+        m_client.setStateHandler([this]() {
+            if (!m_client.connected()) {
+                detachSocketSource();
+                if (m_state == ConnectionState::Connected) {
+                    m_state = ConnectionState::FileOnlyNoSocket;
+                }
+            }
+            render();
+        });
         m_client.setNoticeHandler([this]() { onReloadNotice(); });
 
         if (!m_client.connect(path)) {
@@ -247,12 +268,25 @@ private:
         readMenuCategoriesFromWindowManager();
     }
 
-    void attachSocketSource()
+    // Remove the GLib source, whether we are inside its own callback or not.
+    // Inside it, g_source_remove() would destroy a source GLib is about to act
+    // on its return value for, so the id is simply forgotten and the callback's
+    // G_SOURCE_REMOVE does the removing.
+    void detachSocketSource()
     {
+        if (m_inSocketCallback) {
+            m_socketSource = 0;
+            return;
+        }
         if (m_socketSource != 0) {
             g_source_remove(m_socketSource);
             m_socketSource = 0;
         }
+    }
+
+    void attachSocketSource()
+    {
+        detachSocketSource();
         const int fd = m_client.fileDescriptor();
         if (fd < 0) return;
         // A SOCKET SOURCE, not a blocking read: the window keeps repainting
@@ -266,8 +300,12 @@ private:
     static gboolean onSocketReadable(gint, GIOCondition, gpointer userData)
     {
         ConfigWindow* self = static_cast<ConfigWindow*>(userData);
+        self->m_inSocketCallback = true;
         self->m_client.onReadable();
+        self->m_inSocketCallback = false;
         if (!self->m_client.connected()) {
+            // The state handler has already cleared m_socketSource and set the
+            // connection state; the return value is what removes the source.
             self->m_socketSource = 0;
             self->m_state = ConnectionState::FileOnlyNoSocket;
             self->render();
@@ -629,6 +667,9 @@ private:
     ProtocolClient   m_client;
     ConnectionState  m_state = ConnectionState::FileOnlyNoSocket;
     guint            m_socketSource = 0;
+    // True only while onSocketReadable() is running, so detachSocketSource()
+    // can tell "remove it now" from "let the callback's return value do it".
+    bool             m_inSocketCallback = false;
     bool             m_warnedKeyMismatch = false;
 
     GtkWidget* m_window = nullptr;

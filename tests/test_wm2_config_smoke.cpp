@@ -2967,3 +2967,49 @@ TEST_CASE("one readable notification does not license an unbounded read",
     CHECK(client.pumpUntil([&]() { return notices >= sent; }, 10000));
     CHECK(client.connected());
 }
+
+
+TEST_CASE("a disconnect from a request path still announces itself",
+          "[wm2_config_smoke][protocol][nonblocking]")
+{
+    // The hook WR-11's fix hangs off, proved where it can be proved without a
+    // toolkit. apps/wm2-config/main.cpp removes its GLib source from the state
+    // handler, because ProtocolClient::disconnect() close()s the descriptor
+    // and is reachable from request() -- a path that runs from a GTK button
+    // handler, not from the source callback. If the state handler did NOT fire
+    // on that path, the source would go on polling a closed descriptor number
+    // that GDK, cairo or fontconfig may since have reused.
+    ScriptedPeer peer(shortSocketPath("wr11state"));
+    REQUIRE(peer.listening());
+
+    ProtocolClient client;
+    REQUIRE(client.connect(peer.path()));
+
+    const int fd = peer.connection(5000);
+    REQUIRE(fd >= 0);
+
+    int transitions = 0;
+    bool sawDisconnected = false;
+    client.setStateHandler([&]() {
+        ++transitions;
+        if (!client.connected()) sawDisconnected = true;
+    });
+
+    // The window manager goes away. The next send from a handler fails, and
+    // request() disconnects.
+    ::shutdown(fd, SHUT_RDWR);
+    ::close(fd);
+
+    // The first send may still be swallowed by the socket buffer, so the loop
+    // is bounded rather than assuming which one fails.
+    for (int i = 0; i < 100 && client.connected(); ++i) {
+        client.sendSet("frame-thickness", "9", nullptr);
+    }
+
+    CHECK_FALSE(client.connected());
+    CHECK(sawDisconnected);
+    CHECK(transitions >= 1);
+    // And the descriptor really is gone, which is what makes leaving a source
+    // attached to its number dangerous.
+    CHECK(client.fileDescriptor() < 0);
+}
