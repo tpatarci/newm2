@@ -121,7 +121,7 @@ constexpr int kIdleWindowSeconds = 30;
 // from them:
 //
 //   date:   2026-08-29
-//   host:   tomislav-HP-Z440-Workstation, Ubuntu 22.04.5 LTS, Linux 6.8.0-124
+//   host:   <workstation>, Ubuntu 22.04.5 LTS, Linux 6.8.0-124
 //   server: Xvfb 1024x768x24, one WmFixture instance per measurement
 //   binary: build/{debug,asan}/wm2-born-again at commit 0e56fc8
 //
@@ -494,7 +494,7 @@ TEST_CASE("Resident memory with twenty clients mapped stays inside the fixed, "
     // The whole ladder is recorded, but only the twenty-client figure is judged
     // -- that is the working set the 512 MB constraint is stated against.
     std::printf("[wm2 resource]   FIXED budget  %ld kB  (tree=%s, calibrated 2026-08-29 "
-                "on tomislav-HP-Z440-Workstation)\n"
+                "on the calibration workstation)\n"
                 "[wm2 resource]   RESULT        %ld kB\n",
                 kRssBudgetKb, kBudgetTree, l.rss20);
     std::fflush(stdout);

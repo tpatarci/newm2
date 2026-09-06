@@ -6,7 +6,7 @@ wm2-born-again display capability capture
   label:        tightvnc
   display:      :93
   timestamp:    2026-08-30T08:39:07Z (UTC)
-  host:         tomislav-HP-Z440-Workstation
+  host:         <workstation>
   kernel:       Linux 6.8.0-124-generic
   distro:       Ubuntu 22.04.5 LTS
   commit:       9869aea04ceda96334f75fe3b0a92f4aa04d58eb

@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 12
+open_count: 11
 waived_count: 8
-fixed_count: 8
+fixed_count: 9
 total_count: 28
-last_updated: 2026-09-06T16:21:00.292Z
+last_updated: 2026-09-06T16:31:16.616Z
 ---
 
 # Broken Windows Ledger
@@ -42,7 +42,7 @@ last_updated: 2026-09-06T16:21:00.292Z
 | 25 | 09 | unmet-truth | src/Buttons.cpp |  | Task 1's runtime cases prove the Configure row is present/absent by ROW COUNT and by launch identity, not by reading the label off the screen: the menu paints text with Xft and the server keeps no strings. The label claim is carried by display-free [menupaint] cases over the shared RootMenuLayout instead. | open |  | 2026-09-06T16:20:59.745Z |  |
 | 26 | 09 | unmet-truth | scripts/gates/doc-keys.sh |  | Direction 2 of the doc-keys gate does not catch a bare unhyphenated word presented in plain backticks that is not an accepted key; in prose that form is indistinguishable from an ordinary word. Hyphenated inventions and 'word = value' config lines are caught. Stated in the script. | open |  | 2026-09-06T16:20:59.930Z |  |
 | 27 | 09 | unmet-truth | .planning/phases/09-config-gui-ipc/evidence/remote-desktop/README.md |  | The first wm2-config on a freshly started X server holds ~101 MB and every later one ~50 MB, reproducibly on Xvfb and TigerVNC. Two candidate causes ruled out (per-user fontconfig cache; being the first client). The cause was not determined. | open |  | 2026-09-06T16:21:00.108Z |  |
-| 28 | 09 | deviation | .planning/phases/08.5-v1.0-closeout/evidence/tightvnc/capabilities.txt |  | Pre-existing: capabilities.txt files committed under 08- and 08.5- evidence contain this machine's hostname from 'uname -n'. The public repo prohibits host identifiers. The capture script was fixed in 09-09; the already-committed captures were NOT rewritten (out of this plan's scope). | open |  | 2026-09-06T16:21:00.292Z |  |
+| 28 | 09 | deviation | .planning/phases/08.5-v1.0-closeout/evidence/tightvnc/capabilities.txt |  | Pre-existing: capabilities.txt files committed under 08- and 08.5- evidence contain this machine's hostname from 'uname -n'. The public repo prohibits host identifiers. The capture script was fixed in 09-09; the already-committed captures were NOT rewritten (out of this plan's scope). | fixed | Orchestrator scrub after wave 9: the hostname replaced by the placeholder <workstation> in all 16 tracked files (15 evidence files under phases 08 and 08.5, one comment and one diagnostic string in tests/test_wm_resource.cpp). The pushed history still carries the name; whether to rewrite it is the operator's decision. | 2026-09-06T16:21:00.292Z | 2026-09-06T16:31:16.616Z |
 
 ````json
 [
@@ -377,10 +377,10 @@ last_updated: 2026-09-06T16:21:00.292Z
     "file": ".planning/phases/08.5-v1.0-closeout/evidence/tightvnc/capabilities.txt",
     "line": null,
     "description": "Pre-existing: capabilities.txt files committed under 08- and 08.5- evidence contain this machine's hostname from 'uname -n'. The public repo prohibits host identifiers. The capture script was fixed in 09-09; the already-committed captures were NOT rewritten (out of this plan's scope).",
-    "status": "open",
-    "reason": "",
+    "status": "fixed",
+    "reason": "Orchestrator scrub after wave 9: the hostname replaced by the placeholder <workstation> in all 16 tracked files (15 evidence files under phases 08 and 08.5, one comment and one diagnostic string in tests/test_wm_resource.cpp). The pushed history still carries the name; whether to rewrite it is the operator's decision.",
     "recorded_at": "2026-09-06T16:21:00.292Z",
-    "resolved_at": null
+    "resolved_at": "2026-09-06T16:31:16.616Z"
   }
 ]
 ````

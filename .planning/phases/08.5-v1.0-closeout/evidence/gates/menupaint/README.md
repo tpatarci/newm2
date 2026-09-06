@@ -7,7 +7,7 @@ in this directory; nothing is restated from memory.
 |---|---|
 | round base | `e835737b2251ec2d7c145d74a153b5181da5f144` (`ROUND-BASE.txt`) |
 | Task 1 tip | `99f6f72b1cdd0d788a4b263efe3fa5ed0bbc6bca` (`PLAN-13-T1-TIP.txt`) |
-| host | `Linux 6.8.0-124-generic x86_64` / `tomislav-HP-Z440-Workstation` |
+| host | `Linux 6.8.0-124-generic x86_64` / `<workstation>` |
 | debug suite at the round base | 320 tests |
 | debug suite after the round | 325 tests |
 

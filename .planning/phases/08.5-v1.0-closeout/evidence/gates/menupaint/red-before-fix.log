@@ -1,7 +1,7 @@
 RED before the fix -- 08.5-13 Task 2
 round base : e835737b2251ec2d7c145d74a153b5181da5f144
 task 1 tip : 99f6f72b1cdd0d788a4b263efe3fa5ed0bbc6bca
-host       : Linux 6.8.0-124-generic x86_64 / tomislav-HP-Z440-Workstation
+host       : Linux 6.8.0-124-generic x86_64 / <workstation>
 captured   : 2026-09-01T07:03:29Z
 command    : ctest --test-dir build/debug -L '^menupaint$' --output-on-failure --no-tests=error --timeout 60
 ----------------------------------------------------------------------

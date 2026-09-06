@@ -6,7 +6,7 @@ wm2-born-again display capability capture
   label:        xrdp
   display:      :10
   timestamp:    2026-08-29T15:50:20Z (UTC)
-  host:         tomislav-HP-Z440-Workstation
+  host:         <workstation>
   kernel:       Linux 6.8.0-124-generic
   distro:       Ubuntu 22.04.5 LTS
   commit:       26344b4c2634c351c3856d63a8c663e27550c792

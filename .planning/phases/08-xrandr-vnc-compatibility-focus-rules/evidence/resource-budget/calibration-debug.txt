@@ -1,6 +1,6 @@
 # Stage-1 calibration transcript -- DEBUG tree
 # commit 0e56fc8  branch main
-# host tomislav-HP-Z440-Workstation  Ubuntu 22.04.5 LTS  Linux 6.8.0-124-generic
+# host <workstation>  Ubuntu 22.04.5 LTS  Linux 6.8.0-124-generic
 # date 2026-08-29T14:07:58Z
 # command: ./build/debug/test_wm_resource '[wm_resource_calibration]' -s
 

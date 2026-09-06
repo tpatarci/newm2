@@ -10,7 +10,7 @@ rather than a matter of discipline.
 | | |
 |---|---|
 | Date | 2026-08-29 |
-| Host | `tomislav-HP-Z440-Workstation` |
+| Host | `<workstation>` |
 | Distro | Ubuntu 22.04.5 LTS, Linux 6.8.0-124-generic |
 | Server | Xvfb 1024x768x24, one `WmFixture` instance per measurement |
 | Commit | `0e56fc8` (branch `main`) |
