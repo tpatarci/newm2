@@ -1400,17 +1400,37 @@ so two decoders (or a decoder and a future reimplementation) cannot disagree
 about which value a duplicated member carries.
 
 
-**Disposition:** DECLINED.
+**Disposition:** DECLINED in the first fix pass; **FIXED** in `03d85f5`
+(the Codex PR review pass, 2026-09-06).
 
-The decoder is the frozen half of the version-1 wire contract (D-8.5-01), and
-rejecting a repetition the current decoder accepts is a behaviour change to
-it: a client that today gets `key == "b"` from
-`{"type":"set","key":"a","key":"b"}` would begin getting `Malformed`. That is
-the right long-term answer and the wrong thing to do inside a review-fix
-pass, where nothing may change what the codec accepts. No encoder this
-project ships can emit a repeated member, so the ambiguity is reachable only
-by a hand-written client. Left for a protocol version 2, where the change can
-be made with a version bump behind it.
+The original decline read D-8.5-01 as protecting the decoder's LENIENCY. It
+does not. D-8.5-01 freezes the SPELLINGS -- the eleven type names and the
+seven member names -- and it freezes them *from v1.0*, which has not
+shipped: no user's shell script, monitoring job or third-party client
+depends on this decoder yet, because there has never been a release
+containing it. Tightening what the codec accepts before the first release is
+exactly the window D-8.5-01 describes, and the same reasoning was accepted
+for the frame-thickness key renames in 08.5. Waiting for a version 2 would
+have meant shipping the ambiguity into the release that defines the
+contract, and then needing a version bump to remove it.
+
+Codex raised the same defect independently in its PR review, enlarged: a
+repeated member is one of two ways the decoder accepted a message it had not
+understood, the other being a member the decoded TYPE does not carry
+(`{"type":"reload","protocol":2}` runs a reload and silently drops a
+qualifier a v2 peer meant something by). Both are now Malformed, and the
+allowed member set per type is derived from `configProtocolEncode()` rather
+than written out a second time, so the decoder cannot drift from the
+encoder. The type is still resolved BEFORE its members are judged, so an
+unknown type is still `UnknownType` and a later version can still add a
+message additively.
+
+RED recorded first: eleven failing assertions across two new
+`[config_protocol]` cases, plus a round-trip case over all eleven types that
+passed before and after -- the guard proving the tightened rule does not
+refuse the window manager's own traffic. `test_config_protocol` 325
+assertions in 29 cases; `test_config_socket`, `test_wm_socket` and
+`test_wm_config_live` all green.
 
 ### IN-03: `adoptEffective` can leave a field dirty with `current == effective`
 

@@ -1089,6 +1089,62 @@ rather than in a commit of its own.
 
 ---
 
+## Pass 3 addendum — the Codex PR review, 2026-09-06
+
+Four findings from Codex's review of the phase branch, fixed one commit
+each, each with a RED recorded before the fix. Two of them land on
+dispositions this document already carries, and both dispositions are
+superseded rather than merely supplemented.
+
+| ID | Fix | RED evidence |
+|---|---|---|
+| P1 palette-before-font | `737c426` | a reload changing `tab-background` and `tab-font` with the forced font failure left a window mapped afterwards wearing `0xff0000` while `get tab-background` said `#c8cacc` (XGetImage on the new frame's tab band) |
+| P1 wm2-ctl blocking socket | `3ef61cc` | `wm2-ctl status` against a saturated accept queue had to be killed by the harness watchdog -- exit -1 after 20026 ms, empty stderr |
+| P2 per-frame read bound | `1fe12d4` | a 2924-byte legal frame split across two writes, with a 1224-byte legal frame on the second, answered `{"type":"error","key":"","reason":"message too long"}` and `clientCount()` fell to 0 |
+| P2 type-specific member validation | `03d85f5` | eleven assertions failing across two `[config_protocol]` cases |
+
+**I-02 is superseded.** This document recorded I-02 as a correction to
+CR-04's *reasoning* -- the nine-colour pre-flight is not the allocation the
+two reloads perform, so the invariant was held by the TrueColor visual class
+rather than by the loop -- and fixed it as a comment. Codex found the live
+defect the caveat was standing next to: `applyConfig()` allocated AND SWAPPED
+both palettes before it opened either font face, so a reload carrying a colour
+and an unopenable font returned false with the palettes already committed.
+Every frame built afterwards wore colours `get` denied, and no `set` could
+repair it (setting the old colour back computes `coloursChanged == false`).
+CR-04's "declined colour half" is therefore no longer declined: both palettes
+are now split into an open and an install exactly as the two faces were, the
+pre-flight loop is gone, and the caveat is gone with it -- staging through the
+very allocations that get installed proves the property exactly rather than by
+analogy, on any visual class.
+
+**IN-02 is superseded.** Pass 1 declined it as a change to the frozen wire
+contract. D-8.5-01 freezes the SPELLINGS from v1.0, and v1.0 has not shipped:
+nothing depends on this decoder, so tightening it now is the window that rule
+describes rather than a breach of it. Its disposition in `09-REVIEW.md` is
+updated in place with the fuller finding Codex raised -- a repeated member and
+a member the decoded type does not carry are both Malformed now, with the
+allowed set per type derived from the encoder.
+
+Gates after the four fixes, run one tree at a time:
+
+| Gate | Result |
+|---|---|
+| `build-all.sh debug` | 100% passed, 0 failed out of 580; 1 skipped (the root-owned-directory case), 0 compiler warnings |
+| `build-all.sh asan` | 100% passed, 0 failed out of 580; no sanitizer findings, 0 compiler warnings |
+| `build-all.sh nogtk` | 580 registered, 580 attempted, 574 passed, 6 skipped, every skip re-run verbosely and stating a reason |
+| `build-all.sh release` | 100% passed, 0 failed out of 580; 1 skipped, 0 compiler warnings |
+| `scripts/gates/doc-keys.sh` | 36 accepted keys, every one documented, both directions clean |
+
+580 rather than the 574 the pass-2 baseline records: six new cases, five of
+them REDs recorded before their fix (the palette one, the wm2-ctl connect
+one, the split-frame one, and the two member-rule ones) and one a guard --
+the round trip over all eleven types, which passed before and after and is
+what proves the encoder-derived member set did not tighten the window
+manager's own traffic.
+
+---
+
 _Reviewed: 2026-09-06T18:41:01Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard, pass 2_
@@ -1096,3 +1152,6 @@ _Depth: standard, pass 2_
 _Fix pass: 2026-09-06_
 _Fixer: Claude (gsd-code-fixer)_
 _All six Warnings and eight of nine Info findings fixed; I-05 declined._
+
+_Pass 3 addendum: 2026-09-06 -- four Codex PR-review findings fixed; I-02 and_
+_IN-02 superseded._
