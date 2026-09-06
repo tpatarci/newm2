@@ -2900,3 +2900,139 @@ TEST_CASE("setting the same menu-entries value twice changes nothing the second 
     CHECK(afterFirst == value);
     CHECK(afterSecond == afterFirst);
 }
+
+
+// ---------------------------------------------------------------------------
+// The two font swaps commit together or not at all (CR-04)
+// ---------------------------------------------------------------------------
+//
+// applyConfig()'s own comment argued the two-stage swap was safe because "a
+// `set` names ONE key, so at most one of these two branches ever runs". A
+// RELOAD applies a whole Config from disk, and a file that changes both fonts
+// runs both -- so a tab face that opened followed by a menu face that did not
+// left the shared tab face and the tab geometry constant swapped while
+// m_config was never updated. `get tab-font` then reported a pattern nothing on
+// screen was drawn with, and no `set` could repair it: setting the old value
+// back computes tabFontChanged == false and never relayouts.
+//
+// WM2_FORCE_MENU_FONT_RELOAD_FAILURE is the sibling of the tab lever above and
+// exists for the same reason: fontconfig substitutes for a family it does not
+// have rather than failing, so no string a user can type reaches the bottom of
+// either ladder.
+
+TEST_CASE("a reload whose menu-font has no usable face changes neither font",
+          "[wm_config_live]")
+{
+    const std::string home = makeConfigHome(
+        "tab-font=Sans:bold:size=12\n"
+        "menu-font=Sans:size=10\n");
+    WmFixtureOptions options = fixtureWithConfigHome(home);
+    options.childEnv["WM2_FORCE_MENU_FONT_RELOAD_FAILURE"] = "1";
+    WmFixture fixture(options);
+
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d, 200, 150, 300, 220, client, "both-fonts");
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    const int widthBefore = decorationWidth(d, frame, client);
+    const std::string tabBefore = ctlGet(fixture, "tab-font");
+    const std::string menuBefore = ctlGet(fixture, "menu-font");
+    REQUIRE(tabBefore == "Sans:bold:size=12");
+
+    // BOTH fonts in one edit, which is the whole scenario: a size the tab
+    // ladder will happily open, and a menu pattern that will not.
+    writeConfigFile(home,
+                    "tab-font=Sans:bold:size=28\n"
+                    "menu-font=Sans:size=22\n");
+    CtlResult r = ctl(fixture, {"reload"});
+    settleWm(d);
+
+    const int widthAfter = decorationWidth(d, frame, client);
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO(r.describe());
+    INFO("decoration " << widthBefore << " -> " << widthAfter);
+
+    // The reload is refused whole.
+    CHECK(r.exitCode == 1);
+    CHECK(r.err.find("menu-font") != std::string::npos);
+
+    // And "refused whole" is asserted on the STATE, not on the exit code.
+    CHECK(ctlGet(fixture, "tab-font") == tabBefore);
+    CHECK(ctlGet(fixture, "menu-font") == menuBefore);
+
+    // The frames already open keep their width either way -- the early return
+    // is upstream of the relayout, so an existing frame is not where the
+    // half-applied state shows. WHERE IT SHOWS is m_tabWidth: it is the shared
+    // constant every NEW frame is built from, and Border::reloadTabFont()
+    // recomputes it as part of the swap. So the question that catches CR-04 is
+    // "does a window mapped after the refusal wear the same tab as one mapped
+    // before it?" -- which is also the question a user asks when half their
+    // windows have thick tabs and `get tab-font` insists nothing changed.
+    Window late = None;
+    Window lateFrame = mapClientAndAwaitFrame(d, 560, 400, 200, 160, late, "after-refusal");
+    REQUIRE(lateFrame != None);
+    settleWm(d);
+    const int lateWidth = decorationWidth(d, lateFrame, late);
+
+    INFO("existing decoration " << widthAfter << ", new decoration " << lateWidth);
+    CHECK(widthAfter == widthBefore);
+    CHECK(lateWidth == widthBefore);
+
+    // Not merely unchanged but still WORKING: a swap that closed the old face
+    // before the refusal would leave the next frame with none.
+    CHECK(fixture.wmAlive());
+}
+
+TEST_CASE("the same reload with a usable menu-font changes both fonts",
+          "[wm_config_live]")
+{
+    // The other side of the refusal above, and the reason it is a separate
+    // case: a guard that refused every two-font reload would satisfy the
+    // assertions there and break the feature.
+    const std::string home = makeConfigHome(
+        "tab-font=Sans:bold:size=12\n"
+        "menu-font=Sans:size=10\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d, 200, 150, 300, 220, client, "both-fonts-ok");
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    const int widthBefore = decorationWidth(d, frame, client);
+
+    writeConfigFile(home,
+                    "tab-font=Sans:bold:size=28\n"
+                    "menu-font=Sans:size=22\n");
+    CtlResult r = ctl(fixture, {"reload"});
+
+    int widthAfter = widthBefore;
+    WmFixture::pollUntil([&] {
+        pumpWm(d);
+        widthAfter = decorationWidth(d, frame, client);
+        return widthAfter != widthBefore;
+    }, 8000);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO(r.describe());
+    INFO("decoration " << widthBefore << " -> " << widthAfter);
+
+    CHECK(r.exitCode == 0);
+    CHECK(ctlGet(fixture, "tab-font") == "Sans:bold:size=28");
+    CHECK(ctlGet(fixture, "menu-font") == "Sans:size=22");
+    CHECK(widthAfter > widthBefore);
+    CHECK(fixture.wmAlive());
+}

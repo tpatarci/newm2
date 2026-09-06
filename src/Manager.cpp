@@ -1961,7 +1961,7 @@ bool WindowManager::reloadMenuColours(const Config &next, std::string &keyOut)
 }
 
 
-bool WindowManager::reloadMenuFont(const std::string &pattern)
+bool WindowManager::openMenuFace(const std::string &pattern, x11::XftFontPtr &out)
 {
     // LOAD BEFORE CLOSE, exactly as Border::reloadTabFont() does it. The
     // difference between the two is only in the ladder: the menu has one rung
@@ -1969,15 +1969,39 @@ bool WindowManager::reloadMenuFont(const std::string &pattern)
     // MEASURED against this face and there is no "carry on without it". At
     // reload time there is no fatal to reach -- a pattern that will not open
     // leaves the previous face in place and the reload is refused.
-    x11::XftFontPtr font = x11::make_xft_font_name(display(), pattern.c_str());
+    //
+    // WM2_FORCE_MENU_FONT_RELOAD_FAILURE is the sibling of
+    // WM2_FORCE_TAB_FONT_RELOAD_FAILURE (src/Border.cpp), read here and
+    // nowhere else, with no config key, no command-line flag and no mention in
+    // user documentation. It exists for the same reason: fontconfig
+    // SUBSTITUTES for a family it does not have rather than failing, so no
+    // string a user can type reaches the bottom of this ladder -- which is
+    // what makes the refusal path, and CR-04's whole-or-nothing font
+    // application, unreachable and therefore untestable without it.
+    const char *forceFailure = std::getenv("WM2_FORCE_MENU_FONT_RELOAD_FAILURE");
+    const bool forced =
+        (forceFailure != nullptr && std::strcmp(forceFailure, "1") == 0);
+
+    x11::XftFontPtr font =
+        forced ? x11::XftFontPtr()
+               : x11::make_xft_font_name(display(), pattern.c_str());
     if (!font) {
         std::fprintf(stderr, "wm2: warning: no usable menu font for that "
                              "pattern, keeping the previous one\n");
         return false;
     }
 
+    out = std::move(font);
+    return true;
+}
+
+
+void WindowManager::installMenuFace(x11::XftFontPtr face)
+{
+    if (!face) return;
+
     if (m_menuFont) XftFontClose(display(), m_menuFont);
-    m_menuFont = font.release();
+    m_menuFont = face.release();
 
     // NOTHING IS RE-LAID-OUT HERE, and that is correct rather than an
     // omission. WindowManager::menu() measures every row, computes the entry
@@ -1986,7 +2010,6 @@ bool WindowManager::reloadMenuFont(const std::string &pattern)
     // construction. Do not add a re-layout of an open menu: the popups are
     // unmapped between uses, and a menu that IS open is being iterated by a
     // modal loop holding pointers into state this function must not disturb.
-    return true;
 }
 
 
@@ -2064,22 +2087,37 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
     const bool tabFontChanged  = next.tabFont  != previous.tabFont;
     const bool menuFontChanged = next.menuFont != previous.menuFont;
 
-    if (tabFontChanged && !Border::reloadTabFont(this, next.tabFont)) {
+    // BOTH FACES ARE OPENED BEFORE EITHER IS INSTALLED (CR-04).
+    //
+    // An earlier form called two functions that each opened AND committed, and
+    // argued the ordering was safe because "a `set` names ONE key, so at most
+    // one of these two branches ever runs". The second half of that argument
+    // was false: a RELOAD applies a whole Config from disk, and a file that
+    // changes tab-font and menu-font in the same edit runs both branches. A
+    // tab face that installed followed by a menu face that would not open left
+    // the shared face AND m_tabWidth moved while m_config was never updated --
+    // so `get tab-font` named the old pattern, every frame already open kept
+    // the old width, and every frame opened afterwards got the new one. The
+    // state was sticky, too: setting the old value back computes
+    // tabFontChanged == false and never relayouts, so nothing a client could
+    // send would repair it.
+    //
+    // Opening changes nothing; installing cannot fail. So a refusal below
+    // leaves the window manager exactly on the configuration it already had.
+    Border::TabFace  newTabFace;
+    x11::XftFontPtr  newMenuFace;
+
+    if (tabFontChanged && !Border::openTabFace(this, next.tabFont, newTabFace)) {
         reasonOut = "no usable face for that tab-font pattern";
         return false;
     }
-    if (menuFontChanged && !reloadMenuFont(next.menuFont)) {
-        // The tab face may already have been swapped above. That is not a
-        // half-applied state a caller can observe as inconsistent: a `set`
-        // names ONE key, so at most one of these two branches ever runs for a
-        // set, and a `reload` that fails here refuses whole and leaves the
-        // window manager on the configuration it already had -- with a tab
-        // face from a file it has decided not to adopt. Named here rather than
-        // left to be discovered, because it is the one place in this function
-        // where the two-stage swap is not literally atomic.
+    if (menuFontChanged && !openMenuFace(next.menuFont, newMenuFace)) {
         reasonOut = "no usable face for that menu-font pattern";
         return false;
     }
+
+    if (tabFontChanged)  Border::installTabFace(this, newTabFace);
+    if (menuFontChanged) installMenuFace(std::move(newMenuFace));
 
     // --- Stored WHOLE, now that nothing left can fail -----------------------
     //

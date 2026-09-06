@@ -66,11 +66,63 @@ public:
     // one repainted after an Expose.
     void repaintForColourChange();
 
-    // Load `pattern` as the shared tab face and re-measure the tab width.
-    // Walks the same ladder loadTabFont() walks, and LOADS BEFORE IT CLOSES:
-    // a pattern with no usable face at any rung leaves the previous face
-    // loaded and the previous tab width in force, and returns false. Static
-    // for the same reason as reloadColours().
+    // XDIS-04: which rung of the tab-font degradation ladder this process
+    // landed on. Established once, at the first Border construction, and never
+    // revisited -- font availability is fixed for the lifetime of the X
+    // connection, exactly like the extension sentinels in include/Manager.h.
+    //
+    // Rung 1 is the normal path and the only one that prints nothing; every
+    // other rung announces itself on stderr so a release-evidence transcript
+    // records the degradation instead of leaving it to be inferred from a
+    // screenshot.
+    //
+    // PUBLIC because TabFace below carries one, and TabFace is what lets a
+    // caller hold an opened-but-not-installed face across another open (CR-04).
+    enum class TabFontRung {
+        RotatedPreferred,   // 1 -- sideways labels from the preferred chain
+        RotatedGeneric,     // 2 -- sideways labels from the generic sans chain
+        Unrotated,          // 3 -- horizontal labels, truncated to the tab width
+        NoFont              // 4 -- no label at all; frames are still drawn (None is an Xlib macro)
+    };
+
+    // A tab face that has been OPENED and not yet INSTALLED.
+    //
+    // The reason this type exists is CR-04: applyConfig() applies a whole
+    // Config on a reload, so a file that changes tab-font AND menu-font runs
+    // both swaps -- and a tab face that installed followed by a menu face that
+    // would not open left the shared face and the shared tab width moved while
+    // m_config was never updated. `get tab-font` then named a pattern nothing
+    // on screen was drawn with, and no `set` could repair it. Splitting the
+    // open from the install lets the caller prove BOTH faces open before it
+    // swaps EITHER.
+    struct TabFace {
+        x11::XftFontPtr font;
+        TabFontRung     rung = TabFontRung::NoFont;
+        // True when there is nothing to install: no frame has been built yet,
+        // so no face has been loaded and the first Border will read the new
+        // value for itself.
+        bool            nothingToInstall = false;
+    };
+
+    // Open `pattern` as a tab face WITHOUT installing it. Walks the same ladder
+    // loadTabFont() walks, stopping at rungs 1 to 3; rung 4 ("no face at all")
+    // is a legitimate degradation at startup and a downgrade at reload time, so
+    // it is reported as false here and the previous face stays in force.
+    // Changes nothing at all, whichever way it answers.
+    static bool openTabFace(WindowManager *wm, const std::string &pattern,
+                            TabFace &out);
+
+    // Install a face openTabFace() produced and re-measure the tab width.
+    // Cannot fail: everything that can is upstream, in the open. Exactly one
+    // face is closed and exactly one installed, so a repeated reload cannot
+    // accumulate faces (T-9-27).
+    static void installTabFace(WindowManager *wm, TabFace &face);
+
+    // Load `pattern` as the shared tab face and re-measure the tab width: the
+    // open and the install in one call, for a caller with only one face to
+    // change. LOADS BEFORE IT CLOSES -- a pattern with no usable face at any
+    // rung leaves the previous face loaded and the previous tab width in
+    // force, and returns false. Static for the same reason as reloadColours().
     static bool reloadTabFont(WindowManager *wm, const std::string &pattern);
 
     // Re-lay this frame out after the shared tab font changed. The tab's
@@ -123,22 +175,6 @@ public:
 
 private:
     void fatal(const char *m);
-
-    // XDIS-04: which rung of the tab-font degradation ladder this process
-    // landed on. Established once, at the first Border construction, and never
-    // revisited -- font availability is fixed for the lifetime of the X
-    // connection, exactly like the extension sentinels in include/Manager.h.
-    //
-    // Rung 1 is the normal path and the only one that prints nothing; every
-    // other rung announces itself on stderr so a release-evidence transcript
-    // records the degradation instead of leaving it to be inferred from a
-    // screenshot.
-    enum class TabFontRung {
-        RotatedPreferred,   // 1 -- sideways labels from the preferred chain
-        RotatedGeneric,     // 2 -- sideways labels from the generic sans chain
-        Unrotated,          // 3 -- horizontal labels, truncated to the tab width
-        NoFont              // 4 -- no label at all; frames are still drawn (None is an Xlib macro)
-    };
 
     std::string m_label;
 

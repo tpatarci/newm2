@@ -597,11 +597,17 @@ void Border::repaintForColourChange()
 // nothing.
 // ---------------------------------------------------------------------------
 
-bool Border::reloadTabFont(WindowManager *wm, const std::string &pattern)
+bool Border::openTabFace(WindowManager *wm, const std::string &pattern,
+                         TabFace &out)
 {
+    out = TabFace();
+
     // No frame exists yet, so no face has been loaded and the first Border
-    // will read the new value itself.
-    if (!m_staticsInitialised) return true;
+    // will read the new value itself. Succeeds with nothing staged.
+    if (!m_staticsInitialised) {
+        out.nothingToInstall = true;
+        return true;
+    }
 
     Display *d = wm->display();
 
@@ -634,11 +640,23 @@ bool Border::reloadTabFont(WindowManager *wm, const std::string &pattern)
         return false;
     }
 
+    out.font = std::move(font);
+    out.rung = rung;
+    return true;
+}
+
+
+void Border::installTabFace(WindowManager *wm, TabFace &face)
+{
+    if (face.nothingToInstall || !face.font) return;
+
+    Display *d = wm->display();
+
     // The swap. Exactly one face is closed and exactly one opened, so a
     // repeated reload cannot accumulate faces (T-9-27).
     if (m_tabFont) XftFontClose(d, m_tabFont);
-    m_tabFont     = font.release();
-    m_tabFontRung = rung;
+    m_tabFont     = face.font.release();
+    m_tabFontRung = face.rung;
 
     // Re-measure with the SAME arithmetic loadTabFont() uses. The two axis
     // reads below are the ones deferred item 11 corrected in plan 08-14, and
@@ -661,6 +679,14 @@ bool Border::reloadTabFont(WindowManager *wm, const std::string &pattern)
     if (m_tabWidth < TAB_TOP_HEIGHT * 2 + 8) {
         m_tabWidth = TAB_TOP_HEIGHT * 2 + 8;
     }
+}
+
+
+bool Border::reloadTabFont(WindowManager *wm, const std::string &pattern)
+{
+    TabFace face;
+    if (!openTabFace(wm, pattern, face)) return false;
+    installTabFace(wm, face);
     return true;
 }
 

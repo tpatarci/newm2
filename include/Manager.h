@@ -415,11 +415,18 @@ private:
     // with the offending key in `keyOut`, having changed nothing.
     bool reloadMenuColours(const Config& next, std::string& keyOut);
 
-    // The menu's half of the font reload. Load-then-close, like
-    // Border::reloadTabFont(); false leaves the previous face in place. There
-    // is deliberately no re-layout counterpart: menu() rebuilds and re-measures
-    // the whole popup on every opening.
-    bool reloadMenuFont(const std::string& pattern);
+    // The menu's half of the font reload, split into an OPEN and an INSTALL for
+    // the same reason Border's is (CR-04): a reload applies a whole Config, so
+    // a file that changes both fonts runs both swaps, and either one committing
+    // while the other is refused leaves a half-applied state `get` denies.
+    //
+    // openMenuFace() changes nothing whichever way it answers; installMenuFace()
+    // cannot fail. There is deliberately no re-layout counterpart to the
+    // install: menu() rebuilds and re-measures the whole popup on every
+    // opening, and a menu that IS open is being iterated by a modal loop
+    // holding pointers into state neither of these may disturb.
+    bool openMenuFace(const std::string& pattern, x11::XftFontPtr& out);
+    void installMenuFace(x11::XftFontPtr face);
 
     // Serve one `set`. Validates key and value BEFORE the parser sees them --
     // see include/Config.h for why -- then applies through the very same
