@@ -2205,22 +2205,13 @@ TEST_CASE("An unrecognised flag exits non-zero and its advice names a flag that 
 
 namespace {
 
-// Resident set size in kilobytes, from /proc/<pid>/statm field 2 (resident
-// pages). Chosen over VmSize because virtual size says nothing about what is
-// actually held -- ASan alone reserves an enormous virtual mapping.
-bool residentKb(pid_t pid, long& out)
-{
-    if (pid <= 0) return false;
-    const std::string path = "/proc/" + std::to_string(pid) + "/statm";
-    FILE* f = std::fopen(path.c_str(), "rb");
-    if (!f) return false;
-    long total = 0, resident = 0;
-    const int n = std::fscanf(f, "%ld %ld", &total, &resident);
-    std::fclose(f);
-    if (n != 2) return false;
-    out = resident * (::sysconf(_SC_PAGESIZE) / 1024);
-    return true;
-}
+// The resident-set reader moved to tests/support/WmFixture.h in plan 09-09,
+// which is also where test_wm_resource.cpp's copy went. This file had the THIRD
+// copy; leaving it here made every call ambiguous the moment the shared one
+// arrived, because `using namespace wm2test` at the top of this file puts both
+// in scope. Three readers of one /proc field, in one suite, measuring one
+// 512 MB budget, was never right -- and it is what the plan that added the
+// settings window's own budget case set out to avoid.
 
 // Zombie children of `parent`. The WM double-forks so its grandchildren are
 // orphaned to init and can never be zombies; what this counts is the
