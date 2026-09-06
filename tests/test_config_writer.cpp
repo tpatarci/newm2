@@ -907,3 +907,48 @@ TEST_CASE("A rule-* key touches no managed field", "[config_writer]") {
     REQUIRE(snapshot(after) == was);
     REQUIRE(after.rules.size() == 1u);  // it did reach the rules, just not a setting
 }
+
+
+// ---------------------------------------------------------------------------
+// A target that could not be READ is never treated as a target that is ABSENT
+// (WR-01)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("a target whose existence cannot be determined is a read failure",
+          "[config_writer][refusal]") {
+    TempDir dir;
+
+    // std::filesystem::exists() returns FALSE and sets its error_code on
+    // ELOOP, ENAMETOOLONG, EACCES on a path component and EIO. Reading that
+    // false as "there is no file here" starts from an empty line vector, emits
+    // only the edits, and renames over whatever was really there -- silent
+    // data loss, which is the one thing the surgical writer exists to prevent.
+    //
+    // ENAMETOOLONG is the deterministic way to reach it from a test: the
+    // directory is perfectly good, so nothing upstream refuses first, and the
+    // error is in the existence check itself.
+    const std::string tooLong = dir.file(std::string(300, 'x'));
+
+    std::string error;
+    const ConfigWriteResult r = save(tooLong, {set("frame-thickness", "9")}, error);
+
+    INFO("result " << static_cast<int>(r) << ", error '" << error << "'");
+    CHECK(r == ConfigWriteResult::ReadFailed);
+    CHECK(error.find("could not read") != std::string::npos);
+
+    // And nothing was created on the way to the refusal.
+    CHECK(dir.entries().empty());
+}
+
+TEST_CASE("an absent target is still an empty starting point, not a failure",
+          "[config_writer][refusal]") {
+    // The other side of the check above: "could not tell" must become a
+    // refusal without "there is genuinely no file" becoming one too.
+    TempDir dir;
+    const std::string path = dir.file("config");
+
+    std::string error;
+    CHECK(save(path, {set("frame-thickness", "9")}, error) == ConfigWriteResult::Ok);
+    CHECK(error.empty());
+    CHECK(readFile(path).find("frame-thickness = 9") != std::string::npos);
+}

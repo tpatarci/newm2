@@ -196,8 +196,20 @@ bool readLines(const std::string& path, std::vector<std::string>& lines,
     lines.clear();
     endedWithNewline = true;
 
+    // "COULD NOT TELL" IS NOT "IS NOT THERE" (WR-01). exists() returns false
+    // AND sets its error_code on ELOOP, ENAMETOOLONG, EACCES on a path
+    // component and EIO. Reading that false as an absent file starts the save
+    // from an empty line vector, emits only the edits, and renames over
+    // whatever was really at the path -- silent data loss, which is the one
+    // thing this writer exists to prevent. The is_open() branch below already
+    // gets this right; the existence check has to agree with it.
     std::error_code ec;
     exists = std::filesystem::exists(path, ec);
+    if (ec) {
+        errno = ec.value();
+        exists = false;
+        return false;          // ReadFailed -- "could not read X", never "X is absent"
+    }
     if (!exists) return true;
 
     std::ifstream in(path, std::ios::binary);
