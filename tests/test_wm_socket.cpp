@@ -51,6 +51,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <thread>
 #include <string>
@@ -1177,4 +1178,375 @@ TEST_CASE("A socket left by a crashed predecessor is reclaimed", "[wm_socket]")
     int protocol = 0;
     CHECK(shakeHands(c, program, protocol));
     CHECK(program == "wm2-born-again");
+}
+
+
+// -----------------------------------------------------------------------------
+// What the socket may say, and to whom (D-14, T-9-13, CGUI-02 concurrency)
+// -----------------------------------------------------------------------------
+
+namespace {
+
+// WM_CHANGE_STATE(IconicState) -- the ICCCM route into Client::hide(), sent to
+// the ROOT with SubstructureRedirect|SubstructureNotify, which is the route
+// WindowManager::eventClient() is written against.
+void requestIconify(Display* d, Window win)
+{
+    XClientMessageEvent ev{};
+    ev.type = ClientMessage;
+    ev.window = win;
+    ev.message_type = XInternAtom(d, "WM_CHANGE_STATE", False);
+    ev.format = 32;
+    ev.data.l[0] = IconicState;
+
+    XSendEvent(d, DefaultRootWindow(d), False,
+               SubstructureNotifyMask | SubstructureRedirectMask,
+               reinterpret_cast<XEvent*>(&ev));
+    XSync(d, False);
+}
+
+bool icccmState(Display* d, Window w, long& out)
+{
+    static Atom prop = None;
+    if (prop == None) prop = XInternAtom(d, "WM_STATE", False);
+
+    Atom actualType = None;
+    int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0;
+    unsigned char* raw = nullptr;
+    if (XGetWindowProperty(d, w, prop, 0, 2, False, AnyPropertyType,
+                           &actualType, &actualFormat, &nItems, &bytesAfter,
+                           &raw) != Success) {
+        return false;
+    }
+    bool ok = false;
+    if (raw && nItems >= 1 && actualFormat == 32) {
+        out = reinterpret_cast<long*>(raw)[0];
+        ok = true;
+    }
+    if (raw) XFree(raw);
+    return ok;
+}
+
+void setClassHint(Display* d, Window win, const char* instance, const char* cls)
+{
+    XClassHint hint;
+    hint.res_name  = const_cast<char*>(instance);
+    hint.res_class = const_cast<char*>(cls);
+    XSetClassHint(d, win, &hint);
+    XSync(d, False);
+}
+
+std::string readWholeFile(const std::string& path)
+{
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return std::string();
+    std::string out;
+    char buf[8192];
+    std::size_t n = 0;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) out.append(buf, n);
+    std::fclose(f);
+    return out;
+}
+
+}  // namespace
+
+
+TEST_CASE("The status counts are real and no window's identity is in the reply",
+          "[wm_socket]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const std::string path = awaitPublishedSocketPath(d);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(path.empty());
+    }
+
+    Conn c(path);
+    REQUIRE(c.connected());
+    std::string program;
+    int protocol = 0;
+    REQUIRE(shakeHands(c, program, protocol));
+
+    // The baseline, asserted rather than assumed. The window manager's own
+    // popups and its EWMH check window are override-redirect and so are never
+    // adopted (deferred item 7's other half), and this fixture has mapped
+    // nothing yet -- so the counts before anything is mapped must be zero, and
+    // if they are not, this case says so instead of quietly comparing deltas.
+    ConfigMessage before;
+    std::string beforeRaw;
+    REQUIRE(requestStatus(c, before, beforeRaw));
+    INFO("baseline status: " << beforeRaw);
+    REQUIRE(fieldValue(before, "managed") == "0");
+    REQUIRE(fieldValue(before, "hidden") == "0");
+
+    // DELIBERATELY DISTINCTIVE titles and classes. A window called "xterm"
+    // would let the negative assertion below pass by accident -- the reply
+    // legitimately contains digits and the program name, and a common word
+    // would too. These strings appear nowhere else in the protocol.
+    static const char* const kTitles[3] = {
+        "wm2-socket-secret-alpha",
+        "wm2-socket-secret-beta",
+        "wm2-socket-secret-gamma"
+    };
+    static const char* const kClass = "Wm2SocketSecretClass";
+
+    std::vector<Window> wins;
+    for (int i = 0; i < 3; ++i) {
+        Window win = createClient(d, 120 + i * 220, 90, 200, 150, kTitles[i]);
+        setClassHint(d, win, "wm2socketsecret", kClass);
+        XMapWindow(d, win);
+        XSync(d, False);
+        const Window frame = awaitFrameFor(d, win);
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE(frame != None);
+        wins.push_back(win);
+    }
+    settleWm(d);
+
+    // Hide exactly one of them.
+    requestIconify(d, wins[1]);
+    REQUIRE(WmFixture::pollUntil([&] {
+        pumpWm(d);
+        long state = -1;
+        return icccmState(d, wins[1], state) && state == IconicState;
+    }, 8000));
+    settleWm(d);
+
+    ConfigMessage after;
+    std::string afterRaw;
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE(requestStatus(c, after, afterRaw));
+    }
+
+    INFO("status reply: " << afterRaw);
+
+    // Three under management, one of them hidden. "managed" counts every window
+    // the window manager holds, hidden ones included: hiding MOVES a client
+    // between two disjoint lists, so a count that dropped to two would report a
+    // window manager losing windows as the user hides them.
+    CHECK(fieldValue(after, "managed") == "3");
+    CHECK(fieldValue(after, "hidden") == "1");
+
+    // THE NEGATIVE ASSERTION, over the WHOLE reply text rather than over the
+    // fields this build happens to emit: an eighth field added later would be
+    // caught by this even though nothing here names it (T-9-13).
+    for (const char* title : kTitles) {
+        INFO("looking for leaked title: " << title);
+        CHECK(afterRaw.find(title) == std::string::npos);
+    }
+    CHECK(afterRaw.find(kClass) == std::string::npos);
+    CHECK(afterRaw.find("wm2socketsecret") == std::string::npos);
+
+    // And still exactly seven fields.
+    CHECK(after.fields.size() == 7);
+
+    CHECK(fixture.wmAlive());
+}
+
+TEST_CASE("Two clients connected at once each get their own replies", "[wm_socket]")
+{
+    // CGUI-02's concurrency probe: "if interrupted or run in parallel, what is
+    // guaranteed?" Each connection gets its own replies, in its own order, with
+    // no line interleaved into another's.
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    const std::string path = awaitPublishedSocketPath(d);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(path.empty());
+    }
+
+    Conn a(path);
+    Conn b(path);
+    REQUIRE(a.connected());
+    REQUIRE(b.connected());
+
+    // INTERLEAVED ON PURPOSE: both handshakes are in flight before either
+    // acknowledgement is read, so the window manager is holding two
+    // half-finished conversations at once rather than servicing them in turn.
+    ConfigMessage hello;
+    hello.type = ConfigMessageType::Hello;
+    hello.protocol = kConfigProtocolVersion;
+
+    hello.program = "client-a";
+    REQUIRE(a.send(hello));
+    hello.program = "client-b";
+    REQUIRE(b.send(hello));
+
+    ConfigMessage ackA, ackB;
+    ConfigDecodeResult rA = ConfigDecodeResult::Malformed;
+    ConfigDecodeResult rB = ConfigDecodeResult::Malformed;
+    REQUIRE(a.receive(ackA, rA));
+    REQUIRE(b.receive(ackB, rB));
+    CHECK(rA == ConfigDecodeResult::Ok);
+    CHECK(rB == ConfigDecodeResult::Ok);
+    CHECK(ackA.type == ConfigMessageType::HelloAck);
+    CHECK(ackB.type == ConfigMessageType::HelloAck);
+
+    ConfigMessage statusA, statusB;
+    std::string rawA, rawB;
+    REQUIRE(requestStatus(a, statusA, rawA));
+    REQUIRE(requestStatus(b, statusB, rawB));
+
+    INFO("client-a reply: " << rawA);
+    INFO("client-b reply: " << rawB);
+
+    // Each line is ONE well-formed message. An interleaved write would show up
+    // here as a decode failure or a field count that is not seven, because two
+    // spliced replies do not parse as one.
+    CHECK(statusA.type == ConfigMessageType::StatusReply);
+    CHECK(statusB.type == ConfigMessageType::StatusReply);
+    CHECK(statusA.fields.size() == 7);
+    CHECK(statusB.fields.size() == 7);
+
+    // Neither connection saw the other's reply queued behind its own: each read
+    // exactly one line and its buffer is empty.
+    std::string leftover;
+    CHECK_FALSE(a.readLine(leftover, 300));
+    CHECK_FALSE(b.readLine(leftover, 300));
+
+    CHECK(fixture.wmAlive());
+}
+
+TEST_CASE("A client vanishing mid-request costs only its own connection",
+          "[wm_socket]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    const std::string path = awaitPublishedSocketPath(d);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(path.empty());
+    }
+
+    Conn survivor(path);
+    REQUIRE(survivor.connected());
+    std::string program;
+    int protocol = 0;
+    REQUIRE(shakeHands(survivor, program, protocol));
+
+    {
+        // HALF A MESSAGE, then gone. The window manager is left holding an
+        // unterminated frame on a descriptor whose peer no longer exists --
+        // and, because the reply is written with MSG_NOSIGNAL, a write to it
+        // must not kill the process with SIGPIPE either.
+        Conn quitter(path);
+        REQUIRE(quitter.connected());
+        REQUIRE(quitter.sendRaw("{\"type\":\"hello\",\"program\":\"half"));
+        // Destructor closes the descriptor mid-frame.
+    }
+
+    settleWm(d);
+
+    // The survivor's NEXT request still succeeds. Nothing about the other
+    // connection's death reached it.
+    ConfigMessage reply;
+    std::string raw;
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE(requestStatus(survivor, reply, raw));
+    }
+    INFO("survivor reply: " << raw);
+    CHECK(reply.type == ConfigMessageType::StatusReply);
+    CHECK(reply.fields.size() == 7);
+
+    CHECK(fixture.wmAlive());
+    CHECK(stillFraming(fixture, d, "after-halfmessage"));
+}
+
+TEST_CASE("Asking for status twice returns the same field set", "[wm_socket]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    const std::string path = awaitPublishedSocketPath(d);
+    REQUIRE_FALSE(path.empty());
+
+    Conn c(path);
+    REQUIRE(c.connected());
+    std::string program;
+    int protocol = 0;
+    REQUIRE(shakeHands(c, program, protocol));
+
+    ConfigMessage first, second;
+    std::string firstRaw, secondRaw;
+    REQUIRE(requestStatus(c, first, firstRaw));
+    REQUIRE(requestStatus(c, second, secondRaw));
+
+    INFO("first:  " << firstRaw);
+    INFO("second: " << secondRaw);
+
+    REQUIRE(first.fields.size() == second.fields.size());
+    for (std::size_t i = 0; i < first.fields.size(); ++i) {
+        // The names, and their ORDER, are identical: the reply carries an
+        // ordered list precisely so a display can rely on it.
+        CHECK(first.fields[i].first == second.fields[i].first);
+        // Every VALUE is identical too, except uptime, which is the one field
+        // that is supposed to move.
+        if (first.fields[i].first != "uptime") {
+            CHECK(first.fields[i].second == second.fields[i].second);
+        }
+    }
+
+    CHECK(fixture.wmAlive());
+}
+
+TEST_CASE("The status assembly does not reach any per-window identity",
+          "[wm_socket][source]")
+{
+    // A SOURCE-LEVEL guard beside the behavioural ones, and not instead of
+    // them. The negative assertion over the reply text catches a leak this
+    // build actually emits; this catches the EDIT that would introduce one,
+    // scoped to the single function D-14's ceiling lives in, so a later change
+    // that starts publishing titles is a red test rather than a finding in a
+    // security review.
+    const std::string source = readWholeFile(std::string(WM2_SOURCE_DIR) + "/src/Manager.cpp");
+    REQUIRE_FALSE(source.empty());
+
+    const std::string marker = "ConfigMessage WindowManager::statusReplyMessage() const";
+    const std::size_t start = source.find(marker);
+    REQUIRE(start != std::string::npos);
+
+    // The function body ends at the first line that is a closing brace in
+    // column zero -- the same region the plan's `awk` gate selects.
+    const std::size_t end = source.find("\n}\n", start);
+    REQUIRE(end != std::string::npos);
+
+    const std::string region = source.substr(start, end - start);
+    INFO("status assembly region:\n" << region);
+
+    for (const char* forbidden : { "label()", "className", "instanceName",
+                                   "res_class", "res_name" }) {
+        INFO("forbidden in the status assembly: " << forbidden);
+        CHECK(region.find(forbidden) == std::string::npos);
+    }
+
+    // And the region really is the assembly, not an empty match: it must
+    // contain the seven field names D-14 permits.
+    for (const char* field : { "version", "protocol", "uptime", "screen-width",
+                               "screen-height", "managed", "hidden" }) {
+        INFO("expected field missing from the region: " << field);
+        CHECK(region.find(field) != std::string::npos);
+    }
 }

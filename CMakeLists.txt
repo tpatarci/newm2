@@ -537,6 +537,12 @@ if(BUILD_TESTS)
             WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
             WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
             WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+            # D-14's ceiling is also guarded at the SOURCE level: one case reads
+            # the status assembly out of src/Manager.cpp and asserts it does not
+            # reach any per-window identity accessor, so an edit that starts
+            # publishing titles is caught by a test rather than by a later
+            # security review.
+            WM2_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
         )
 
         # The tests exec the binary, so it must exist before they run.
