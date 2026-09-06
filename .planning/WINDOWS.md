@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 8
+open_count: 12
 waived_count: 8
 fixed_count: 8
-total_count: 24
-last_updated: 2026-09-06T15:22:50.706Z
+total_count: 28
+last_updated: 2026-09-06T16:21:00.292Z
 ---
 
 # Broken Windows Ledger
@@ -39,6 +39,10 @@ last_updated: 2026-09-06T15:22:50.706Z
 | 22 | 09 | deviation | apps/wm2-config/MenuPage.cpp |  | The entry dialog states the name-override rule unconditionally rather than only when the typed name matches a discovered application. Detecting a match needs the discovered application NAMES and no protocol key exposes them; publishing the user's installed-application list over the socket was judged a wider surface than the note is worth | open |  | 2026-09-06T13:15:04.837Z |  |
 | 23 | 09 | unrun-verify | scripts/gates/build-all.sh |  | The release tree and its link audit were not run for plan 09-07; only debug (526/526) and asan were gated. No link line of a shipped target changed in this plan -- only the test target gained libXtst -- but that is an argument rather than a run | open |  | 2026-09-06T13:15:05.034Z |  |
 | 24 | 09 | unrun-verify | scripts/gates/build-all.sh |  | Release and ASan trees were last run in full at 530 tests (commit 441d62d); the 531st test, a display-free desktop-entry case added afterwards, was re-run in the ASan tree by label only and the release suite was not re-run at the final commit | fixed | Release gate re-run by the orchestrator after wave 8 closed at the final commit: build-all.sh release green, 531/531, link audit OK (24 entries, all in the intended runtime set) | 2026-09-06T15:09:02.517Z | 2026-09-06T15:22:50.706Z |
+| 25 | 09 | unmet-truth | src/Buttons.cpp |  | Task 1's runtime cases prove the Configure row is present/absent by ROW COUNT and by launch identity, not by reading the label off the screen: the menu paints text with Xft and the server keeps no strings. The label claim is carried by display-free [menupaint] cases over the shared RootMenuLayout instead. | open |  | 2026-09-06T16:20:59.745Z |  |
+| 26 | 09 | unmet-truth | scripts/gates/doc-keys.sh |  | Direction 2 of the doc-keys gate does not catch a bare unhyphenated word presented in plain backticks that is not an accepted key; in prose that form is indistinguishable from an ordinary word. Hyphenated inventions and 'word = value' config lines are caught. Stated in the script. | open |  | 2026-09-06T16:20:59.930Z |  |
+| 27 | 09 | unmet-truth | .planning/phases/09-config-gui-ipc/evidence/remote-desktop/README.md |  | The first wm2-config on a freshly started X server holds ~101 MB and every later one ~50 MB, reproducibly on Xvfb and TigerVNC. Two candidate causes ruled out (per-user fontconfig cache; being the first client). The cause was not determined. | open |  | 2026-09-06T16:21:00.108Z |  |
+| 28 | 09 | deviation | .planning/phases/08.5-v1.0-closeout/evidence/tightvnc/capabilities.txt |  | Pre-existing: capabilities.txt files committed under 08- and 08.5- evidence contain this machine's hostname from 'uname -n'. The public repo prohibits host identifiers. The capture script was fixed in 09-09; the already-committed captures were NOT rewritten (out of this plan's scope). | open |  | 2026-09-06T16:21:00.292Z |  |
 
 ````json
 [
@@ -329,6 +333,54 @@ last_updated: 2026-09-06T15:22:50.706Z
     "reason": "Release gate re-run by the orchestrator after wave 8 closed at the final commit: build-all.sh release green, 531/531, link audit OK (24 entries, all in the intended runtime set)",
     "recorded_at": "2026-09-06T15:09:02.517Z",
     "resolved_at": "2026-09-06T15:22:50.706Z"
+  },
+  {
+    "id": 25,
+    "kind": "unmet-truth",
+    "phase": "09",
+    "file": "src/Buttons.cpp",
+    "line": null,
+    "description": "Task 1's runtime cases prove the Configure row is present/absent by ROW COUNT and by launch identity, not by reading the label off the screen: the menu paints text with Xft and the server keeps no strings. The label claim is carried by display-free [menupaint] cases over the shared RootMenuLayout instead.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T16:20:59.745Z",
+    "resolved_at": null
+  },
+  {
+    "id": 26,
+    "kind": "unmet-truth",
+    "phase": "09",
+    "file": "scripts/gates/doc-keys.sh",
+    "line": null,
+    "description": "Direction 2 of the doc-keys gate does not catch a bare unhyphenated word presented in plain backticks that is not an accepted key; in prose that form is indistinguishable from an ordinary word. Hyphenated inventions and 'word = value' config lines are caught. Stated in the script.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T16:20:59.930Z",
+    "resolved_at": null
+  },
+  {
+    "id": 27,
+    "kind": "unmet-truth",
+    "phase": "09",
+    "file": ".planning/phases/09-config-gui-ipc/evidence/remote-desktop/README.md",
+    "line": null,
+    "description": "The first wm2-config on a freshly started X server holds ~101 MB and every later one ~50 MB, reproducibly on Xvfb and TigerVNC. Two candidate causes ruled out (per-user fontconfig cache; being the first client). The cause was not determined.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T16:21:00.108Z",
+    "resolved_at": null
+  },
+  {
+    "id": 28,
+    "kind": "deviation",
+    "phase": "09",
+    "file": ".planning/phases/08.5-v1.0-closeout/evidence/tightvnc/capabilities.txt",
+    "line": null,
+    "description": "Pre-existing: capabilities.txt files committed under 08- and 08.5- evidence contain this machine's hostname from 'uname -n'. The public repo prohibits host identifiers. The capture script was fixed in 09-09; the already-committed captures were NOT rewritten (out of this plan's scope).",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T16:21:00.292Z",
+    "resolved_at": null
   }
 ]
 ````

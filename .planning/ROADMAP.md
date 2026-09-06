@@ -366,7 +366,7 @@ Gap-closure wave 5 (round 2) *(blocked on wave 4)*:
   3. The WM runs perfectly without GTK3 installed -- the config GUI is an optional separate package
   4. Changes made in the config GUI are persisted to the config file so they survive WM restarts
 
-**Plans**: 8/9 plans executed
+**Plans**: 9/9 plans executed
 
 *(Planned 2026-09-06. The roadmap's original estimate of 3 plans predated the research, which found that fonts are not configurable at all today — a precondition for CGUI-03 — and that the event loop's descriptor set is declared twice, making the socket integration a structural change to two functions rather than an additive one. Nine plans at fine granularity, 2-4 tasks each, in eight waves; only wave 1 runs two plans in parallel, because this phase is a genuine dependency chain.)*
 
@@ -405,7 +405,7 @@ Plans:
 
 **Wave 9** *(blocked on Wave 8 completion)*
 
-- [ ] 09-09-PLAN.md — wave 9 — "Configure…" on the root menu, the documentation-parity gate, checklist rows, and the measured remote-desktop pass
+- [x] 09-09-PLAN.md — wave 9 — "Configure…" on the root menu, the documentation-parity gate, checklist rows, and the measured remote-desktop pass
 
 ### Phase 10: Native X11 Configuration Tool
 
@@ -444,5 +444,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
 | 8. Xrandr + VNC + Focus/Rules | 14/14 | Verified with gaps | 2026-08-30 |
 | 8.5 v1.0 Closeout *(INSERTED)* | 12/13 (08.5-07 superseded) | Shipped: PR #6 merged `0fec5db`; verification `human_needed`; security review pending | 2026-09-05 |
-| 9. Config GUI + IPC | 8/9 | In Progress|  |
+| 9. Config GUI + IPC | 9/9 | In Progress|  |
 | 10. Native X11 Configuration Tool | 0/0 | Not started (added 2026-09-06) | - |
