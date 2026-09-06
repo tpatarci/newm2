@@ -41,9 +41,15 @@ first_pass_verdicts:
 findings:
   critical: 0
   warning: 6
-  info: 6
-  total: 12
-status: issues_found
+  info: 9
+  total: 15
+fixed:
+  critical: 0
+  warning: 6
+  info: 8
+  declined: 1
+fixed_at: 2026-09-06
+status: fixed
 ---
 
 # Phase 09: Code Review Report — Pass 2 (fix verification)
@@ -51,7 +57,48 @@ status: issues_found
 **Reviewed:** 2026-09-06T18:41:01Z
 **Depth:** standard
 **Diff base:** `c4abfc6..09fb684` (25 fix commits, 27 files, +3252/-196)
-**Status:** issues_found
+**Status:** fixed
+
+## Fix pass, 2026-09-06
+
+All six Warnings are FIXED, one commit each, each with a recorded RED. Eight
+of the nine Info findings are fixed; one is DECLINED with the reason on the
+finding.
+
+| | Fixed | Declined |
+|---|---|---|
+| Warning | W-01 W-02 W-03 W-04 W-05 W-06 | -- |
+| Info | I-01 I-02 I-03 I-04 I-06 I-07 I-08 I-09 | I-05 |
+
+All four **partially closed** first-pass verdicts are closed by this pass:
+CR-02's residual and WR-12's residual are both W-04/W-05, closed at the
+source in `4e624fb` (the window manager no longer sends the reload requester
+both the broadcast and the reply); WR-03's residual is W-03, closed in
+`d595a3c`; and CR-04's re-examined residual is I-02, which turns out to be a
+correction to the RECORDED REASONING rather than a defect, made as a comment
+in `7bb7c90`. CR-01's verdict was already `closed`; W-01 hardens the bracket
+it rests on.
+
+Every finding below carries a **Disposition** block naming the commit, the
+RED evidence and the test that holds it. Two fixes carry a residual that no
+test on this host can reach, and each says so and is recorded in
+`.planning/WINDOWS.md` rather than left to be inferred: the W-05 correlation
+window (a foreign notice landing between a client's `reload` and its reply)
+and the W-06 ownership arm (which needs a process able to give a directory
+away).
+
+**Gates, run one at a time on this worktree at `557550a`:**
+
+| Gate | Result |
+|---|---|
+| `build-all.sh debug` | OK -- 100% tests passed, 0 failed out of 572 (1 skipped) |
+| `build-all.sh asan` | OK -- 100% tests passed, 0 failed out of 572; no sanitizer findings |
+| `build-all.sh nogtk` | OK -- 572 registered, 566 passed, 6 skipped, all six with a stated reason |
+| `build-all.sh release` | OK -- 100% tests passed, 0 failed out of 572; link audit OK (24 entries) |
+
+Zero compiler or linker warnings recorded in any of the four `build.log`s.
+The baseline was 564 tests; the eight new cases this pass added take it to
+572.
 
 ## Summary
 
@@ -72,7 +119,10 @@ pre-existing `-Wunused-parameter` warnings in `Border::shapeTabRectangular`
 and `Border::setFrameVisibilityRectangular`. The test suite was not run, per
 instruction.
 
-Six new findings, none Critical. The two that matter most are structural
+Six new Warnings, none Critical, and nine Info findings. (The frontmatter's
+original `info: 6` undercounted them: I-07, I-08 and I-09 are in the body but
+were not in the tally. Corrected in the fix pass.) The two that matter most
+are structural
 rather than scenario-specific: the CR-01 fix's re-entrancy counter is the
 only counter in this pass that is **not** RAII (WR-13's `ModalDepthGuard`,
 added in the same pass, is), and the WR-02 fix put an **unbounded blocking
@@ -332,6 +382,25 @@ A `[config_socket]` case can drive it directly: a handler that throws on the
 second frame, then assert `clientCount()` returns to the live count and a
 seventeenth connection is still accepted.
 
+**Disposition:** FIXED in `874ebbd`.
+
+`service()`'s `++/--m_serviceDepth` pair is now a file-local
+`ServiceDepthGuard`, the same shape WR-13's `ModalDepthGuard` uses in
+`src/Events.cpp` and for the same reason. The depth is released on every exit
+including an unwind, so an exception out of `handler(req)` can no longer wedge
+`reap()` into deferring for the life of the process.
+
+**RED:** the new case failed twice before the fix --
+`CHECK( server.clientCount() == 0 )` with expansion `1 == 0` (the closed
+connection was never reaped) and `CHECK( server.clientCount() == 1 )` with
+expansion `2 == 1` (the count only grew).
+
+**Test:** `tests/test_config_socket.cpp`, `[config_socket][reentrancy]` --
+"a handler that throws leaves the servicing depth balanced". It drives a
+handler that throws on the second frame, catches the escape, and then asserts
+both that a departed connection is reaped and that a new one is still
+accepted -- the consequence a user would actually meet.
+
 ---
 
 ### W-02: WR-02's fix put an unbounded blocking `flock` on the GTK main thread, and loses the lock silently on EINTR
@@ -401,6 +470,31 @@ If the bound is reached, the honest outcome is arguably a new
 file; try again" — the writer already has five other result codes that exist
 to say exactly this kind of thing.
 
+**Disposition:** FIXED in `d8cdfbf`.
+
+`DirectoryLock` now polls `flock(LOCK_EX | LOCK_NB)` against a
+`kConfigFileLockWaitMs` (2 s) deadline. `EINTR` is a retry rather than a
+verdict, so a signal can no longer make the save proceed unserialised. A
+holder that outlasts the deadline produces the new
+`ConfigWriteResult::Busy` and a sentence the settings window shows through its
+existing "Could not save: " path; nothing is read and nothing is written. A
+filesystem that cannot lock at all is still best-effort-unserialised, exactly
+as before. `docs/RELEASE-NOTES.md` documents the bound and the refusal beside
+the three other save refusals.
+
+**RED:** the new case HUNG. `timeout 25 ./build/debug/test_config_writer "a
+save refuses rather than waiting for ever on a held lock"` was killed at
+25 seconds having reported no assertions at all (exit 143) -- which is the
+defect, stated exactly.
+
+**Test:** `tests/test_config_writer.cpp`, `[config_writer][concurrency]` --
+"a save refuses rather than waiting for ever on a held lock". A forked child
+takes the lock, hands the parent a pipe handshake, and holds until the parent
+closes the other end -- so the child releases and exits if the parent dies for
+any reason, which is what stops a run that proves the bug from leaving a
+lock-holder behind. GREEN returns `Busy` in **2008 ms** with the file
+byte-identical and nothing left in the directory.
+
 ---
 
 ### W-03: WR-03's round-trip guard covers single-key edits and not menu entries, so a menu entry name with an outer space still does not round-trip
@@ -455,6 +549,39 @@ and the matching arm in `MenuEntryDraft::complete()`'s existing
 `for (const std::string* part : {&name, &command, &category})` loop, so the
 dialog says it where it was typed — the reason IN-05 gave for putting the
 length bound there.
+
+**Disposition:** FIXED in `d595a3c`. This also closes WR-03's *partially
+closed* verdict.
+
+One rule at three gates, so the file grammar and the wire grammar carry the
+same set of names and categories: `MenuEntryDraft::complete()` refuses an
+outer space or tab where it is typed, `menuEntriesAreAcceptable()` refuses it
+before any file is opened, and `parseMenuEntriesValue()` refuses it for
+anything arriving over the socket -- which is what makes `set menu-entries` a
+named refusal rather than a silent divergence.
+
+`menu-entry-command` is deliberately EXEMPT at all three, which is a
+narrowing of the review's suggested fix and is load-bearing:
+`Config::applyKeyValue()` tokenises the command on whitespace on every route,
+so an outer space in it is carried by neither representation and round-trips
+exactly. Refusing it would have told the user something about the file format
+that is not true of that field.
+
+**RED, both directions:**
+`test_config_writer "a menu entry name or category with an outer space is
+refused"` -- 15 of 17 assertions failed, the file gaining
+`menu-entry-category = Network\t` where it was asserted untouched.
+`test_wm2_config_smoke "a menu entry field with an outer space is refused
+where it is typed and on the wire"` -- 7 of 14 failed, including
+`CHECK_FALSE( parseMenuEntriesValue("menu-entry-name= Mail;...") )` reported
+as `!true`.
+
+**Tests:** `tests/test_config_writer.cpp`, `[config_writer][refusal]` -- "a
+menu entry name or category with an outer space is refused";
+`tests/test_wm2_config_smoke.cpp`, `[wm2_config_smoke][menu]` -- "a menu entry
+field with an outer space is refused where it is typed and on the wire",
+which asserts the dialog half, the wire half, and that the exempt command
+still tokenises as it did.
 
 ---
 
@@ -526,6 +653,41 @@ for both clients: `broadcast()` gains an "except this connection" parameter,
 the requester gets exactly one `reloaded` (its reply), and W-05 disappears
 with it.
 
+**Disposition:** FIXED in `4e624fb`. This also closes CR-02's *partially
+closed* verdict.
+
+Fixed at the source, with no wire change, exactly as the finding's second
+half proposed. `ConfigSocketServer` gained `broadcastExcept()` and
+`servingFd()`; `readConnection()` records which descriptor a handler is
+running against, through an RAII guard for the reason W-01 gives about the
+counter beside it; and `reloadConfigFromDisk()` excludes the requester. Each
+client now sees exactly one `reloaded` per reload of its own and one notice
+per foreign reload, which is what makes wm2-config's positional correlation
+sound.
+
+The finding's FIRST half is fixed independently, because it is a separate
+defect: an `error` matching no outstanding request is no longer dropped by the
+bare `return`. `ProtocolClient` gained a `ProtocolErrorHandler`; the window
+puts the reason on the status line -- never in D-08's banner, which says the
+opposite thing -- and it is logged to stderr as well.
+
+**RED, both halves:**
+`test_config_socket "the client that asked for a reload is not also broadcast
+to"`, with the handler calling `broadcast()` instead of `broadcastExcept()`:
+`CHECK( countLines(fromRequester, "{\"type\":\"reloaded\"}") == 1 )` with
+expansion `2 == 1`.
+`test_wm2_config_smoke "an error that answers nothing outstanding is surfaced,
+not dropped"`, with `dispatch()`'s bare return restored:
+`CHECK( client.pumpUntil(...) )` -> `false` and
+`REQUIRE( surfaced.size() == 1 )` with expansion `0 == 1`.
+
+**Tests:** `tests/test_config_socket.cpp`, `[config_socket][reentrancy]` --
+"the client that asked for a reload is not also broadcast to" (the requester
+gets exactly one, a second hello-completed client gets exactly one, and a
+broadcast outside a servicing pass still reaches both);
+`tests/test_wm2_config_smoke.cpp`, `[wm2_config_smoke][protocol][notice]` --
+"an error that answers nothing outstanding is surfaced, not dropped".
+
 ---
 
 ### W-05: `wm2-ctl reload` still cannot tell a foreign notice from its own reply, and exits 0 for a reload the window manager refused
@@ -577,6 +739,32 @@ m_socketServer.broadcastExcept(configProtocolEncode(notice), m_servingFd);
 `ConfigSocketServer` already knows which connection it is serving — the
 index `readConnection` now carries — so the parameter is available without
 new plumbing.
+
+**Disposition:** FIXED in `4e624fb`, with a named residual. This also closes
+WR-12's *partially closed* verdict.
+
+Same one-line change as W-04's second half: the window manager does not
+broadcast to the connection it is answering, so a `reloaded` arriving on a
+`wm2-ctl reload` requester's socket after its request is unambiguously its own
+reply.
+
+`wm2-ctl reload` exiting non-zero on an `error` reply needed no change and is
+already asserted: `reportReply()` maps `Error` to `kExitRefused` for every
+verb, and `[wm_config_live]` "a reload that cannot read the user file changes
+nothing and names it" asserts `CHECK(r.exitCode == 1)` against the shipped
+binary driven as a child process.
+
+**RESIDUAL, recorded not claimed closed:** a foreign notice can still land on
+a connection in the window between that client *sending* its reload and its
+reply coming back -- a second client's reload serviced in a pass before ours.
+No type-only classifier can tell it from the reply, and the version-1 contract
+is frozen with no correlator to carry. Reaching it needs the window manager to
+schedule two reloads in a particular order, which nothing outside the window
+manager can arrange. Recorded as `unrun-verify` in `.planning/WINDOWS.md`.
+
+**RED:** the server-side RED above (`2 == 1` on the requester's socket).
+**Test:** the `[config_socket][reentrancy]` case named under W-04, plus the
+existing `[wm_config_live]` exit-code case.
 
 ---
 
@@ -639,6 +827,35 @@ TEST_CASE("A directory owned by somebody else is refused",
 }
 ```
 
+**Disposition:** FIXED in `303c7f0`.
+
+The old case is replaced by two, each honest about what it proves and each
+scoped ENTIRELY INSIDE a scratch `TempDir`, so that no value of euid can make
+either create anything at the filesystem root or anywhere else outside it --
+which was the second half of the finding:
+
+* "a socket directory that cannot be created is refused, and nothing is left
+  behind" -- the mkdir refusal, through an unwritable parent inside the
+  scratch directory, asserting nothing was created. SKIPped as root, where the
+  condition cannot be constructed.
+* "a socket directory owned by somebody else is refused" -- the ownership arm
+  itself: mkdir returns EEXIST, the `O_DIRECTORY|O_NOFOLLOW` open succeeds,
+  and the `fstat` is what refuses. It SKIPs with a stated reason both for the
+  euid and again if the `chown` fails, so it can never pass vacuously.
+
+**RED, for the claim that the old case discriminated nothing:** with the
+ownership arm DELETED from `listen()` (`dst.st_uid != ::geteuid()` removed
+from the `fstat` condition), the old case body still passed -- "All tests
+passed (2 assertions in 1 test case)" -- because mkdir refused first and the
+arm was never reached.
+
+**Not run here:** the ownership half SKIPs on this host (non-root; it also
+skips under `unshare -Ur`, where `chown` to an unmapped uid returns EINVAL).
+Recorded as `unrun-verify` in `.planning/WINDOWS.md`. The CR-03 block as a
+whole is still discriminated by the two cases either side of it -- the symlink
+case asserts the victim's mode is unchanged, and the ordinary case asserts the
+mode correction happens through the descriptor.
+
 ---
 
 ## Info
@@ -657,6 +874,16 @@ would be worse. Recorded so the next reader does not mistake it for an
 oversight: the sentence the client receives ("a menu or a drag is in
 progress; try again in a moment") is about a `set`, and for a `reload` it
 under-describes what was refused.
+
+**Disposition:** FIXED in `54db489`.
+
+The refusal now names the three keys the guard is about and says a reload that
+moves any of them is refused whole, so a `reload` refusal describes what did
+not happen rather than borrowing a `set`'s sentence.
+`docs/RELEASE-NOTES.md` quotes the new sentence and spells the reload
+consequence out beside it. No behaviour change: the refusal is the same
+refusal. `scripts/gates/doc-keys.sh` passes; `[wm_socket]` 184 assertions in
+17 cases.
 
 ### I-02: CR-04's declined colour residual rests on an inaccurate premise
 
@@ -680,6 +907,14 @@ nothing. So this is a note on the *reasoning*, not a live defect: the
 invariant is held by the visual class, not by the pre-flight, and the comment
 at `src/Manager.cpp:2081-2083` should say so.
 
+**Disposition:** FIXED (comment) in `7bb7c90`.
+
+The comment above the pre-flight now says what the loop proves (that the nine
+NAMES parse) and what it does not (that it is not the same allocation the two
+reloads then perform), and records that the invariant is held by the TrueColor
+visual class rather than by the pre-flight. Comment only; no code changed,
+because the conclusion still holds on the visuals this project targets.
+
 ### I-03: `std::filesystem::exists`'s `error_code` is still ignored one function above WR-01's fix
 
 **File:** `src/ConfigFileWriter.cpp:368`
@@ -697,6 +932,14 @@ then fails and reports `DirectoryFailed` — but the two spellings of the same
 call now disagree about whether a failed existence check is a failure, in one
 file, thirty lines apart.
 
+**Disposition:** FIXED in `8e9aee5`.
+
+`configFileWrite()`'s `std::filesystem::exists(directory, ec)` now checks its
+`error_code` and reports `DirectoryFailed` with "could not examine the
+directory", so the two spellings of that call in one file agree about whether
+a failed existence check is a failure. `[config_writer]` 748 assertions in 38
+cases, including the `DirectoryFailed` cases.
+
 ### I-04: the WR-05 symlink check runs before the lock, so it is advisory only
 
 **File:** `src/ConfigFileWriter.cpp:388-397` vs `:406`
@@ -707,6 +950,13 @@ the lock cannot race it (it would have to create the symlink between our
 hand edit can. Since WR-05 was explicitly about ending a *silence* rather
 than about defeating an attacker, this is a note, not a defect. Moving the
 check below the lock costs nothing and removes the question.
+
+**Disposition:** FIXED in `8e9aee5`.
+
+The WR-05 `lstat` now runs BELOW the `DirectoryLock`, inside the critical
+section. Nothing this project ships creates symlinks, so nothing could
+actually race it; moving it costs nothing and removes the question. The
+symlink refusal case is unchanged and still green.
 
 ### I-05: `ProtocolClient::send()` can still freeze the settings window for five seconds, then leave it permanently file-only
 
@@ -723,6 +973,28 @@ manager services the socket from `modalWait` on every iteration, so a healthy
 peer never needs seconds) and worth the reconnect the declined half asked
 for.
 
+**Disposition:** DECLINED.
+
+Both halves are feature work rather than defect repair, and the second was
+already declined in pass 1 as a feature request.
+
+A smaller write deadline would be a guess: `kHandshakeMs` is the one deadline
+this client has, it is shared with the handshake, and there is no measurement
+in this phase saying what a healthy peer's worst case actually is on a
+512 MB VPS under a VNC server -- which is the host the constraint is about.
+Picking a smaller number here would replace a bounded freeze with a
+`FileOnlyNoSocket` disconnect on a window manager that was merely busy, which
+is a worse outcome for the same user.
+
+The reconnect is the larger half and is a design change: it needs a policy for
+when to retry, what to do about the pending queue at the moment the socket
+went, and what the banner says in between. That belongs to a phase that can
+discuss it, not to a review-fix pass.
+
+What the finding correctly establishes -- that the WR-09 fix bounded the
+freeze rather than removing it -- stands as written, and the worst case it
+names (five seconds, then file-only until restarted) is accurate.
+
 ### I-06: `';'` is refused in the dialog and nowhere else
 
 **File:** `apps/wm2-config/MenuModel.h:105-109`, `src/ConfigFileWriter.cpp:146-169`
@@ -737,6 +1009,19 @@ fails and (thanks to WR-15's other half) the user is now told. A name of the
 form `Foo;menu-entry-category=Bar` would instead parse *successfully* into
 something the user did not write. Cheap to close: the same `find(';')` in
 `menuEntriesAreAcceptable`.
+
+**Disposition:** FIXED in `2437c32`.
+
+`menuEntriesAreAcceptable()` now refuses `';'` in the same words
+`MenuEntryDraft::complete()` uses, so the file the writer produces can always
+be read back as the list that was written -- including through the
+hand-edited-config route the finding names, where
+`Foo;menu-entry-category=Bar` parsed SUCCESSFULLY into something the user
+never wrote.
+
+**RED:** the new `[config_writer][refusal]` case "a menu entry containing a
+';' is refused by the writer too" failed 9 of 9 assertions, the file gaining
+`menu-entry-category = Net;work` where it was asserted untouched.
 
 ### I-07: `ScriptedPeer::readLine` budgets iterations, not milliseconds
 
@@ -757,6 +1042,14 @@ reads a `value` reply carrying a `menu-entries` list would get a spurious
 `""` and a misleading `REQUIRE_FALSE(...empty())` failure. Advance `waited`
 only on the sleep path.
 
+**Disposition:** FIXED in `21afa7d`.
+
+`waited` now advances only on the sleep path, so the budget is milliseconds
+rather than `timeoutMs / 10` bytes. No current case was affected, which is why
+there is no RED to record: the change is to a helper's bound, and the evidence
+that it is correct is that all eight `[wm2_config_smoke][protocol]` cases --
+every call site -- stay green (74 assertions).
+
 ### I-08: `m_reapPending` is written and never read, and the header describes a mechanism the code does not use
 
 **File:** `include/SocketServer.h:396`, `src/SocketServer.cpp:753`, `src/SocketServer.cpp:760`
@@ -771,6 +1064,16 @@ documentation asserts a correlation that does not exist, which is the same
 complaint IN-01 made about `Pending::expected` last pass. Either drop the
 field or make `service()` use it.
 
+**Disposition:** FIXED in `557550a`.
+
+`m_reapPending` is removed and the header comment now describes what the code
+does: `reap()` defers while the depth is non-zero and `service()` calls it
+unconditionally once every handler has returned. The unconditional call is
+strictly stronger than a conditional one, so there is no behaviour to change
+-- only dead state whose documentation could rot. `[config_socket]` 935
+assertions, including both re-entrancy cases that are the whole reason the
+deferral exists.
+
 ### I-09: `include/ConfigFileWriter.h` uses `std::size_t` without including `<cstddef>`
 
 **File:** `include/ConfigFileWriter.h:70`
@@ -780,8 +1083,16 @@ field or make `service()` use it.
 drag `<cstddef>` in transitively, and `apps/wm2-config/MenuModel.h` now
 includes this header for that constant. One line.
 
+**Disposition:** FIXED in `d8cdfbf`, alongside W-02 -- the same commit adds
+`kConfigFileLockWaitMs` to this header, so `<cstddef>` was added with it
+rather than in a commit of its own.
+
 ---
 
 _Reviewed: 2026-09-06T18:41:01Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard, pass 2_
+
+_Fix pass: 2026-09-06_
+_Fixer: Claude (gsd-code-fixer)_
+_All six Warnings and eight of nine Info findings fixed; I-05 declined._
