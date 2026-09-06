@@ -654,6 +654,104 @@ bool openRootMenu(Display* d, XTestDriver& driver, int x, int y,
     return painted;
 }
 
+// Release over the first menu row ("New"). WindowManager::menu() computes
+// sel = (y - 11) / entryHeight from menu-relative coordinates, so a few pixels
+// into the first row selects entry 0 whatever the font's entry height is.
+void selectFirstMenuEntry(Display* d, XTestDriver& driver, const Rect& menuRect)
+{
+    driver.moveTo(menuRect.x + menuRect.w / 2, menuRect.y + 14);
+    driver.release(Button1);
+    XSync(d, False);
+}
+
+// ---------------------------------------------------------------------------
+// Focus observation (plan 09-05)
+// ---------------------------------------------------------------------------
+
+// The one fixed wait in this file, and it is a wait for a NON-EVENT: every
+// assertion of the form "this did not happen" has to give the window manager
+// long enough to have done it. Named so each call site reads as what it is.
+constexpr int kNonEventWaitMs = 1500;
+
+void waitPastFocusDelays()
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds(kNonEventWaitMs));
+}
+
+Window activeWindow(Display* d)
+{
+    // Interned per call rather than cached in a static: WmFixture picks a fresh
+    // display per fixture, and an atom id from one server is meaningless on the
+    // next. Xlib keeps its own per-display cache, so this costs nothing.
+    const Atom atom = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+    Atom actualType = None;
+    int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0;
+    unsigned char* raw = nullptr;
+    if (XGetWindowProperty(d, DefaultRootWindow(d), atom, 0, 1, False, XA_WINDOW,
+                           &actualType, &actualFormat, &nItems, &bytesAfter,
+                           &raw) != Success) {
+        return None;
+    }
+    Window out = None;
+    if (raw && actualFormat == 32 && nItems >= 1) {
+        out = *reinterpret_cast<Window*>(raw);
+    }
+    if (raw) XFree(raw);
+    return out;
+}
+
+Window pumpedActiveWindow(Display* d) { pumpWm(d); return activeWindow(d); }
+
+// Position of `w` in root's child list -- higher means nearer the top of the
+// stack. -1 for a window that is not there.
+int stackIndex(Display* d, Window w)
+{
+    const std::vector<Window> kids = childrenOf(d, DefaultRootWindow(d));
+    for (std::size_t i = 0; i < kids.size(); ++i) {
+        if (kids[i] == w) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+int pumpedStackIndex(Display* d, Window w) { pumpWm(d); return stackIndex(d, w); }
+
+// _NET_WM_USER_TIME, published BEFORE the window is mapped, the way a real
+// application publishes it. A value of zero is the spec's explicit "do not
+// focus me on map", which is what makes it the cheapest way to construct an
+// unfocused window (Client::shouldFocusOnMap).
+void setUserTime(Display* d, Window w, unsigned long value)
+{
+    const Atom atom = XInternAtom(d, "_NET_WM_USER_TIME", False);
+    XChangeProperty(d, w, atom, XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<const unsigned char*>(&value), 1);
+}
+
+Window mapUnfocusedClient(Display* d, int x, int y, int w, int h,
+                          Window& clientOut, const char* name)
+{
+    Window root = DefaultRootWindow(d);
+    Window win = XCreateSimpleWindow(d, root, x, y,
+                                     static_cast<unsigned>(w), static_cast<unsigned>(h), 0,
+                                     BlackPixel(d, DefaultScreen(d)),
+                                     WhitePixel(d, DefaultScreen(d)));
+    if (name) XStoreName(d, win, name);
+    setUserTime(d, win, 0);
+    clientOut = win;
+    XMapWindow(d, win);
+    XSync(d, False);
+    return awaitFrameFor(d, win);
+}
+
+// The width of a frame's decoration: everything the frame is minus the client
+// inside it. It moves with the tab's thickness and with nothing else a
+// tab-font case changes, which is what makes it the observable for "the tab was
+// re-laid out" on a window that was ALREADY OPEN.
+int decorationWidth(Display* d, Window frame, Window client)
+{
+    return rectOf(d, frame).w - rectOf(d, client).w;
+}
+
 // Close a menu the press above left open, by releasing outside every row.
 void closeRootMenu(Display* d, XTestDriver& driver)
 {
@@ -1596,4 +1694,656 @@ TEST_CASE("setting the same colour twice leaves the capture byte-identical",
     CHECK(second.exitCode == 0);
     CHECK(dominantPixel(afterFirst) == wanted);
     CHECK(afterSecond == settled);
+}
+
+
+// -----------------------------------------------------------------------------
+// Fonts, focus policy, delays and commands (CGUI-04, plan 09-05)
+//
+// Everything below asserts an OBSERVABLE BEHAVIOUR CHANGE on a desktop that is
+// already running: the tab of a window mapped before the command gets wider,
+// the pointer stops focusing, the menu's New entry runs something else. Not one
+// of them reads a value back and calls that proof -- `get` returning the new
+// value would be equally true of a window manager that stored it and never
+// looked at it again, which is exactly the class of claim plan 08-07 found to
+// be false for three of these very booleans.
+// -----------------------------------------------------------------------------
+
+TEST_CASE("setting tab-font re-lays out every tab already on screen",
+          "[wm_config_live]")
+{
+    const std::string home = makeConfigHome(
+        "frame-thickness=7\ntab-font=Sans:bold:size=10\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    // TWO windows, and both are checked. The re-layout has to reach every
+    // managed client, not only the active one: a loop over the active client
+    // alone would pass a one-window case and leave a real desktop with tabs of
+    // two different widths.
+    Window firstClient = None, secondClient = None;
+    Window firstFrame  = mapClientAndAwaitFrame(d, 120, 120, 260, 200, firstClient, "one");
+    Window secondFrame = mapClientAndAwaitFrame(d, 500, 120, 260, 200, secondClient, "two");
+    REQUIRE(firstFrame != None);
+    REQUIRE(secondFrame != None);
+    settleWm(d);
+
+    const int firstBefore  = decorationWidth(d, firstFrame, firstClient);
+    const int secondBefore = decorationWidth(d, secondFrame, secondClient);
+
+    CtlResult r = ctl(fixture, {"set", "tab-font", "Sans:bold:size=28"});
+
+    int firstAfter = firstBefore, secondAfter = secondBefore;
+    WmFixture::pollUntil([&] {
+        pumpWm(d);
+        firstAfter  = decorationWidth(d, firstFrame, firstClient);
+        secondAfter = decorationWidth(d, secondFrame, secondClient);
+        return firstAfter != firstBefore && secondAfter != secondBefore;
+    }, 8000);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO(r.describe());
+    INFO("first  decoration " << firstBefore  << " -> " << firstAfter);
+    INFO("second decoration " << secondBefore << " -> " << secondAfter);
+
+    CHECK(r.exitCode == 0);
+    CHECK(firstAfter > firstBefore);
+    CHECK(secondAfter > secondBefore);
+    // Both moved by the SAME amount: the tab's thickness is shared, so a
+    // per-client recomputation that drifted would show up here.
+    CHECK(firstAfter - firstBefore == secondAfter - secondBefore);
+    CHECK(ctlGet(fixture, "tab-font") == "Sans:bold:size=28");
+    CHECK(fixture.wmAlive());
+}
+
+TEST_CASE("a tab-font with no usable face is refused and every tab keeps its width",
+          "[wm_config_live]")
+{
+    // WHY A LEVER RATHER THAN A NONSENSE FAMILY NAME. fontconfig SUBSTITUTES
+    // for a family it does not have rather than failing, so no string a user
+    // can type reliably reaches the bottom of the ladder -- which is exactly
+    // what XDIS-04 wants of it, and exactly what makes the failure path
+    // untestable from outside. WM2_FORCE_TAB_FONT_RELOAD_FAILURE forces the
+    // reload's ladder to yield nothing, in the same shape and for the same
+    // reason as WM2_FORCE_NO_TAB_FONT and WM2_FORCE_NO_ROTATED_TAB_FONT: an
+    // internal test lever, read once, with no config key and no command-line
+    // flag. It is deliberately a DIFFERENT lever from those two, so the window
+    // manager still starts with a real face -- there would be nothing to prove
+    // "the previous face stays loaded" about otherwise.
+    WmFixtureOptions options =
+        fixtureWithConfigHome(makeConfigHome("frame-thickness=7\n"));
+    options.childEnv["WM2_FORCE_TAB_FONT_RELOAD_FAILURE"] = "1";
+    WmFixture fixture(options);
+
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d, 200, 150, 300, 220, client, "keeps-width");
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    const int before = decorationWidth(d, frame, client);
+    const std::string fontBefore = ctlGet(fixture, "tab-font");
+
+    CtlResult r = ctl(fixture, {"set", "tab-font", "Monospace:size=30"});
+    settleWm(d);
+    const int after = decorationWidth(d, frame, client);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO(r.describe());
+    INFO("decoration " << before << " -> " << after);
+
+    CHECK(r.exitCode == 1);
+    CHECK(r.err.find("tab-font") != std::string::npos);
+
+    // The previous face is still loaded: the tab kept its width, and the
+    // window manager still reports the value it was actually drawing with.
+    CHECK(after == before);
+    CHECK(ctlGet(fixture, "tab-font") == fontBefore);
+
+    // And it still frames. A reload that closed the old face before opening the
+    // new one would have left it with none.
+    Window late = None;
+    Window lateFrame = mapClientAndAwaitFrame(d, 560, 400, 200, 160, late, "after-refusal");
+    CHECK(lateFrame != None);
+    CHECK(fixture.wmAlive());
+}
+
+TEST_CASE("setting menu-font changes the next root menu's row height",
+          "[wm_config_live]")
+{
+    const std::string home = makeConfigHome("menu-font=Sans:size=10\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    const unsigned long bg = namedPixel(d, "#c8cacc");
+    REQUIRE(bg != ~0UL);
+
+    Window menu = None;
+    Rect before;
+    REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, before, bg));
+    closeRootMenu(d, driver);
+
+    CtlResult r = ctl(fixture, {"set", "menu-font", "Sans:size=22"});
+
+    Window menu2 = None;
+    Rect after;
+    const bool reopened =
+        openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu2, after, bg);
+    closeRootMenu(d, driver);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO(r.describe());
+    INFO("menu before " << describe(before) << " after " << describe(after));
+
+    CHECK(r.exitCode == 0);
+    CHECK(reopened);
+    // WindowManager::menu() derives the row height from the face's ascent and
+    // descent and the popup's height from the row height, so a taller face is a
+    // taller menu with the same number of entries.
+    CHECK(after.h > before.h);
+    CHECK(fixture.wmAlive());
+}
+
+TEST_CASE("setting click-to-focus stops the pointer alone from focusing",
+          "[wm_config_live]")
+{
+    const std::string home = makeConfigHome(
+        "click-to-focus=false\nauto-raise=true\nauto-raise-delay=50\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    // The CONTROL, on the same running window manager: with the file's
+    // click-to-focus=false the pointer alone focuses. Without this half the
+    // negative below could pass on a window manager whose pointer focus never
+    // worked at all.
+    Window first = None;
+    Window firstFrame = mapUnfocusedClient(d, 160, 140, 280, 200, first, "pointer");
+    REQUIRE(firstFrame != None);
+    REQUIRE(pumpedActiveWindow(d) != first);
+
+    const Rect firstRect = rectOf(d, first);
+    driver.moveTo(firstRect.x + firstRect.w / 2, firstRect.y + firstRect.h / 2);
+    const bool focusedByPointer =
+        WmFixture::pollUntil([&] { return pumpedActiveWindow(d) == first; }, 8000);
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(focusedByPointer);
+
+    driver.moveTo(kParkX, kParkY);
+    settleWm(d);
+
+    // --- the flip, on the running desktop -----------------------------------
+    CtlResult r = ctl(fixture, {"set", "click-to-focus", "true"});
+
+    Window second = None;
+    Window secondFrame = mapUnfocusedClient(d, 520, 340, 280, 200, second, "click");
+    REQUIRE(secondFrame != None);
+    REQUIRE(pumpedActiveWindow(d) != second);
+
+    const Rect secondRect = rectOf(d, second);
+    driver.moveTo(secondRect.x + secondRect.w / 2, secondRect.y + secondRect.h / 2);
+    waitPastFocusDelays();
+    settleWm(d);
+    const Window afterEnter = activeWindow(d);
+
+    // ...and a CLICK on the same spot still does focus it, so what changed is
+    // the route and not the window manager's ability to focus anything.
+    driver.press(Button1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    driver.release(Button1);
+    const bool focusedByClick =
+        WmFixture::pollUntil([&] { return pumpedActiveWindow(d) == second; }, 8000);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO(r.describe());
+    INFO("active after pointer entry: " << afterEnter << " second: " << second);
+
+    CHECK(r.exitCode == 0);
+    CHECK(afterEnter != second);
+    CHECK(focusedByClick);
+}
+
+TEST_CASE("setting raise-on-focus false focuses a window without restacking it",
+          "[wm_config_live]")
+{
+    const std::string home = makeConfigHome(
+        "click-to-focus=false\nauto-raise=true\nauto-raise-delay=50\n"
+        "raise-on-focus=true\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    Window a = None, b = None;
+    Window frameA = mapUnfocusedClient(d, 140, 140, 260, 190, a, "a");
+    Window frameB = mapUnfocusedClient(d, 540, 360, 260, 190, b, "b");
+    REQUIRE(frameA != None);
+    REQUIRE(frameB != None);
+    settleWm(d);
+
+    const Rect rectA = rectOf(d, a);
+    const Rect rectB = rectOf(d, b);
+
+    // CONTROL: with the file's raise-on-focus=true, focusing A lifts it above B.
+    driver.moveTo(rectA.x + rectA.w / 2, rectA.y + rectA.h / 2);
+    const bool raisedA = WmFixture::pollUntil([&] {
+        return pumpedActiveWindow(d) == a &&
+               pumpedStackIndex(d, frameA) > pumpedStackIndex(d, frameB);
+    }, 8000);
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(raisedA);
+
+    driver.moveTo(kParkX, kParkY);
+    settleWm(d);
+
+    // --- the flip -----------------------------------------------------------
+    CtlResult r = ctl(fixture, {"set", "raise-on-focus", "false"});
+
+    const int aBefore = pumpedStackIndex(d, frameA);
+    const int bBefore = pumpedStackIndex(d, frameB);
+    REQUIRE(bBefore < aBefore);
+
+    driver.moveTo(rectB.x + rectB.w / 2, rectB.y + rectB.h / 2);
+    const bool focusedB =
+        WmFixture::pollUntil([&] { return pumpedActiveWindow(d) == b; }, 8000);
+
+    // Waited out past the delays, so a raise that was merely slower than the
+    // focus cannot slip past the assertion below.
+    waitPastFocusDelays();
+    settleWm(d);
+    const int aAfter = stackIndex(d, frameA);
+    const int bAfter = stackIndex(d, frameB);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO(r.describe());
+    INFO("stack before a=" << aBefore << " b=" << bBefore
+         << "  after a=" << aAfter << " b=" << bAfter);
+
+    CHECK(r.exitCode == 0);
+    CHECK(focusedB);
+    CHECK(bAfter < aAfter);
+}
+
+TEST_CASE("setting auto-raise false stops the pointer consulting focus at all",
+          "[wm_config_live]")
+{
+    const std::string home = makeConfigHome(
+        "click-to-focus=false\nauto-raise=true\nauto-raise-delay=50\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    Window a = None, b = None;
+    Window frameA = mapUnfocusedClient(d, 140, 140, 260, 190, a, "a");
+    Window frameB = mapUnfocusedClient(d, 540, 360, 260, 190, b, "b");
+    REQUIRE(frameA != None);
+    REQUIRE(frameB != None);
+    const Rect rectA = rectOf(d, a);
+    const Rect rectB = rectOf(d, b);
+
+    // CONTROL: auto-raise on, so pointer entry arms the deadline and focus
+    // follows.
+    driver.moveTo(rectA.x + rectA.w / 2, rectA.y + rectA.h / 2);
+    const bool focusedA =
+        WmFixture::pollUntil([&] { return pumpedActiveWindow(d) == a; }, 8000);
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(focusedA);
+
+    driver.moveTo(kParkX, kParkY);
+    settleWm(d);
+
+    CtlResult r = ctl(fixture, {"set", "auto-raise", "false"});
+
+    driver.moveTo(rectB.x + rectB.w / 2, rectB.y + rectB.h / 2);
+    waitPastFocusDelays();
+    settleWm(d);
+    const Window afterEnter = activeWindow(d);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO(r.describe());
+    INFO("active after entering b: " << afterEnter << "  b: " << b << "  a: " << a);
+
+    CHECK(r.exitCode == 0);
+    // Nothing consults the pointer any more, so B never becomes active.
+    CHECK(afterEnter != b);
+}
+
+TEST_CASE("setting focus-stealing-prevention false grants focus to a window that asked not to have it",
+          "[wm_config_live]")
+{
+    const std::string home = makeConfigHome("focus-stealing-prevention=true\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    // A user-time of zero is the EWMH's explicit "do not focus me on map", so
+    // with prevention on it is refused -- mapped and framed, just not focused.
+    Window refused = None;
+    Window refusedFrame = mapUnfocusedClient(d, 160, 140, 280, 200, refused, "refused");
+    REQUIRE(refusedFrame != None);
+    settleWm(d);
+    const Window afterRefused = activeWindow(d);
+
+    CtlResult r = ctl(fixture, {"set", "focus-stealing-prevention", "false"});
+
+    Window granted = None;
+    Window grantedFrame = mapUnfocusedClient(d, 520, 340, 280, 200, granted, "granted");
+    REQUIRE(grantedFrame != None);
+    const bool focused =
+        WmFixture::pollUntil([&] { return pumpedActiveWindow(d) == granted; }, 8000);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO(r.describe());
+    INFO("active after the refused map: " << afterRefused << " (client " << refused << ")");
+    INFO("active after the granted map: " << activeWindow(d) << " (client " << granted << ")");
+
+    CHECK(r.exitCode == 0);
+    CHECK(afterRefused != refused);
+    CHECK(focused);
+}
+
+TEST_CASE("setting auto-raise-delay changes how long the pointer must rest",
+          "[wm_config_live]")
+{
+    // BOTH delays start at the parser's maximum, and only ONE of them is set
+    // during the case. The other stays at a minute throughout, so it cannot be
+    // what made the focus happen -- which is the whole difficulty with a timing
+    // assertion and the reason the two delay cases are shaped this way.
+    const std::string home = makeConfigHome(
+        "click-to-focus=false\nauto-raise=true\n"
+        "auto-raise-delay=60000\npointer-stopped-delay=60000\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    // TWO windows, and the second entry is a FIRST entry into a window that has
+    // never been a focus candidate. That is not decoration: this is the branch
+    // reached only when NO MotionNotify has been seen, and once a window has
+    // been tracked once the window manager keeps motion selected on it, so
+    // re-entering the same window delivers a motion event and hands the
+    // decision to the pointer-stopped branch instead -- which the sibling case
+    // below is about. MEASURED: written as a park-and-re-enter, this case never
+    // focused at all.
+    Window slow = None, fast = None;
+    Window slowFrame = mapUnfocusedClient(d, 160, 140, 280, 200, slow, "slow");
+    Window fastFrame = mapUnfocusedClient(d, 540, 360, 280, 200, fast, "fast");
+    REQUIRE(slowFrame != None);
+    REQUIRE(fastFrame != None);
+    const Rect slowRect = rectOf(d, slow);
+    const Rect fastRect = rectOf(d, fast);
+
+    // A minute's delay: entering does not focus within the non-event wait.
+    driver.moveTo(slowRect.x + slowRect.w / 2, slowRect.y + slowRect.h / 2);
+    waitPastFocusDelays();
+    settleWm(d);
+    const Window afterSlow = activeWindow(d);
+
+    CtlResult r = ctl(fixture, {"set", "auto-raise-delay", "50"});
+
+    driver.moveTo(fastRect.x + fastRect.w / 2, fastRect.y + fastRect.h / 2);
+    const bool focusedFast =
+        WmFixture::pollUntil([&] { return pumpedActiveWindow(d) == fast; }, 8000);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO(r.describe());
+    INFO("active after the slow entry: " << afterSlow << " slow: " << slow);
+
+    CHECK(r.exitCode == 0);
+    CHECK(afterSlow != slow);
+    CHECK(focusedFast);
+}
+
+TEST_CASE("setting pointer-stopped-delay changes how long stillness must last",
+          "[wm_config_live]")
+{
+    // The sibling of the case above, and the same isolation: auto-raise-delay
+    // stays at a minute for the whole case, so only the pointer-stopped branch
+    // can produce a focus change. That branch is the one taken once a
+    // MotionNotify has been seen INSIDE the candidate window, which is why each
+    // entry below is two moves rather than one.
+    const std::string home = makeConfigHome(
+        "click-to-focus=false\nauto-raise=true\n"
+        "auto-raise-delay=60000\npointer-stopped-delay=60000\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    Window client = None;
+    Window frame = mapUnfocusedClient(d, 200, 150, 300, 220, client, "stopped");
+    REQUIRE(frame != None);
+    const Rect rect = rectOf(d, client);
+    const int cx = rect.x + rect.w / 2;
+    const int cy = rect.y + rect.h / 2;
+
+    driver.moveTo(cx, cy);
+    settleTick();
+    driver.moveTo(cx + 8, cy + 8);
+    waitPastFocusDelays();
+    settleWm(d);
+    const Window afterSlow = activeWindow(d);
+
+    driver.moveTo(kParkX, kParkY);
+    settleWm(d);
+
+    CtlResult r = ctl(fixture, {"set", "pointer-stopped-delay", "20"});
+
+    driver.moveTo(cx, cy);
+    settleTick();
+    driver.moveTo(cx + 8, cy + 8);
+    const bool focusedFast =
+        WmFixture::pollUntil([&] { return pumpedActiveWindow(d) == client; }, 8000);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO(r.describe());
+    INFO("active after the slow entry: " << afterSlow << " client: " << client);
+
+    CHECK(r.exitCode == 0);
+    CHECK(afterSlow != client);
+    CHECK(focusedFast);
+}
+
+TEST_CASE("setting destroy-window-delay changes what a held tab button does",
+          "[wm_config_live]")
+{
+    // The tab button HIDES on a short press and DELETES on a long one, and the
+    // threshold is the setting. The window advertises WM_DELETE_WINDOW, so a
+    // delete arrives here as a client message this connection can observe --
+    // and, crucially, the window manager never reaches XKillClient, which would
+    // take down the test's own X connection along with the window.
+    const std::string home = makeConfigHome(
+        "frame-thickness=7\ndestroy-window-delay=60000\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    const Atom wmProtocols = XInternAtom(d, "WM_PROTOCOLS", False);
+    const Atom wmDelete    = XInternAtom(d, "WM_DELETE_WINDOW", False);
+
+    auto mapDeletableClient = [&](int x, int y, const char* name,
+                                  Window& clientOut) -> Window {
+        Window root = DefaultRootWindow(d);
+        Window win = XCreateSimpleWindow(d, root, x, y, 260, 200, 0,
+                                         BlackPixel(d, DefaultScreen(d)),
+                                         WhitePixel(d, DefaultScreen(d)));
+        XStoreName(d, win, name);
+        Atom protocols[1] = {wmDelete};
+        XSetWMProtocols(d, win, protocols, 1);
+        XSelectInput(d, win, StructureNotifyMask);
+        clientOut = win;
+        XMapWindow(d, win);
+        XSync(d, False);
+        return awaitFrameFor(d, win);
+    };
+
+    // Drain and report whether a WM_DELETE_WINDOW message arrived for `win`.
+    auto sawDelete = [&](Window win) {
+        bool seen = false;
+        while (XPending(d)) {
+            XEvent e;
+            XNextEvent(d, &e);
+            if (e.type == ClientMessage && e.xclient.window == win &&
+                e.xclient.message_type == wmProtocols &&
+                static_cast<Atom>(e.xclient.data.l[0]) == wmDelete) {
+                seen = true;
+            }
+        }
+        return seen;
+    };
+
+    // The button's target square is the tab's whole top square, which sits at
+    // the frame's own origin.
+    auto holdTabButton = [&](Window frame, int ms) {
+        const Rect f = rectOf(d, frame);
+        driver.moveTo(f.x + 5, f.y + 5);
+        settleTick();
+        driver.press(Button1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        driver.release(Button1);
+        XSync(d, False);
+    };
+
+    Window first = None;
+    Window firstFrame = mapDeletableClient(160, 140, "hide-me", first);
+    REQUIRE(firstFrame != None);
+    settleWm(d);
+    while (XPending(d)) { XEvent e; XNextEvent(d, &e); }
+
+    // A minute's threshold: a 500 ms hold is a HIDE, so no delete message.
+    holdTabButton(firstFrame, 500);
+    settleWm(d);
+    const bool deletedWithLongThreshold = sawDelete(first);
+
+    CtlResult r = ctl(fixture, {"set", "destroy-window-delay", "100"});
+
+    Window second = None;
+    Window secondFrame = mapDeletableClient(540, 360, "delete-me", second);
+    REQUIRE(secondFrame != None);
+    settleWm(d);
+    while (XPending(d)) { XEvent e; XNextEvent(d, &e); }
+
+    holdTabButton(secondFrame, 500);
+    bool deletedWithShortThreshold = false;
+    WmFixture::pollUntil([&] {
+        pumpWm(d);
+        if (sawDelete(second)) deletedWithShortThreshold = true;
+        return deletedWithShortThreshold;
+    }, 8000);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO(r.describe());
+
+    CHECK(r.exitCode == 0);
+    CHECK_FALSE(deletedWithLongThreshold);
+    CHECK(deletedWithShortThreshold);
+}
+
+TEST_CASE("setting new-window-command and exec-using-shell changes what the menu's New entry runs",
+          "[wm_config_live]")
+{
+    // The observable is a FILE ON DISK the spawned process creates. Nothing
+    // about the window manager's internal state is read: an assertion that
+    // `get new-window-command` returns the new value would be equally true of a
+    // build that stored it and never executed anything.
+    const std::string home = makeConfigHome("new-window-command=/bin/true\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    const std::string directWitness = home + "/direct-witness";
+    const std::string shellWitness  = home + "/shell-witness";
+    const std::string script        = home + "/spawn-witness.sh";
+    {
+        std::ofstream out(script);
+        out << "#!/bin/sh\nexec /usr/bin/touch " << directWitness << "\n";
+    }
+    REQUIRE(::chmod(script.c_str(), 0700) == 0);
+
+    const unsigned long bg = namedPixel(d, "#c8cacc");
+    auto chooseNew = [&]() {
+        Window menu = None;
+        Rect menuRect;
+        if (!openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect, bg)) {
+            driver.release(Button1);
+            return false;
+        }
+        selectFirstMenuEntry(d, driver, menuRect);
+        settleWm(d);
+        return true;
+    };
+    auto witnessAppeared = [](const std::string& path) {
+        return WmFixture::pollUntil([&] {
+            return ::access(path.c_str(), F_OK) == 0;
+        }, 8000);
+    };
+
+    // --- new-window-command, run directly (no shell) -------------------------
+    CtlResult setCommand = ctl(fixture, {"set", "new-window-command", script});
+    REQUIRE(chooseNew());
+    const bool directRan = witnessAppeared(directWitness);
+
+    // --- exec-using-shell: a command with an ARGUMENT, which execlp cannot run
+    //
+    // "touch <path>" is not the name of any executable, so with the shell flag
+    // off the spawn fails and no witness appears; with it on, /bin/sh parses
+    // the same string into a command and an argument and it runs. That is the
+    // flag's whole meaning, and the pair of observations is what separates it
+    // from a value merely being stored.
+    CtlResult setShellCommand =
+        ctl(fixture, {"set", "new-window-command", "/usr/bin/touch " + shellWitness});
+    REQUIRE(chooseNew());
+    const bool ranWithoutShell = ::access(shellWitness.c_str(), F_OK) == 0;
+
+    CtlResult setShell = ctl(fixture, {"set", "exec-using-shell", "true"});
+    REQUIRE(chooseNew());
+    const bool ranWithShell = witnessAppeared(shellWitness);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO("set new-window-command: " << setCommand.describe());
+    INFO("set shell command: " << setShellCommand.describe());
+    INFO("set exec-using-shell: " << setShell.describe());
+    INFO("direct witness: " << directWitness);
+    INFO("shell witness: " << shellWitness);
+
+    CHECK(setCommand.exitCode == 0);
+    CHECK(setShellCommand.exitCode == 0);
+    CHECK(setShell.exitCode == 0);
+    CHECK(directRan);
+    CHECK_FALSE(ranWithoutShell);
+    CHECK(ranWithShell);
 }
