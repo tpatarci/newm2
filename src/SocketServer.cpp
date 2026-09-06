@@ -820,15 +820,11 @@ void ConfigSocketServer::reap()
     // still names. The debt is recorded and paid by service() the moment the
     // last handler has returned, so a dead connection lives at most to the end
     // of the pass that killed it and never past a poll().
-    if (m_serviceDepth != 0) {
-        m_reapPending = true;
-        return;
-    }
+    if (m_serviceDepth != 0) return;
 
     m_clients.erase(std::remove_if(m_clients.begin(), m_clients.end(),
                                    [](const Connection& c) { return c.dead; }),
                     m_clients.end());
-    m_reapPending = false;
 }
 
 

@@ -413,10 +413,13 @@ private:
     // notice on this very server, and broadcast() ends in reap() -- an
     // erase-remove over the vector the servicing loop is walking.
     //
-    // reap() therefore DEFERS while this is non-zero and records that it owes
-    // one, and service() pays the debt once, after every handler has returned.
-    // The window manager has one thread, so this is a re-entrancy counter and
-    // not a lock: it counts nesting, never contention.
+    // reap() therefore DEFERS while this is non-zero, and service() calls it
+    // UNCONDITIONALLY once every handler has returned -- no debt flag, because
+    // an unconditional call is strictly stronger than a conditional one and a
+    // field that records a correlation nothing reads is dead state whose
+    // documentation can only rot (I-08). The window manager has one thread, so
+    // this is a re-entrancy counter and not a lock: it counts nesting, never
+    // contention.
     //
     // RAISED AND LOWERED BY AN RAII GUARD, never by a ++/-- pair (W-01). A
     // handler that throws -- std::bad_alloc out of the string, Config and
@@ -427,7 +430,6 @@ private:
     // kConfigSocketMaxClients, and the socket accepts nothing for the rest of
     // the session with no diagnostic at all.
     std::size_t m_serviceDepth = 0;
-    bool        m_reapPending  = false;
 
     // The connection whose frame a handler is running against, or -1 (W-04).
     // Set around the handler call in readConnection() and restored on the way
