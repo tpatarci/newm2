@@ -1,18 +1,18 @@
 ---
-gsd_state_version: 1.0
+gsd_state_version: "1.0"
 milestone: v1.0
 current_phase: 09
 current_phase_name: Config GUI + IPC
 status: executing
-stopped_at: Completed 09-04-PLAN.md
-last_updated: "2026-09-06T09:19:09.027Z"
+stopped_at: Completed 09-05-PLAN.md
+last_updated: "2026-09-06T10:54:39.806Z"
 last_activity: 2026-09-06
-state_head: 023a5925e13a67c4ec3aecb2d5afcfd04708b165
+state_head: e615430b64c0b1dddb92fdac0e462989b33d4429
 progress:
   total_phases: 11
   completed_phases: 4
   total_plans: 58
-  completed_plans: 52
+  completed_plans: 53
 milestone_name: milestone
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 09 (Config GUI + IPC) — EXECUTING
-Plan: 5 of 9
+Plan: 6 of 9
 Status: Ready to execute
 Progress: [████████░░] 81% (7/9 phases complete)
 
@@ -362,6 +362,7 @@ Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
 | Phase 09 P02 | 35 min | 4 tasks | 6 files |
 | Phase 09 P03 | 68 min | 3 tasks | 10 files |
 | Phase 09 P04 | 30 min | 3 tasks | 13 files |
+| Phase 09 P05 | 1h 40m | 3 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -477,6 +478,12 @@ Recent decisions affecting current work:
 - [Phase 09]: DISC-06: servicing the socket is a fourth, silent case in modalWait() -- never Event, never Interrupted, so no existing caller's contract changes
 - [Phase 09]: Both poll sites in src/Events.cpp are ONE shared descriptor set built by WindowManager::buildPollSet(), with named indices; any future multiplexed descriptor is added once and reaches both
 - [Phase 09]: include/ConfigProtocol.h replaces Xlib's 'define Status int' macro with a typedef, because the frozen 'status' message type cannot be renamed and X11 extension headers return Status
+- [Phase 09]: 09-05: applyConfig() validates BEFORE it stores and returns bool -- 09-04's store-first order could not survive a setting the X server can refuse, so a colour or font failure now returns having changed nothing at all, not even m_config
+- [Phase 09]: 09-05: every live resource change allocates before it releases (colours, GCs, Xft colours) or loads before it closes (fonts), so a value that cannot be resolved leaves the previous one entirely in place (T-9-26/T-9-27)
+- [Phase 09]: 09-05: manual menu entries travel as ONE value in the config file's own key order with ';' between records, replaced wholesale -- idempotent by construction, and mapping onto a GUI's Add/Edit/Remove rows with no per-row protocol (D-12)
+- [Phase 09]: 09-05: D-08's reload notice reuses the already-frozen 'reloaded' type and carries nothing but its type, so version 1 gains no twelfth message and the notice cannot become a second copy of the settings (T-9-31)
+- [Phase 09]: 09-05: D-06's per-setting next-start fallback was NOT exercised -- every setting the GUI will offer applies live, and docs/RELEASE-NOTES.md names no exception
+- [Phase 09]: 09-05: the menu-open deferral (T-9-32) is a structural mitigation with no mutation-proof case -- removing it leaves the held-open case green in both trees, recorded in WINDOWS.md rather than claimed as covered
 
 ### Pending Todos
 
@@ -527,6 +534,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-06T09:19:08.534Z
-Stopped at: Completed 09-04-PLAN.md
+Last session: 2026-09-06T10:53:57.340Z
+Stopped at: Completed 09-05-PLAN.md
 Resume file: None

@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 3
+open_count: 4
 waived_count: 8
 fixed_count: 6
-total_count: 17
-last_updated: 2026-09-06T09:16:12.670Z
+total_count: 18
+last_updated: 2026-09-06T10:53:30.413Z
 ---
 
 # Broken Windows Ledger
@@ -32,6 +32,7 @@ last_updated: 2026-09-06T09:16:12.670Z
 | 15 | 09 | deviation | docs/RELEASE-NOTES.md |  | 09-01 Task 3 acceptance asked for one contiguous git-diff hunk, which its own two-paragraph action clause cannot produce; verified the stated intent (no line outside the Appearance section changed) instead | open |  | 2026-09-06T00:38:35.082Z |  |
 | 16 | 09 | deviation | tests/test_config_writer.cpp | 604 | The T-9-07/T-9-08 atomicity case SKIPs when euid==0: directory permissions are not enforced for root, so on a root-only host that evidence is not collected | open |  | 2026-09-06T07:41:36.481Z |  |
 | 17 | 09 | deviation | tests/test_wm_config_live.cpp | 793 | The reload-unreadable-file case SKIPs when euid==0: root can read a mode-000 file, so on a root-only host the 'reload names the file and changes nothing' evidence is not collected | open |  | 2026-09-06T09:16:12.670Z |  |
+| 18 | 09 | unrun-verify | tests/test_wm_config_live.cpp |  | The menu-open deferral (T-9-32) has no mutation-proof case: removing 'if (m_menuOpen)' leaves 'a menu held open across a menu-entry change is not disturbed' green in both the debug and the ASan tree, because the category vector's buffer is reused rather than freed | open |  | 2026-09-06T10:53:30.413Z |  |
 
 ````json
 [
@@ -237,6 +238,18 @@ last_updated: 2026-09-06T09:16:12.670Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-06T09:16:12.670Z",
+    "resolved_at": null
+  },
+  {
+    "id": 18,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "tests/test_wm_config_live.cpp",
+    "line": null,
+    "description": "The menu-open deferral (T-9-32) has no mutation-proof case: removing 'if (m_menuOpen)' leaves 'a menu held open across a menu-entry change is not disturbed' green in both the debug and the ASan tree, because the category vector's buffer is reused rather than freed",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T10:53:30.413Z",
     "resolved_at": null
   }
 ]
