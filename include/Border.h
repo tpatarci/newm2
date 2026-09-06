@@ -7,6 +7,7 @@
 
 class Client;
 class WindowManager;
+struct Config;
 
 // Frame dimensions (from upstream Config.h and Border.h)
 constexpr int TAB_TOP_HEIGHT = 2;
@@ -39,6 +40,47 @@ public:
     // client, which flashes and loses stacking order. The client window keeps
     // its size and its position ON SCREEN; only the decoration around it moves.
     void relayoutForFrameThickness(int x, int y, int w, int h);
+
+    // -----------------------------------------------------------------------
+    // Live colour and font reload (CGUI-04, plan 09-05)
+    // -----------------------------------------------------------------------
+
+    // Re-allocate every colour and every graphics context this class draws
+    // with, from `next`. ALLOCATE-THEN-SWAP: every new value is obtained
+    // first, and only a complete success releases anything -- so a colour the
+    // server cannot parse leaves the previous palette entirely in place and
+    // reports the failure to the caller. Returns false with the offending key
+    // in `keyOut`, having changed nothing at all.
+    //
+    // Static because the palette is shared by every frame: one allocation, one
+    // set of graphics contexts, one bevel derivation. The per-instance repaint
+    // that makes the new values visible is the next method down.
+    static bool reloadColours(WindowManager *wm, const Config &next,
+                              std::string &keyOut);
+
+    // Push the reloaded palette onto THIS frame: the new background pixels on
+    // each window, a clear so the server repaints from them, and the existing
+    // paint path re-run for the tab and the button. Deliberately re-runs
+    // drawLabel()/drawButtonBevel() rather than inventing a second drawing
+    // path, so a frame repainted after a colour change is byte-identical to
+    // one repainted after an Expose.
+    void repaintForColourChange();
+
+    // Load `pattern` as the shared tab face and re-measure the tab width.
+    // Walks the same ladder loadTabFont() walks, and LOADS BEFORE IT CLOSES:
+    // a pattern with no usable face at any rung leaves the previous face
+    // loaded and the previous tab width in force, and returns false. Static
+    // for the same reason as reloadColours().
+    static bool reloadTabFont(WindowManager *wm, const std::string &pattern);
+
+    // Re-lay this frame out after the shared tab font changed. The tab's
+    // thickness moves with the face's metrics, so the indents move with it and
+    // the frame, the tab, the button and the shape must all be recomputed --
+    // which is exactly what the thickness path above already does, so this
+    // delegates to it rather than computing the same geometry a second way.
+    // The label is redrawn afterwards because the FACE changed, which the
+    // thickness path has no reason to do.
+    void relayoutForTabFont(int x, int y, int w, int h);
 
     // Fullscreen support
     void stripForFullscreen();

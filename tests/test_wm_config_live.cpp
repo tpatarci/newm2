@@ -1391,11 +1391,12 @@ TEST_CASE("the tab bevel is re-derived from the new tab background",
 
     // The shade WindowManager::allocateShadeOf() produces from the SHIPPED
     // #C8CACC at +0.76 toward white, and the one it produces from #400000 at
-    // the same fraction. Both MEASURED rather than recomputed here: doing the
-    // blend again in the test would let the same arithmetic error pass on both
-    // sides of the comparison.
+    // the same fraction. Both MEASURED on this host and written down as
+    // literals rather than recomputed here: doing the blend again in the test
+    // would let the same arithmetic error pass on both sides of the
+    // comparison, which is the whole point of naming an expected value.
     const unsigned long shippedHighlight = namedPixel(d, "#f2f3f3");
-    const unsigned long darkHighlight    = namedPixel(d, "#e2b8b8");
+    const unsigned long darkHighlight    = namedPixel(d, "#d1c2c2");
     REQUIRE(shippedHighlight != ~0UL);
     REQUIRE(darkHighlight    != ~0UL);
 
@@ -1408,7 +1409,7 @@ TEST_CASE("the tab bevel is re-derived from the new tab background",
 
     INFO("wm stderr:\n" << fixture.wmStderr());
     INFO(r.describe());
-    INFO("tab after: " << describeTop(after));
+    INFO("tab after: " << describeTop(after, 12));
 
     CHECK(r.exitCode == 0);
     // The highlight now belongs to the NEW background...

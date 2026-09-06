@@ -749,18 +749,79 @@ void WindowManager::initialiseScreen()
 }
 
 
-unsigned long WindowManager::allocateColour(const char *name, const char *desc)
+bool WindowManager::tryAllocateColour(const char *name, unsigned long &out) const
 {
     XColor nearest, ideal;
 
-    if (!XAllocNamedColor(display(), DefaultColormap(display(), m_screenNumber),
+    // const_cast'd through the accessor rather than making display() const:
+    // Xlib takes a non-const Display* everywhere, and this is a read of the
+    // colormap, not a mutation of the manager.
+    Display *d = const_cast<WindowManager *>(this)->m_display.get();
+    if (!XAllocNamedColor(d, DefaultColormap(d, m_screenNumber),
                           name, &nearest, &ideal)) {
+        return false;
+    }
+    out = nearest.pixel;
+    return true;
+}
+
+
+unsigned long WindowManager::allocateColour(const char *name, const char *desc)
+{
+    // The FATAL wrapper, and the only one startup uses. A colour the server
+    // cannot parse before the window manager has drawn anything is an
+    // unrecoverable configuration error; the same failure arriving over the
+    // socket later is not, which is why the predicate above exists separately
+    // rather than as a flag on this function.
+    unsigned long pixel = 0;
+    if (!tryAllocateColour(name, pixel)) {
         char error[100];
-        std::sprintf(error, "couldn't load %s colour", desc);
+        std::snprintf(error, sizeof error, "couldn't load %s colour", desc);
         fatal(error);
     }
+    return pixel;
+}
 
-    return nearest.pixel;
+
+bool WindowManager::tryAllocateShadeOf(const char *name, double fraction,
+                                       unsigned long &out) const
+{
+    XColor nearest, ideal;
+
+    Display *d = const_cast<WindowManager *>(this)->m_display.get();
+    if (!XAllocNamedColor(d, DefaultColormap(d, m_screenNumber),
+                          name, &nearest, &ideal)) {
+        return false;
+    }
+
+    auto blend = [fraction](unsigned short c) -> unsigned short {
+        const double v = static_cast<double>(c);
+        const double result = (fraction >= 0.0)
+            ? v + (65535.0 - v) * fraction
+            : v * (1.0 + fraction);
+        if (result < 0.0) return 0;
+        if (result > 65535.0) return 65535;
+        return static_cast<unsigned short>(result);
+    };
+
+    XColor shade;
+    shade.red   = blend(ideal.red);
+    shade.green = blend(ideal.green);
+    shade.blue  = blend(ideal.blue);
+    shade.flags = DoRed | DoGreen | DoBlue;
+
+    // A shade that will not allocate is reported as SUCCESS with a zero pixel,
+    // exactly as the warning wrapper below reports it: the base colour did
+    // resolve, and "no bevel" is the correct degradation on a display whose
+    // colormap is full. A false return is reserved for the one condition a
+    // caller must refuse on -- the base colour itself being unparseable.
+    if (!XAllocColor(d, DefaultColormap(d, m_screenNumber), &shade)) {
+        out = 0;
+        return true;
+    }
+
+    out = shade.pixel;
+    return true;
 }
 
 
@@ -1790,18 +1851,120 @@ std::string canonicalValue(const ConfigKeySpec& spec, const std::string& value)
 }  // namespace
 
 
-void WindowManager::applyConfig(const Config &next)
+bool WindowManager::reloadMenuColours(const Config &next, std::string &keyOut)
+{
+    Visual  *visual = DefaultVisual(display(), m_screenNumber);
+    Colormap cmap   = DefaultColormap(display(), m_screenNumber);
+
+    // ALLOCATE-THEN-SWAP, exactly as Border::reloadColours() does it: all four
+    // values into locals, and only a complete success assigns anything.
+    // XftColorWrap's move-assignment frees what it replaces, so the swap below
+    // is where the old colours are released and not one statement earlier.
+    x11::XftColorWrap fg(display(), visual, cmap, next.menuForeground.c_str());
+    if (!fg) { keyOut = "menu-foreground"; return false; }
+    x11::XftColorWrap bg(display(), visual, cmap, next.menuBackground.c_str());
+    if (!bg) { keyOut = "menu-background"; return false; }
+    x11::XftColorWrap hl(display(), visual, cmap, next.menuHighlight.c_str());
+    if (!hl) { keyOut = "menu-highlight"; return false; }
+
+    unsigned long borderPixel = 0;
+    if (!tryAllocateColour(next.menuBorders.c_str(), borderPixel)) {
+        keyOut = "menu-borders";
+        return false;
+    }
+
+    m_menuFgColor     = std::move(fg);
+    m_menuBgColor     = std::move(bg);
+    m_menuHlColor     = std::move(hl);
+    m_menuBorderPixel = borderPixel;
+
+    // The three popups are UNMAPPED between uses and rebuilt on every opening,
+    // so there is no live drawing to repair here -- only the state the server
+    // paints from when the next opening maps them. The background pixel is what
+    // fills the window on map (which is the BackgroundOnly state
+    // tests/support/PixelVerdict.h names); the border pixel is the one-pixel
+    // outline, these popups being the only windows in the codebase created with
+    // a border WIDTH above zero.
+    for (Window w : {m_menuWindow, m_submenuWindow, m_geometryWindow}) {
+        if (w == None) continue;
+        XSetWindowBackground(display(), w, m_menuBgColor->pixel);
+        XSetWindowBorder(display(), w, m_menuBorderPixel);
+    }
+    return true;
+}
+
+
+bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
 {
     // DISC-06a. Read the declaration in include/Manager.h before adding to
     // this function: the rule is that every field is diffed here, and that
     // nothing anywhere else in the codebase writes running state from a Config.
 
-    const int previousThickness = m_config.frameThickness;
+    const Config previous = m_config;
 
-    // Stored FIRST and WHOLE, so a field this plan does not yet apply live is
-    // still the value the window manager reports and the value the next thing
-    // to read it sees. A later plan adding a branch below therefore only has to
-    // write the application, never the assignment.
+    // --- Everything that can FAIL happens before anything is stored ---------
+    //
+    // Plan 09-04 stored `next` first, because the one live setting it applied
+    // could not fail. A colour can: `set tab-background nonsense` is a value
+    // the CONFIG PARSER accepts verbatim (colours are validated by the server,
+    // not by Config) and the X server then refuses. Storing first and failing
+    // second would leave `get tab-background` reporting a value nothing is
+    // drawn in -- so the order is now validate, then store, then apply, and a
+    // failure returns having changed nothing at all.
+    const bool coloursChanged =
+        next.tabForeground    != previous.tabForeground    ||
+        next.tabBackground    != previous.tabBackground    ||
+        next.frameBackground  != previous.frameBackground  ||
+        next.buttonBackground != previous.buttonBackground ||
+        next.borders          != previous.borders          ||
+        next.menuForeground   != previous.menuForeground   ||
+        next.menuBackground   != previous.menuBackground   ||
+        next.menuHighlight    != previous.menuHighlight    ||
+        next.menuBorders      != previous.menuBorders;
+
+    if (coloursChanged) {
+        // PRE-FLIGHT. Every one of the nine is resolved before either reload
+        // begins, so the two reloads below cannot leave the frame palette new
+        // and the menu palette old: by the time the first of them commits, the
+        // server has already agreed that all nine names parse.
+        const struct { const char *key; const std::string *value; } palette[] = {
+            {"tab-foreground",    &next.tabForeground},
+            {"tab-background",    &next.tabBackground},
+            {"frame-background",  &next.frameBackground},
+            {"button-background", &next.buttonBackground},
+            {"borders",           &next.borders},
+            {"menu-foreground",   &next.menuForeground},
+            {"menu-background",   &next.menuBackground},
+            {"menu-highlight",    &next.menuHighlight},
+            {"menu-borders",      &next.menuBorders},
+        };
+        for (const auto &entry : palette) {
+            unsigned long ignored = 0;
+            if (!tryAllocateColour(entry.value->c_str(), ignored)) {
+                reasonOut = std::string("the X server cannot parse the ") +
+                            entry.key + " colour";
+                return false;
+            }
+        }
+
+        std::string offending;
+        if (!Border::reloadColours(this, next, offending) ||
+            !reloadMenuColours(next, offending)) {
+            // Unreachable after the pre-flight above unless the colormap
+            // filled between the two, which on the TrueColor visuals this
+            // project targets cannot happen. Reported rather than asserted,
+            // because a window manager must not abort on a colour.
+            reasonOut = "could not allocate the " + offending + " colour";
+            return false;
+        }
+    }
+
+    // --- Stored WHOLE, now that nothing left can fail -----------------------
+    //
+    // Whole rather than field by field, so a field a later plan does not yet
+    // apply live is still the value the window manager reports and the value
+    // the next thing to read it sees: a new branch below writes an application,
+    // never an assignment.
     m_config = next;
 
     // --- Frame thickness ----------------------------------------------------
@@ -1809,7 +1972,7 @@ void WindowManager::applyConfig(const Config &next)
     // The diff is what makes the idempotency guarantee true: a `set` that names
     // the value already in force does no work at all, so a client that repeats
     // itself cannot make the desktop flicker or the frames drift.
-    if (next.frameThickness != previousThickness) {
+    if (next.frameThickness != previous.frameThickness) {
         FRAME_WIDTH = next.frameThickness;
 
         // Both lists. addToHiddenList() MOVES a client out of m_clients rather
@@ -1820,6 +1983,20 @@ void WindowManager::applyConfig(const Config &next)
 
         XFlush(display());
     }
+
+    // --- Colours ------------------------------------------------------------
+    //
+    // The palette was reloaded above, before m_config moved; what is left is to
+    // make it visible. Both lists again, for the same reason: a hidden window
+    // unhidden later must not come back wearing the old palette.
+    if (coloursChanged) {
+        for (const auto &client : m_clients)       client->repaintForColourChange();
+        for (const auto &client : m_hiddenClients) client->repaintForColourChange();
+
+        XFlush(display());
+    }
+
+    return true;
 }
 
 
@@ -1891,8 +2068,11 @@ bool WindowManager::applyConfigSet(const std::string &key, const std::string &va
         return false;
     }
 
-    applyConfig(next);
-    return true;
+    // The funnel can itself refuse -- a colour the config parser takes verbatim
+    // and the X server then rejects reaches this point looking valid. Its
+    // reason is passed straight through, so the client is told which key and
+    // why rather than being handed a generic failure.
+    return applyConfig(next, reasonOut);
 }
 
 
@@ -1923,8 +2103,13 @@ bool WindowManager::reloadConfigFromDisk(std::string &reasonOut)
     Config next = Config::load(static_cast<int>(m_cliArgs.size()),
                                argv.empty() ? nullptr : argv.data());
 
+    // Applied BEFORE the saved snapshot is replaced. A file carrying a colour
+    // the server cannot parse is refused whole -- nothing is applied and the
+    // snapshot still describes what the window manager is actually drawing
+    // with, which is what makes DISC-07's "revert" mean something.
+    if (!applyConfig(next, reasonOut)) return false;
+
     m_savedConfig = next;
-    applyConfig(next);
     return true;
 }
 

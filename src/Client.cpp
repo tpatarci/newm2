@@ -1626,6 +1626,37 @@ void Client::relayoutFrame()
 }
 
 
+void Client::relayoutFrameForFont()
+{
+    // The same three skips as above, for the same three reasons: an unmanaged
+    // client has no frame, a frameless one is managed with its own window as
+    // parent by design, and a fullscreen one has had its frame stripped and
+    // will rebuild it -- reading the new tab width through xIndent()/yIndent()
+    // like everything else -- when it leaves fullscreen.
+    if (!m_managed) return;
+    if (m_frameless) return;
+    if (m_isFullscreen) return;
+    if (!m_border) return;
+
+    m_border->relayoutForTabFont(m_x, m_y, m_w, m_h);
+}
+
+
+void Client::repaintForColourChange()
+{
+    // A colour change touches only DECORATION, so a client with no decoration
+    // has nothing to do -- but unlike the two re-layouts above there is no
+    // geometry involved at all, so there is nothing that could move the user's
+    // window even by accident.
+    if (!m_managed) return;
+    if (m_frameless) return;
+    if (m_isFullscreen) return;
+    if (!m_border) return;
+
+    m_border->repaintForColourChange();
+}
+
+
 void Client::rename()
 {
     if (m_frameless) return;                 // no tab to relabel

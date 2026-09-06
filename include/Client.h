@@ -94,6 +94,15 @@ public:
     // configuration change goes through.
     void relayoutFrame();
 
+    // CGUI-04 (plan 09-05): the same funnel's other two per-client entry
+    // points. relayoutFrameForFont() re-lays the decoration out for a tab face
+    // whose metrics moved the tab's thickness, and repaintForColourChange()
+    // pushes a reloaded palette onto this client's frame. Both carry the SAME three skip
+    // conditions relayoutFrame() carries, named individually in src/Client.cpp
+    // rather than folded into one catch-all guard.
+    void relayoutFrameForFont();
+    void repaintForColourChange();
+
     // Interaction
     void move(XButtonEvent *e);
     void resize(XButtonEvent *e, bool horizontal, bool vertical);

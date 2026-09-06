@@ -324,6 +324,199 @@ void Border::loadTabFont()
 }
 
 
+// ---------------------------------------------------------------------------
+// Live colour reload (CGUI-04, plan 09-05)
+//
+// ALLOCATE-THEN-SWAP, and the ordering is the whole safety property. Every new
+// value -- five pixels, two Xft colours, two derived bevel shades and three
+// graphics contexts -- is obtained into a LOCAL first. Only when every one of
+// them has succeeded is a single old value released. A failure at any point
+// therefore leaves the window manager drawing with exactly the palette it had,
+// which is what threat T-9-26 and this plan's standing prohibition require;
+// freeing first and hoping would leave a frame with no colour at all.
+//
+// A note on what is NOT released here. The five pixel values come from
+// XAllocNamedColor and are never freed, in this function or anywhere else in
+// this codebase -- see WindowManager::allocateColour(), whose results have the
+// same lifetime. On the TrueColor visuals every target of this project uses
+// (Xvfb, TigerVNC, TightVNC, XRDP and any modern X server) a named-colour
+// allocation consumes no colormap cell at all: the pixel is computed from the
+// visual's masks, so there is nothing to leak. Freeing them would also be
+// wrong as the code stands, because two keys set to the same colour share one
+// allocation and a single free would release it for both.
+// ---------------------------------------------------------------------------
+
+bool Border::reloadColours(WindowManager *wm, const Config &next,
+                           std::string &keyOut)
+{
+    // Before the first frame exists the statics block has not run, and it
+    // reads whatever is in the config when it does. Nothing to reload, and
+    // nothing to fail.
+    if (!m_staticsInitialised) return true;
+
+    Display *d = wm->display();
+    Visual *visual = DefaultVisual(d, DefaultScreen(d));
+    Colormap cmap  = DefaultColormap(d, DefaultScreen(d));
+
+    // --- allocate: pixels ---------------------------------------------------
+    unsigned long framePixel = 0, buttonPixel = 0, borderPixel = 0;
+    unsigned long fgPixel = 0, bgPixel = 0;
+
+    const struct { const char *key; const std::string *value; unsigned long *out; }
+    wanted[] = {
+        {"frame-background",  &next.frameBackground,  &framePixel},
+        {"button-background", &next.buttonBackground, &buttonPixel},
+        {"borders",           &next.borders,          &borderPixel},
+        {"tab-foreground",    &next.tabForeground,    &fgPixel},
+        {"tab-background",    &next.tabBackground,    &bgPixel},
+    };
+    for (const auto &w : wanted) {
+        if (!wm->tryAllocateColour(w.value->c_str(), *w.out)) {
+            keyOut = w.key;
+            return false;
+        }
+    }
+
+    // --- allocate: the two Xft colours the tab is drawn with -----------------
+    XftColor newForeground, newBackground;
+    if (!XftColorAllocName(d, visual, cmap, next.tabForeground.c_str(),
+                           &newForeground)) {
+        keyOut = "tab-foreground";
+        return false;
+    }
+    if (!XftColorAllocName(d, visual, cmap, next.tabBackground.c_str(),
+                           &newBackground)) {
+        XftColorFree(d, visual, cmap, &newForeground);
+        keyOut = "tab-background";
+        return false;
+    }
+
+    auto abandon = [&]() {
+        XftColorFree(d, visual, cmap, &newBackground);
+        XftColorFree(d, visual, cmap, &newForeground);
+    };
+
+    // --- allocate: the bevel shades, DERIVED from the new tab background -----
+    //
+    // Re-derived rather than carried over, which is the point of deriving them
+    // at all: a user who sets a dark palette live gets bevels that belong to
+    // it, instead of the previous palette's near-white highlight sitting on the
+    // new body colour and reading as a rendering fault. The two fractions are
+    // the ones the constructor uses, spelled once here and once there because
+    // they are the same design decision seen from two entry points.
+    unsigned long lightPixel = 0, shadowPixel = 0;
+    if (!wm->tryAllocateShadeOf(next.tabBackground.c_str(), 0.76, lightPixel) ||
+        !wm->tryAllocateShadeOf(next.tabBackground.c_str(), -0.315, shadowPixel)) {
+        abandon();
+        keyOut = "tab-background";
+        return false;
+    }
+
+    // --- allocate: the graphics contexts ------------------------------------
+    x11::GCPtr newDrawGC, newLightGC, newShadowGC;
+    {
+        XGCValues values;
+        values.foreground = fgPixel;
+        values.background = bgPixel;
+        values.function = GXcopy;
+        values.line_width = 0;
+        values.subwindow_mode = IncludeInferiors;
+        newDrawGC = x11::make_gc(d, wm->root(),
+            GCForeground | GCBackground | GCFunction | GCLineWidth | GCSubwindowMode,
+            &values);
+    }
+    if (!newDrawGC) {
+        abandon();
+        keyOut = "tab-foreground";
+        return false;
+    }
+
+    // A zero pixel means the shade would not allocate, which every draw site
+    // already treats as "no bevel". Not an error: decoration must not be able
+    // to refuse a colour change.
+    if (lightPixel != 0) {
+        XGCValues bv;
+        bv.foreground = lightPixel;
+        bv.line_width = 0;
+        bv.function = GXcopy;
+        bv.subwindow_mode = IncludeInferiors;
+        newLightGC = x11::make_gc(d, wm->root(),
+            GCForeground | GCLineWidth | GCFunction | GCSubwindowMode, &bv);
+    }
+    if (shadowPixel != 0) {
+        XGCValues bv;
+        bv.foreground = shadowPixel;
+        bv.line_width = 0;
+        bv.function = GXcopy;
+        bv.subwindow_mode = IncludeInferiors;
+        newShadowGC = x11::make_gc(d, wm->root(),
+            GCForeground | GCLineWidth | GCFunction | GCSubwindowMode, &bv);
+    }
+
+    // --- swap: nothing above can fail from here on --------------------------
+    if (m_xftColorsAllocated) {
+        XftColorFree(d, visual, cmap, &m_xftForeground);
+        XftColorFree(d, visual, cmap, &m_xftBackground);
+    }
+    m_xftForeground = newForeground;
+    m_xftBackground = newBackground;
+    m_xftColorsAllocated = true;
+
+    m_frameBackgroundPixel  = framePixel;
+    m_buttonBackgroundPixel = buttonPixel;
+    m_borderPixel           = borderPixel;
+
+    m_drawGC        = std::move(newDrawGC);
+    m_bevelLightGC  = std::move(newLightGC);
+    m_bevelShadowGC = std::move(newShadowGC);
+    return true;
+}
+
+
+void Border::repaintForColourChange()
+{
+    // A client that was never framed, or whose frame is stripped for
+    // fullscreen, has nothing to repaint. Checked rather than assumed, for the
+    // same reason relayoutForFrameThickness() checks it.
+    if (!m_parent || m_parent == root()) return;
+
+    // THE BACKGROUND PIXEL, THEN A CLEAR. Two of the surfaces the palette
+    // governs are painted by the SERVER from the window's background pixel
+    // rather than by any code here -- the frame body and the tab's top band --
+    // so re-running the draw path alone would leave them in the old colour
+    // until something else happened to expose them.
+    //
+    // The BORDER pixel matters too, and is easy to miss because every one of
+    // these windows is created with a border WIDTH of zero: on a SHAPED window
+    // the region between the bounding and the clip shape is painted by the
+    // server from the border pixel, and that region is the black outline the
+    // `borders` key names -- the tab's one-pixel top row and the ring around
+    // the tab button.
+    XSetWindowBackground(display(), m_parent, m_frameBackgroundPixel);
+    XSetWindowBorder(display(), m_parent, m_borderPixel);
+    XClearWindow(display(), m_parent);
+
+    if (!isTransient()) {
+        if (m_tab != None) {
+            XSetWindowBackground(display(), m_tab, m_xftBackground.pixel);
+            XSetWindowBorder(display(), m_tab, m_borderPixel);
+            XClearWindow(display(), m_tab);
+        }
+        if (m_button != None) {
+            XSetWindowBackground(display(), m_button, m_buttonBackgroundPixel);
+            XSetWindowBorder(display(), m_button, m_borderPixel);
+            XClearWindow(display(), m_button);
+        }
+
+        // The EXISTING paint path, not a second one: a frame repainted after a
+        // colour change is byte-identical to one repainted after an Expose.
+        const bool active = m_client->isActive();
+        drawLabel(active);
+        drawButtonBevel(active);
+    }
+}
+
+
 void Border::allocateXftColors()
 {
     if (m_xftColorsAllocated) return;
@@ -1273,6 +1466,27 @@ void Border::relayoutForFrameThickness(int x, int y, int w, int h)
     // ConfigureNotify is owed here -- ICCCM reports absolute position and size,
     // and neither changed.
     XMoveWindow(display(), m_child, xIndent(), yIndent());
+}
+
+
+void Border::relayoutForTabFont(int x, int y, int w, int h)
+{
+    // The thickness path, not a copy of it. A tab-font change moves
+    // m_tabWidth, xIndent() is m_tabWidth + FRAME_WIDTH + 1, and every window
+    // the frame is made of is positioned from those indents -- which is the
+    // same set of recomputations a thickness change needs, done by the same
+    // code. Two parallel computations of one geometry is how they drift.
+    relayoutForFrameThickness(x, y, w, h);
+
+    // ...and then the label, which the thickness path deliberately does not
+    // redraw because a thickness change does not alter the FACE. Here it does:
+    // the glyphs themselves are different, so the tab has to be repainted in
+    // them rather than left showing the old face until the next Expose.
+    if (!isTransient() && m_parent && m_parent != root()) {
+        const bool active = m_client->isActive();
+        drawLabel(active);
+        drawButtonBevel(active);
+    }
 }
 
 

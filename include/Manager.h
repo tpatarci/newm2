@@ -91,6 +91,24 @@ public:
     void installColormap(Colormap cmap);
     unsigned long allocateColour(const char *name, const char *fallback);
 
+    // The NON-FATAL forms of the two allocators below, and the reason a colour
+    // arriving over the socket can be refused rather than ending the process
+    // (plan 09-05, threat T-9-26).
+    //
+    // allocateColour() calls fatal() on a name the server cannot parse, which
+    // is right at startup -- a window manager with no frame colour has nothing
+    // to draw -- and catastrophic for a `set`, where the correct answer is an
+    // error naming the key and a desktop that keeps the colour it had. These
+    // return false instead, having changed nothing.
+    //
+    // The live path allocates EVERY new value through these BEFORE it releases
+    // a single old one. That ordering is the whole of the safety property: a
+    // failure after the old value was freed would leave the window manager
+    // with no usable colour, which is exactly what the prohibition forbids.
+    bool tryAllocateColour(const char *name, unsigned long &out) const;
+    bool tryAllocateShadeOf(const char *name, double fraction,
+                            unsigned long &out) const;
+
     // A shade of `name`: blended `fraction` of the way toward white when
     // positive, toward black when negative. Used for the 1 px bevel highlight
     // and shadow (plan 08.5-02).
@@ -350,7 +368,17 @@ private:
     // -- and so the idempotency guarantee (applying the same value twice does
     // no second piece of work) holds for every setting by construction rather
     // than one setting at a time.
-    void applyConfig(const Config& next);
+    // Returns false with a human-readable reason in `reasonOut`, HAVING
+    // CHANGED NOTHING -- not even m_config. Plan 09-04's form returned void
+    // because the one setting it applied could not fail; a colour can (the
+    // config parser takes a colour verbatim and the X server is what refuses
+    // it), so validation now happens before the store rather than after it.
+    bool applyConfig(const Config& next, std::string& reasonOut);
+
+    // The menu half of the palette reload, beside applyConfig() because that is
+    // its only caller. Allocate-then-swap, like Border::reloadColours(); false
+    // with the offending key in `keyOut`, having changed nothing.
+    bool reloadMenuColours(const Config& next, std::string& keyOut);
 
     // Serve one `set`. Validates key and value BEFORE the parser sees them --
     // see include/Config.h for why -- then applies through the very same
