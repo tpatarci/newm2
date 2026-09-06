@@ -3,9 +3,10 @@
 #include "Manager.h"
 #include <X11/Xft/Xft.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 // Static member definitions (degenerate initializations -- don't change)
@@ -1936,6 +1937,20 @@ void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
         if (!found) {
             // Ledger 8: the 50 ms sleep is now a wait that also watches the
             // exit flag and the self-pipe. Interrupted: no action is taken.
+            //
+            // MEASURED, NOT ASSUMED (WR-14). tdiff used to accrue a hard-coded
+            // 50 on every Timeout, on the assumption that modalWait(..., 50)
+            // waited 50 ms. Since the configuration socket joined the poll,
+            // modalWait clamps its timeout with clampPollTimeoutForSocket() --
+            // so a connection within 50 ms of its silence deadline makes the
+            // poll return after a few milliseconds with r == 0, and a full
+            // tick was charged for a fraction of one. tdiff is what escalates
+            // this hold from hide to destroy, so the escalation fired early.
+            // The exposure was one tick per silent connection; the reason to
+            // fix it rather than bound it is that any future hint source makes
+            // it worse, and the clock is right here.
+            const std::chrono::steady_clock::time_point before =
+                std::chrono::steady_clock::now();
             const WindowManager::ModalWait wait = windowManager()->modalWait(
                 ButtonPressMask | ButtonReleaseMask | ButtonMotionMask | ExposureMask,
                 &event, 50);
@@ -1948,7 +1963,13 @@ void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
                 action = 0;
                 break;
             }
-            if (wait == WindowManager::ModalWait::Timeout) { tdiff += 50; continue; }
+            if (wait == WindowManager::ModalWait::Timeout) {
+                const long long waited =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - before).count();
+                tdiff += static_cast<unsigned long>(waited > 0 ? waited : 0);
+                continue;
+            }
         }
 
         switch (event.type) {
