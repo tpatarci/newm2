@@ -616,10 +616,18 @@ if(BUILD_TESTS)
         # idempotency case counts ShapeNotify events, because the server
         # suppresses ConfigureNotify for a reconfigure that changes nothing and
         # a redundant re-layout would therefore be invisible.
+        #
+        # PkgConfig::XTST arrived with plan 09-05, for the menu-colour and
+        # menu-entry cases: the root menu opens only on a REAL button press
+        # (Client::eventButton refuses send_event), so those cases drive it
+        # through the same XTestDriver the runtime suite uses. The
+        # wm2-born-again target must still NOT gain libXtst -- see the comment
+        # beside the pkg_check_modules call at the top of this file.
         target_link_libraries(test_wm_config_live PRIVATE
             Catch2::Catch2WithMain
             PkgConfig::X11
             PkgConfig::XEXT
+            PkgConfig::XTST
         )
         target_include_directories(test_wm_config_live PRIVATE
             ${CMAKE_SOURCE_DIR}/include
