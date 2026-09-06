@@ -806,6 +806,25 @@ if(BUILD_TESTS)
     # selectable by the anchored `-L '^config_protocol$'` gate this plan uses.
     catch_discover_tests(test_config_protocol ADD_TAGS_AS_LABELS)
 
+    # --- Surgical config-file writer (CGUI-03, D-02/D-13, D-20's file half) ---
+    #
+    # Display-free for the same reason as the codec target above: neither
+    # include/ConfigFileWriter.h nor src/ConfigFileWriter.cpp touches X11, Xft
+    # or GTK, so this target links Catch2 alone and runs with no X server.
+    #
+    add_executable(test_config_writer
+        tests/test_config_writer.cpp
+    )
+    target_link_libraries(test_config_writer PRIVATE
+        Catch2::Catch2WithMain
+    )
+    target_include_directories(test_config_writer PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    # ADD_TAGS_AS_LABELS is required, or the [config_writer] tag is not
+    # selectable by the anchored `-L '^config_writer$'` gate this plan uses.
+    catch_discover_tests(test_config_writer ADD_TAGS_AS_LABELS)
+
     # --- Window-rule model, matcher and parser unit tests (RULES-01) ---
     #
     # Display-free BY CONSTRUCTION, not by luck: the rules header and its
