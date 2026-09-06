@@ -2676,8 +2676,17 @@ public:
     // One frame from the client, or "" on the deadline.
     static std::string readLine(int fd, int timeoutMs)
     {
+        // THE BUDGET IS MILLISECONDS, NOT ITERATIONS (I-07). `waited` used to
+        // advance on every turn of the loop, including the ones that consumed
+        // a byte without sleeping, so the effective budget was timeoutMs/10
+        // BYTES -- 200 of them at the 2000 ms every call site passes. The
+        // frames read today are about forty bytes, so nothing was affected;
+        // a case reading a `value` reply carrying a menu-entries list would
+        // have got a spurious "" and a misleading REQUIRE_FALSE(...empty())
+        // failure. Advanced only where time actually passes.
         std::string line;
-        for (int waited = 0; waited < timeoutMs; waited += 10) {
+        int waited = 0;
+        while (waited < timeoutMs) {
             char c = 0;
             const ssize_t n = ::recv(fd, &c, 1, MSG_DONTWAIT);
             if (n == 1) {
@@ -2686,6 +2695,7 @@ public:
                 continue;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            waited += 10;
         }
         return std::string();
     }
