@@ -180,6 +180,22 @@ bool menuEntriesAreAcceptable(const std::vector<AppEntry>& entries, std::string&
                            std::to_string(kMaxValueBytes) + " characters";
                 return false;
             }
+            // WR-15'S RULE, IN THE WRITER AS WELL AS THE DIALOG (I-06).
+            // MenuEntryDraft::complete() was the only guard against ';', so an
+            // entry reaching the writer by any other route still put one in
+            // the file -- and the route that exists today is a hand-edited
+            // config file, read back by the window manager and returned by
+            // `get menu-entries`. A name of the form
+            // `Foo;menu-entry-category=Bar` then parses SUCCESSFULLY into
+            // something the user did not write. The wire grammar separates
+            // records with ';' and has no escape, so the character simply
+            // cannot be carried; refusing it is fail-closed and cheap.
+            if (parts[i]->find(';') != std::string::npos) {
+                errorOut = std::string("the menu entry ") + names[i] +
+                           " contains a ';', which is what separates entries "
+                           "when the list is sent to the window manager";
+                return false;
+            }
             // WR-03'S RULE, REACHED THROUGH THE MENU-ENTRY KEYS (W-03).
             // appendMenuEntry writes `menu-entry-name = <name>` and
             // Config::applyFile() trims what it reads back, so a name of

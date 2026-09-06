@@ -1121,6 +1121,39 @@ TEST_CASE("a save refuses rather than waiting for ever on a held lock",
 // A value the file format cannot carry is refused where it is typed (WR-03)
 // ---------------------------------------------------------------------------
 
+TEST_CASE("a menu entry containing a ';' is refused by the writer too",
+          "[config_writer][refusal]") {
+    // I-06. WR-15 refuses ';' in MenuEntryDraft::complete(), which is the
+    // dialog. It is the ONLY guard: an entry that reaches the writer by any
+    // other route still put one in the file, and the route that exists today is
+    // a hand-edited config file. `menu-entry-name = Mail; News` is read by the
+    // window manager, returned by `get menu-entries`, and split by
+    // parseMenuEntriesValue into `menu-entry-name=Mail` and ` News` -- the
+    // second has no '=', so the parse fails and the user is told. A name of the
+    // form `Foo;menu-entry-category=Bar` parses SUCCESSFULLY into something the
+    // user did not write, which is the case worth closing.
+    TempDir dir;
+    const std::string path = dir.file("config");
+    const std::string before = "frame-thickness = 7\n";
+    writeFile(path, before);
+
+    const std::vector<AppEntry> refused = {
+        entry("Foo;menu-entry-category=Bar", {"thunderbird"}, "Network"),
+        entry("Mail", {"sh", "-c", "thunderbird;true"}, "Network"),
+        entry("Mail", {"thunderbird"}, "Net;work"),
+    };
+
+    for (const AppEntry& e : refused) {
+        std::string error;
+        INFO("name '" << e.name << "' category '" << e.category << "'");
+        CHECK(configFileWrite(path, {}, {e}, true, error) ==
+              ConfigWriteResult::InvalidEdit);
+        CHECK(error.find("';'") != std::string::npos);
+        CHECK(readFile(path) == before);
+    }
+}
+
+
 TEST_CASE("a menu entry name or category with an outer space is refused",
           "[config_writer][refusal]") {
     // W-03. WR-03's guard covers ConfigEdit::value, and menu entries reach the
