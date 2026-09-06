@@ -835,3 +835,346 @@ TEST_CASE("modalWait still times out, so a held tab button still reaches the del
     CHECK(deleted);
     CHECK(fixture.wmAlive());
 }
+
+
+// -----------------------------------------------------------------------------
+// The boundary (D-16, T-9-11 / T-9-12 / T-9-14 / T-9-16 / T-9-17 / T-9-18)
+// -----------------------------------------------------------------------------
+//
+// PRECONDITION, evaluated rather than assumed: these cases read
+// XDG_RUNTIME_DIR from the environment they inherit. On this host it is set to
+// an absolute path, so the primary branch of DISC-02 is the one under test. The
+// fallback branch is exercised by [config_socket]'s path cases, which drive the
+// resolver directly and do not need a window manager.
+
+namespace {
+
+std::string directoryOf(const std::string& path)
+{
+    const std::size_t slash = path.rfind('/');
+    return (slash == std::string::npos) ? std::string(".") : path.substr(0, slash);
+}
+
+// How many times a line containing `needle` appears in `text`. Counting LINES
+// rather than occurrences, because the claim is about log entries.
+int countLines(const std::string& text, const std::string& needle)
+{
+    int n = 0;
+    std::size_t pos = 0;
+    while (pos <= text.size()) {
+        const std::size_t eol = text.find('\n', pos);
+        const std::string line = text.substr(pos, (eol == std::string::npos)
+                                                  ? std::string::npos : eol - pos);
+        if (!line.empty() && line.find(needle) != std::string::npos) ++n;
+        if (eol == std::string::npos) break;
+        pos = eol + 1;
+    }
+    return n;
+}
+
+// Prove the window manager is still doing its job. Every refusal below ends
+// with this: a boundary that protects by crashing is not a mitigation.
+bool stillFraming(WmFixture& fixture, Display* d, const char* name)
+{
+    Window win = None;
+    const Window frame = mapClientAndAwaitFrame(d, 260, 200, 200, 150, win, name);
+    if (frame == None) return false;
+    XDestroyWindow(d, win);
+    XSync(d, False);
+    return fixture.wmAlive();
+}
+
+}  // namespace
+
+
+TEST_CASE("The socket directory is 0700 and the socket is 0600", "[wm_socket]")
+{
+    // D-16's FILESYSTEM half, read from the filesystem rather than from what
+    // the code says it asked for. It is belt to the peer check's braces: both
+    // are required, and neither is asserted by the other's case.
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    const std::string path = awaitPublishedSocketPath(d);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(path.empty());
+    }
+
+    struct stat sockStat;
+    struct stat dirStat;
+    const std::string dir = directoryOf(path);
+    REQUIRE(::lstat(path.c_str(), &sockStat) == 0);
+    REQUIRE(::stat(dir.c_str(), &dirStat) == 0);
+
+    INFO("socket " << path << " mode " << std::oct << (sockStat.st_mode & 07777));
+    INFO("directory " << dir << " mode " << std::oct << (dirStat.st_mode & 07777));
+
+    CHECK(S_ISSOCK(sockStat.st_mode));
+    CHECK((sockStat.st_mode & 07777) == 0600);
+
+    CHECK(S_ISDIR(dirStat.st_mode));
+    CHECK((dirStat.st_mode & 07777) == 0700);
+
+    // Owned by the user running the window manager, not merely restrictive:
+    // a 0700 directory belonging to someone else protects the wrong person.
+    CHECK(sockStat.st_uid == ::geteuid());
+    CHECK(dirStat.st_uid == ::geteuid());
+}
+
+TEST_CASE("A refused peer is closed before a protocol byte and logged once per uid",
+          "[wm_socket]")
+{
+    // The refusal path, driven end-to-end against the real binary through the
+    // strictly-NARROWING internal test lever (the WM2_FORCE_NO_SHAPE
+    // precedent). It can only ever REFUSE a connection this build would admit;
+    // there is no value of it that admits one the uid comparison would reject,
+    // so it cannot widen D-16. The uid comparison ITSELF is asserted directly
+    // by [config_socket]'s peer cases over a locally created pair, including
+    // the root direction (T-9-12).
+    WmFixtureOptions options;
+    options.childEnv["WM2_SOCKET_FORCE_FOREIGN"] = "1";
+    WmFixture fixture(options);
+
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    const std::string path = awaitPublishedSocketPath(d);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(path.empty());   // it listens; it just admits nobody
+    }
+
+    const std::string uidNeedle =
+        "refused configuration socket connection from uid " +
+        std::to_string(static_cast<unsigned long>(::geteuid()));
+
+    // FIRST attempt: closed with no reply at all. A hello is sent and nothing
+    // ever comes back, because the connection was closed before any byte of it
+    // was read.
+    bool firstClosed = false;
+    {
+        Conn c(path);
+        if (c.connected()) {
+            ConfigMessage hello;
+            hello.type = ConfigMessageType::Hello;
+            hello.program = "test_wm_socket";
+            hello.protocol = kConfigProtocolVersion;
+            c.send(hello);
+            std::string line;
+            const bool got = c.readLine(line, 4000);
+            firstClosed = !got;   // expiry or EOF; either way no reply
+        }
+    }
+
+    // The warning has to have been written before it can be counted.
+    WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return countLines(fixture.wmStderr(), uidNeedle) >= 1;
+    }, 8000);
+    const int afterFirst = countLines(fixture.wmStderr(), uidNeedle);
+
+    // SECOND attempt from the same uid: refused just as firmly, and NOT logged
+    // again. One warning per uid, deliberately not one per attempt, so the log
+    // records the event without being floodable (T-9-19).
+    {
+        Conn c(path);
+        if (c.connected()) {
+            std::string line;
+            c.readLine(line, 2000);
+        }
+    }
+    settleWm(d);
+    const int afterSecond = countLines(fixture.wmStderr(), uidNeedle);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO("warnings after first attempt: " << afterFirst
+         << ", after second: " << afterSecond);
+
+    CHECK(firstClosed);
+    CHECK(afterFirst == 1);
+    CHECK(afterSecond == 1);
+
+    // And a window manager that refuses everybody is still a window manager.
+    CHECK(stillFraming(fixture, d, "after-refusal"));
+}
+
+TEST_CASE("A line over the protocol bound is refused and the connection closed",
+          "[wm_socket]")
+{
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    const std::string path = awaitPublishedSocketPath(d);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(path.empty());
+    }
+
+    Conn c(path);
+    REQUIRE(c.connected());
+
+    std::string program;
+    int protocol = 0;
+    REQUIRE(shakeHands(c, program, protocol));
+
+    // ONE BYTE OVER, counting the newline: kConfigProtocolMaxLine is the bound
+    // INCLUDING the terminator, so this is the smallest line the transport must
+    // refuse.
+    const std::string oversized(kConfigProtocolMaxLine, 'a');
+    REQUIRE(c.sendRaw(oversized + "\n"));
+
+    ConfigMessage reply;
+    ConfigDecodeResult result = ConfigDecodeResult::Malformed;
+    const bool answered = c.receive(reply, result, 8000);
+    const bool closed = c.awaitClosed(8000);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+
+    CHECK(answered);
+    CHECK(result == ConfigDecodeResult::Ok);
+    CHECK(reply.type == ConfigMessageType::Error);
+    CHECK(closed);
+
+    // The window manager did not notice in any way a user would.
+    CHECK(stillFraming(fixture, d, "after-oversized"));
+}
+
+TEST_CASE("A client that sends bytes and never a newline is dropped at the bound",
+          "[wm_socket]")
+{
+    // The memory question, asked behaviourally: a peer that never frames a
+    // message must not be able to make the window manager hold its bytes
+    // (T-9-14). Sent in chunks rather than one write, so the refusal has to
+    // come from the ACCUMULATED buffer rather than from one oversized recv.
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    const std::string path = awaitPublishedSocketPath(d);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(path.empty());
+    }
+
+    Conn c(path);
+    REQUIRE(c.connected());
+
+    std::string program;
+    int protocol = 0;
+    REQUIRE(shakeHands(c, program, protocol));
+
+    const std::string chunk(512, 'x');   // no newline, ever
+    bool dropped = false;
+    for (int i = 0; i < 64 && !dropped; ++i) {
+        if (!c.sendRaw(chunk)) { dropped = true; break; }
+        std::string ignored;
+        if (c.readLine(ignored, 200)) {
+            // The refusal reply. The close follows it.
+            dropped = c.awaitClosed(8000);
+        }
+        if (c.closedByPeer()) dropped = true;
+    }
+    if (!dropped) dropped = c.awaitClosed(8000);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    CHECK(dropped);
+    CHECK(stillFraming(fixture, d, "after-nonewline"));
+}
+
+TEST_CASE("A socket path too long for the address structure is named, not truncated",
+          "[wm_socket]")
+{
+    // T-9-18. sun_path is 108 bytes; a deep XDG_RUNTIME_DIR overflows it, and
+    // bind() answers that by truncating rather than by complaining -- which
+    // would bind somewhere else entirely (RESEARCH Pitfall 4).
+    //
+    // The path is refused BEFORE anything is created, so nothing exists to
+    // clean up and the deep directory is never made.
+    WmFixtureOptions options;
+    options.childEnv["XDG_RUNTIME_DIR"] = "/" + std::string(200, 'x');
+    WmFixture fixture(options);
+
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    settleWm(d);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+
+    // A NAMED warning, not a silent degradation.
+    CHECK(countLines(stderrText, "configuration socket path is too long") == 1);
+
+    // No socket, and therefore no property: its absence is the honest answer to
+    // "is there a socket?", which is exactly why a client reads the property
+    // rather than reconstructing the path.
+    CHECK(publishedSocketPath(d).empty());
+
+    // And the window manager still manages windows. That is the whole of its
+    // job; only the configuration connection was lost.
+    CHECK(stillFraming(fixture, d, "no-socket"));
+}
+
+TEST_CASE("A socket left by a crashed predecessor is reclaimed", "[wm_socket]")
+{
+    // The stale-reclamation path, driven through the real binary rather than
+    // only through configSocketStaleVerdict(). A window manager killed with
+    // SIGKILL never runs release(), so its socket node survives -- and the next
+    // one on the same display has to bind anyway or the feature is one crash
+    // away from being permanently unavailable.
+    std::string path;
+    {
+        WmFixture first;
+        x11::DisplayPtr dp = first.openDisplay();
+        REQUIRE(dp != nullptr);
+        path = awaitPublishedSocketPath(dp.get());
+        REQUIRE_FALSE(path.empty());
+
+        // SIGKILL by the PID THIS FIXTURE CREATED. Never a name pattern.
+        REQUIRE(first.wm().pid() > 0);
+        ::kill(first.wm().pid(), SIGKILL);
+        first.wm().waitForExit(8000);
+    }
+
+    // The node outlived the process: that is what makes it stale rather than
+    // absent, and it is the precondition the next start has to handle.
+    struct stat st;
+    const bool survived = (::lstat(path.c_str(), &st) == 0) && S_ISSOCK(st.st_mode);
+    INFO("abandoned node at " << path << " survived: " << survived);
+    CHECK(survived);
+    CHECK(configSocketStaleVerdict(path) == StaleVerdict::Stale);
+
+    // A second window manager, which will land on some display of its own; the
+    // reclamation of the abandoned node above is asserted directly, and the new
+    // one is asserted to work.
+    WmFixture second;
+    x11::DisplayPtr dp2 = second.openDisplay();
+    REQUIRE(dp2 != nullptr);
+    const std::string secondPath = awaitPublishedSocketPath(dp2.get());
+    {
+        const std::string stderrText = second.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(secondPath.empty());
+    }
+
+    Conn c(secondPath);
+    REQUIRE(c.connected());
+    std::string program;
+    int protocol = 0;
+    CHECK(shakeHands(c, program, protocol));
+    CHECK(program == "wm2-born-again");
+}
