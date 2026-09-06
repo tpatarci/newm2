@@ -1894,6 +1894,35 @@ bool WindowManager::reloadMenuColours(const Config &next, std::string &keyOut)
 }
 
 
+bool WindowManager::reloadMenuFont(const std::string &pattern)
+{
+    // LOAD BEFORE CLOSE, exactly as Border::reloadTabFont() does it. The
+    // difference between the two is only in the ladder: the menu has one rung
+    // and a fatal() beneath it at startup, because every row of the menu is
+    // MEASURED against this face and there is no "carry on without it". At
+    // reload time there is no fatal to reach -- a pattern that will not open
+    // leaves the previous face in place and the reload is refused.
+    x11::XftFontPtr font = x11::make_xft_font_name(display(), pattern.c_str());
+    if (!font) {
+        std::fprintf(stderr, "wm2: warning: no usable menu font for that "
+                             "pattern, keeping the previous one\n");
+        return false;
+    }
+
+    if (m_menuFont) XftFontClose(display(), m_menuFont);
+    m_menuFont = font.release();
+
+    // NOTHING IS RE-LAID-OUT HERE, and that is correct rather than an
+    // omission. WindowManager::menu() measures every row, computes the entry
+    // height from this face's ascent and descent, and sizes the popup, ALL on
+    // each opening -- so the next menu is drawn in the new face by
+    // construction. Do not add a re-layout of an open menu: the popups are
+    // unmapped between uses, and a menu that IS open is being iterated by a
+    // modal loop holding pointers into state this function must not disturb.
+    return true;
+}
+
+
 bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
 {
     // DISC-06a. Read the declaration in include/Manager.h before adding to
@@ -1959,6 +1988,32 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
         }
     }
 
+    // --- Fonts --------------------------------------------------------------
+    //
+    // Also before the store, and for the same reason as the colours: a
+    // fontconfig pattern with no usable face is refused, and a refusal that
+    // had already moved m_config would leave `get tab-font` naming a face
+    // nothing is drawn in.
+    const bool tabFontChanged  = next.tabFont  != previous.tabFont;
+    const bool menuFontChanged = next.menuFont != previous.menuFont;
+
+    if (tabFontChanged && !Border::reloadTabFont(this, next.tabFont)) {
+        reasonOut = "no usable face for that tab-font pattern";
+        return false;
+    }
+    if (menuFontChanged && !reloadMenuFont(next.menuFont)) {
+        // The tab face may already have been swapped above. That is not a
+        // half-applied state a caller can observe as inconsistent: a `set`
+        // names ONE key, so at most one of these two branches ever runs for a
+        // set, and a `reload` that fails here refuses whole and leaves the
+        // window manager on the configuration it already had -- with a tab
+        // face from a file it has decided not to adopt. Named here rather than
+        // left to be discovered, because it is the one place in this function
+        // where the two-stage swap is not literally atomic.
+        reasonOut = "no usable face for that menu-font pattern";
+        return false;
+    }
+
     // --- Stored WHOLE, now that nothing left can fail -----------------------
     //
     // Whole rather than field by field, so a field a later plan does not yet
@@ -1980,6 +2035,25 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
         // window wearing the old thickness the moment it is unhidden.
         for (const auto &client : m_clients)       client->relayoutFrame();
         for (const auto &client : m_hiddenClients) client->relayoutFrame();
+
+        XFlush(display());
+    }
+
+    // --- Tab font -----------------------------------------------------------
+    //
+    // The face was swapped above; what is left is the geometry it moved. A tab
+    // is as thick as the face's metrics say, so every managed client's frame,
+    // tab, button and shape has to be recomputed -- through the same entry
+    // point a thickness change uses, not a second computation of the same
+    // numbers.
+    //
+    // Skipped when the thickness ALSO changed in the same application, because
+    // that branch has just walked both lists and re-laid every frame out with
+    // the new tab width already in force; running both would re-shape every
+    // frame twice for one message.
+    if (tabFontChanged && next.frameThickness == previous.frameThickness) {
+        for (const auto &client : m_clients)       client->relayoutFrameForFont();
+        for (const auto &client : m_hiddenClients) client->relayoutFrameForFont();
 
         XFlush(display());
     }

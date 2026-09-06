@@ -517,6 +517,101 @@ void Border::repaintForColourChange()
 }
 
 
+// ---------------------------------------------------------------------------
+// Live tab-font reload (CGUI-04, plan 09-05)
+//
+// LOAD BEFORE CLOSE, for the same reason reloadColours() allocates before it
+// releases: the shared face is what every frame measures and draws its label
+// with, and a window manager holding a null one after a failed reload is the
+// outcome XDIS-04's ladder exists to prevent.
+//
+// The ladder here is loadTabFont()'s, walked in the same order and stopping at
+// the same rungs -- but only rungs 1 to 3, because rung 4 is "no face at all",
+// which at STARTUP is a legitimate degradation (the alternative is no window
+// manager) and at RELOAD time is not: there is already a working face, and
+// replacing it with nothing would be a downgrade the user did not ask for. So
+// where loadTabFont() lands on rung 4, this returns false and keeps what it
+// had.
+//
+// WM2_FORCE_TAB_FONT_RELOAD_FAILURE is an internal test lever in exactly the
+// shape of WM2_FORCE_NO_TAB_FONT and WM2_FORCE_NO_ROTATED_TAB_FONT above: read
+// here and nowhere else, never documented for users, no config key and no
+// command-line flag. It exists because fontconfig SUBSTITUTES for a family it
+// does not have rather than failing, so no string a user can type reaches the
+// bottom of this ladder -- which is what makes the refusal path above
+// unreachable, and therefore untestable, without it. A DIFFERENT lever from the
+// two startup ones on purpose: those would leave the process with no face to
+// begin with, and then "the previous face stays loaded" would be a claim about
+// nothing.
+// ---------------------------------------------------------------------------
+
+bool Border::reloadTabFont(WindowManager *wm, const std::string &pattern)
+{
+    // No frame exists yet, so no face has been loaded and the first Border
+    // will read the new value itself.
+    if (!m_staticsInitialised) return true;
+
+    Display *d = wm->display();
+
+    const char *forceFailure = std::getenv("WM2_FORCE_TAB_FONT_RELOAD_FAILURE");
+    const bool forced =
+        (forceFailure != nullptr && std::strcmp(forceFailure, "1") == 0);
+
+    x11::XftFontPtr font;
+    TabFontRung rung = TabFontRung::NoFont;
+
+    if (!forced) {
+        font = x11::make_xft_font_rotated(d, pattern.c_str());
+        if (font) rung = TabFontRung::RotatedPreferred;
+
+        if (!font) {
+            font = x11::make_xft_font_rotated(d, "sans-serif:bold:size=12");
+            if (font) rung = TabFontRung::RotatedGeneric;
+        }
+        if (!font) {
+            font = x11::make_xft_font_name(d, pattern.c_str());
+            if (font) rung = TabFontRung::Unrotated;
+        }
+    }
+
+    if (!font) {
+        // Rung 4 territory. Refuse rather than degrade: the previous face is
+        // still open, still measured and still what every tab is drawn with.
+        std::fprintf(stderr, "wm2: warning: no usable tab font for that "
+                             "pattern, keeping the previous one\n");
+        return false;
+    }
+
+    // The swap. Exactly one face is closed and exactly one opened, so a
+    // repeated reload cannot accumulate faces (T-9-27).
+    if (m_tabFont) XftFontClose(d, m_tabFont);
+    m_tabFont     = font.release();
+    m_tabFontRung = rung;
+
+    // Re-measure with the SAME arithmetic loadTabFont() uses. The two axis
+    // reads below are the ones deferred item 11 corrected in plan 08-14, and
+    // they are spelled the same way here on purpose: a second, subtly
+    // different measurement is how a tab reloaded at runtime would end up a
+    // different width from one measured at startup.
+    XGlyphInfo extents;
+    const char *sample = "M";
+    if (tabFontRotated()) {
+        XftTextExtentsUtf8(d, m_tabFont,
+            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
+        m_tabWidth = extents.width + 4;
+    } else {
+        XftTextExtentsUtf8(d, m_tabFont,
+            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
+        m_tabWidth = m_tabFont->ascent + m_tabFont->descent + 4;
+        if (m_tabWidth < extents.height + 4) m_tabWidth = extents.height + 4;
+    }
+    if (m_tabWidth < TAB_TOP_HEIGHT * 2 + 8) {
+        m_tabWidth = TAB_TOP_HEIGHT * 2 + 8;
+    }
+    return true;
+}
+
+
 void Border::allocateXftColors()
 {
     if (m_xftColorsAllocated) return;

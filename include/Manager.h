@@ -380,6 +380,12 @@ private:
     // with the offending key in `keyOut`, having changed nothing.
     bool reloadMenuColours(const Config& next, std::string& keyOut);
 
+    // The menu's half of the font reload. Load-then-close, like
+    // Border::reloadTabFont(); false leaves the previous face in place. There
+    // is deliberately no re-layout counterpart: menu() rebuilds and re-measures
+    // the whole popup on every opening.
+    bool reloadMenuFont(const std::string& pattern);
+
     // Serve one `set`. Validates key and value BEFORE the parser sees them --
     // see include/Config.h for why -- then applies through the very same
     // Config::applyKeyValue() the config file goes through, on a COPY, and

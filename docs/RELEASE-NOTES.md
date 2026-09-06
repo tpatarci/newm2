@@ -88,9 +88,12 @@ A pattern fontconfig cannot resolve is substituted rather than refused, and the
 tab's fallback ladder is deliberately not configurable, so no font value can
 leave you without a window manager.
 
-**A font change takes effect the next time the window manager starts.** It is
-the one setting in this release that does not apply to windows already on
-screen; the configuration tool will apply it live.
+**A font change applies to windows already on screen.** Change `tab-font` with
+`wm2-ctl` and every tab already open is re-measured and redrawn in the new face,
+tab width and all; change `menu-font` and the next menu you open uses it. If the
+new pattern has no usable face at all, the change is refused and the face you
+had stays loaded — you cannot end up with unlabelled tabs by mistyping a font
+name.
 
 **A silver palette with black text.** The defaults are now a single cool-cast
 family, `#C8CACC` for the tab and menu, `#DCDEE0` for the frame, `#A8ACB0` for
@@ -518,12 +521,25 @@ Exit codes, so a shell script can tell the cases apart:
 situation as "not running", and a script that treats them alike will do the
 wrong thing in one of them.
 
-**Which settings apply live.** In this release `frame-thickness` does, and it is
-the hard one — it changes the geometry of every frame, tab and resize handle
-already on screen. Every other key is accepted, stored and reported by `get`,
-and the remaining live applications land in the following release. A `set` of a
-key that is not yet applied live is not lost; it is simply not visible until
-then.
+**Which settings apply live: all of them.** There is no list of exceptions here
+because there are none. Every setting `wm2-ctl --help` names changes the desktop
+you are looking at, at the moment you set it, with no window closing and no
+restart:
+
+| Setting | What moves |
+|---|---|
+| the nine colours | every frame, tab, button, outline and the next root menu repaint in the new colour; the tab's raised bevel is re-derived from the new tab background, so a dark palette gets bevels that belong to it |
+| `frame-thickness` | the geometry of every frame, tab and resize handle already on screen |
+| `tab-font` | every open tab is re-measured and redrawn — the tab gets wider or narrower with the face |
+| `menu-font` | the next root menu's row height |
+| `click-to-focus`, `raise-on-focus`, `auto-raise`, `focus-stealing-prevention` | the very next interaction |
+| `auto-raise-delay`, `pointer-stopped-delay`, `destroy-window-delay` | the next interaction that waits on them |
+| `new-window-command`, `exec-using-shell` | what the menu's **New** entry runs next time you choose it |
+
+A value the running window manager cannot use — a colour the X server will not
+parse, a font pattern with no usable face — is **refused**, and everything keeps
+the value it had. You cannot leave the window manager without a colour or
+without a face by mistyping one.
 
 **Nothing about your windows crosses the socket.** No window title, no
 application class, no window geometry, no window count broken down per window —
