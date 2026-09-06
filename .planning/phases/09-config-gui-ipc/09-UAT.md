@@ -3,7 +3,7 @@ status: testing
 phase: 09-config-gui-ipc
 source: [09-VERIFICATION.md]
 started: 2026-09-06T20:10:00Z
-updated: 2026-09-06T20:26:00Z
+updated: 2026-09-06T20:52:00Z
 ---
 
 ## Current Test
@@ -38,8 +38,8 @@ expected: `debug`, `asan`, `nogtk`, `release` all green at 573 tests; nogtk skip
 result: passed 2026-09-06 (orchestrator): debug 573/573 at `b68c207`; at `cc74439` asan 573/573 with no sanitizer findings, nogtk 573 registered / 567 passed / 6 skipped with reasons, release 573/573 with link audit OK (24 entries). Logs under /tmp/w12/gate-head-*.log for this session.
 
 ### 5. Arrival order of two overlapping `set` messages (09-04 truth 7)
-expected: Two connections write `set frame-thickness 11` and `set frame-thickness 21` back to back before reading either reply; the later-arriving write wins, neither is dropped, the window manager stays alive, and every window is re-framed once per applied `set`. No automated case issues two overlapping sets; 09-04's SUMMARY records the ordering claim as human judgement resting on "no second thread and no queue".
-result: [pending]
+expected: Two connections write `set frame-thickness 11` and `set frame-thickness 21` back to back before reading either reply; the later-arriving write wins, neither is dropped, the window manager stays alive, and every window is re-framed once per applied `set`.
+result: passed 2026-09-06 by automation, commit `59ee059`: `tests/test_wm_socket.cpp` "Two overlapping sets are applied in arrival order" runs both directions (11 then 21 expects 21; 21 then 11 expects 11), asserts both acks, the read-back value, the frame inset moved by exactly the thickness change, liveness, and re-frames as a ratio (pair == 2 x one set, measured 8 vs 4 ShapeNotify). Green first run; the mutation that walks connections in reverse order reddens it 3 of 3 with the losing value in force. Limitation stated in the case: a level-triggered poll cannot order two descriptors that became readable in the same pass, so the case aligns write order with accept order.
 
 ### 6. GUI-driven behaviour change for the eight non-tracer Behaviour settings (09-07 truth 1)
 expected: For raise-on-focus, auto-raise, focus-stealing-prevention, auto-raise-delay, pointer-stopped-delay, destroy-window-delay, new-window-command and exec-using-shell: change each in the running `wm2-config` Behaviour page and observe the desktop behaviour change, matching what the corresponding `[wm_config_live]` case observes after a `wm2-ctl set` of the same key. Ledger row 20 records that these eight are proven through the GUI only as far as adoption.
@@ -48,9 +48,9 @@ result: [pending]
 ## Summary
 
 total: 6
-passed: 1
+passed: 2
 issues: 0
-pending: 5
+pending: 4
 skipped: 0
 blocked: 0
 
