@@ -581,6 +581,71 @@ written down here: reloading is `wm2-ctl reload` and nothing else.
 
 ---
 
+## Installing and packaging
+
+**There are two packages, not one.** The build produces two CMake install
+components, and a distributor is meant to ship them separately:
+
+| Component | Contains | Depends on GTK |
+|---|---|---|
+| `wm` | the `wm2-born-again` window manager, the `wm2-ctl` command-line client, the session entry a display manager reads, and this document plus the licence | no |
+| `config-gui` | the `wm2-config` settings window and its application entry | yes |
+
+The window-manager package does not depend on GTK, and that is not a promise
+made in prose: `bash scripts/gates/install-components.sh` stages both components
+into a scratch directory, checks each one's file list is exactly what it should
+be and nothing else, and runs `ldd` over every executable the `wm` component
+installed, failing if GTK, GDK, GLib or GObject is named. The settings window is
+a separate, entirely optional package. A machine that never wants a toolkit
+installed can have the window manager and `wm2-ctl` and stop there.
+
+`wm2-ctl` is in the window-manager package on purpose. A droplet reached only
+over SSH — no desktop running, no toolkit installed — can still ask a running
+window manager what it is doing and change its settings.
+
+**The build option is `BUILD_CONFIG_GUI`, and it has three values:**
+
+| Value | What it does |
+|---|---|
+| `AUTO` | **the default.** Look for `gtk+-3.0`; build the settings window if it is there, and say so either way. |
+| `ON` | Require `gtk+-3.0`. Configuration fails by name if it is missing, rather than quietly producing no settings window. |
+| `OFF` | Do not even look. Nothing about the build touches GTK. |
+
+**On a host without the GTK development package, everything except the settings
+window still builds, and configuration prints one line saying why:**
+
+```
+-- wm2-config: pkg-config cannot find gtk+-3.0 -- the configuration GUI will NOT be built (install libgtk-3-dev to get it; the window manager and wm2-ctl are unaffected)
+```
+
+If you expected a settings window and did not get one, that line — printed by the
+`cmake` you already ran — is the answer. On Debian and Ubuntu the package to
+install is `libgtk-3-dev`.
+
+**Staging each component.** Configure and build once, then install each component
+wherever your packaging tool wants it:
+
+```
+cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
+cmake --build build/release --parallel
+
+cmake --install build/release --component wm         --prefix /usr
+cmake --install build/release --component config-gui --prefix /usr
+```
+
+Use `DESTDIR=/path/to/stage` in the environment if your tool stages into a
+directory rather than installing into the prefix directly. Installing the
+`config-gui` component from a tree built without the settings window installs
+nothing and succeeds, so the same two commands work for a GTK-free build.
+
+Files land under the standard directories: binaries in `bin`, the session entry
+in `share/xsessions`, the settings window's application entry in
+`share/applications` (which is what puts it under Settings in the root menu's
+discovered-application list), and the documentation in
+`share/doc/wm2-born-again`.
+
+---
+
 ## For developers
 
 `COMPILED_CODE_BEHAVIOR_CHECKLIST.md` at the repository root is the release and
@@ -594,6 +659,8 @@ Useful commands:
 ```
 bash scripts/preflight.sh                       # every declared dependency, on this host
 bash scripts/gates/build-all.sh                 # Debug, Release and sanitizer trees, full suite
+bash scripts/gates/build-all.sh nogtk           # the same suite with the settings window switched off
+bash scripts/gates/install-components.sh        # stage both packages; check neither one leaks a toolkit
 bash scripts/analysis/run-static-analysis.sh    # cppcheck and clang-tidy against the baseline
 bash scripts/capture-display-capabilities.sh :2 label
 
