@@ -4,15 +4,16 @@ milestone: v1.0
 current_phase: 09
 current_phase_name: Config GUI + IPC
 status: executing
-stopped_at: Completed 09-07-PLAN.md
-last_updated: "2026-09-06T13:15:38.182Z"
+stopped_at: Completed 09-08-PLAN.md
+last_updated: "2026-09-06T15:11:35.151Z"
 last_activity: 2026-09-06
-state_head: c134ea9e42c466bd61d27a83fa00560f5cf0b19d
+last_activity_desc: "Completed 09-08: two CMake install components (wm, config-gui), the no-toolkit manifest gate, and the nogtk build tree with same-suite accounting"
+state_head: f5c27c2ef630d80100a5a527fc1474bdd2aa3768
 progress:
   total_phases: 11
   completed_phases: 4
   total_plans: 58
-  completed_plans: 55
+  completed_plans: 56
 milestone_name: milestone
 ---
 
@@ -28,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 09 (Config GUI + IPC) — EXECUTING
-Plan: 8 of 9
+Plan: 9 of 9
 Status: Ready to execute
 Progress: [████████░░] 81% (7/9 phases complete)
 
@@ -365,6 +366,7 @@ Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
 | Phase 09 P05 | 1h 40m | 3 tasks | 17 files |
 | Phase 09 P06 | 65 min | 3 tasks | 13 files |
 | Phase 09 P07 | 105 min | 3 tasks | 21 files |
+| Phase 09 P08 | 52 min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -489,6 +491,8 @@ Recent decisions affecting current work:
 - [Phase 09]: The window manager answers a read-only 'menu-categories' key on the existing get verb, so the settings window's category dropdown asks rather than re-running discovery. No twelfth message type; refused on set by construction.
 - [Phase 09]: The menu command tokeniser was hoisted to configTokeniseCommand() in include/Config.h -- one whitespace split with two callers, the config parser and the GUI dialog, because 'exactly the same way' is only true of one function.
 - [Phase 09]: FormField::staleUnderEdit marks the DISAGREEMENT a reload created, not the edit: a reload bringing exactly what the user typed marks nothing, or the mark would mean what 'dirty' already means.
+- [Phase 09]: 09-08: the CMake install COMPONENT, not the binary, is this project's install identity. Component "wm" (window manager, wm2-ctl, session entry, docs) and component "config-gui" (wm2-config and its application entry) stage separately from one build tree, and the wm component's freedom from GTK is enforced by ldd over its own install manifest rather than promised in prose.
+- [Phase 09]: 09-08: a GUI-disabled build is only certified when it ran the SAME suite. build-all.sh nogtk asserts an equal registered count against the GUI-enabled tree, requires the pass-count difference to equal the skip count, and re-runs each skipped test to confirm it stated a reason.
 
 ### Pending Todos
 
@@ -545,6 +549,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-06T13:15:29.820Z
-Stopped at: Completed 09-07-PLAN.md
+Last session: 2026-09-06T15:11:05.010Z
+Stopped at: Completed 09-08-PLAN.md
 Resume file: None
