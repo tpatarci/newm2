@@ -92,7 +92,11 @@ private:
     {
         m_window = gtk_application_window_new(app);
         gtk_window_set_title(GTK_WINDOW(m_window), "wm2-born-again settings");
-        gtk_window_set_default_size(GTK_WINDOW(m_window), 620, 520);
+        // Tall enough that the whole Appearance page is visible without
+        // scrolling, and short enough to fit inside a 1024x768 VNC session
+        // with the window manager's own frame around it -- which is the
+        // display this project is actually used on.
+        gtk_window_set_default_size(GTK_WINDOW(m_window), 660, 690);
         g_signal_connect(m_window, "realize",
                          G_CALLBACK(&ConfigWindow::onRealize), this);
 

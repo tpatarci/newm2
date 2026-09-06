@@ -50,7 +50,7 @@ public:
 private:
     // What kind of control a key gets, and therefore how its value is read
     // back out of the toolkit's vocabulary and into the config file's.
-    enum class Kind { Colour };
+    enum class Kind { Colour, Font, Thickness };
 
     struct Row {
         std::string key;
@@ -63,12 +63,21 @@ private:
 
     void addColourRow(GtkWidget* grid, int line, const std::string& key,
                       const std::string& label);
+    void addFontRow(GtkWidget* grid, int line, const std::string& key,
+                    const std::string& label);
+    void addThicknessRow(GtkWidget* grid, int line, const std::string& key,
+                         const std::string& label);
+    GtkWidget* addRawField(Row* row);
+    GtkWidget* addResetButton(Row* row);
     void renderRow(Row& row);
     void commit(Row& row, const std::string& value);
     void reset(Row& row);
     Row* rowFor(GtkWidget* widget);
 
     static void onColourSet(GtkColorButton* button, gpointer userData);
+    static void onFontSet(GtkFontButton* button, gpointer userData);
+    static gboolean onScaleReleased(GtkWidget* scale, GdkEvent* event,
+                                    gpointer userData);
     static void onRawActivate(GtkEntry* entry, gpointer userData);
     static gboolean onRawFocusOut(GtkWidget* entry, GdkEvent* event,
                                   gpointer userData);
@@ -103,3 +112,20 @@ std::string configColourFromRgba(const GdkRGBA& rgba);
 // untouched -- which is how a raw field distinguishes "the user is mid-word"
 // from "the user meant black".
 bool rgbaFromConfigColour(const std::string& spelling, GdkRGBA& out);
+
+
+// The OTHER pair of vocabularies, converted in ONE place.
+//
+// The toolkit speaks Pango font descriptions ("Ubuntu Bold 12"); the config
+// file and the window manager speak fontconfig patterns
+// ("Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12"). Both the chooser and the
+// raw field go through this pair, because two conversions are how two spellings
+// of one font start disagreeing.
+//
+// The conversion is LOSSY IN ONE DIRECTION and deliberately so: a fontconfig
+// pattern can name a fallback LIST of families and a Pango description cannot,
+// so the chooser is shown the first family and the raw field keeps the whole
+// list. Which is why the raw field -- not the chooser -- is what gets saved and
+// sent when the user typed it: their fallback chain survives.
+std::string fontDescriptionFromConfigPattern(const std::string& pattern);
+std::string configPatternFromFontDescription(const std::string& description);

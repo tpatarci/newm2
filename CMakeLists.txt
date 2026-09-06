@@ -769,6 +769,13 @@ if(BUILD_TESTS)
             WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
             WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
             WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+            # The Appearance page cannot be linked into a display-free binary,
+            # so the two guards that matter about it -- that the font value is
+            # read through the chooser INTERFACE rather than the getter
+            # deprecated since GTK 3.22, and that no key D-09 puts on another
+            # page has wandered onto this one -- read its source instead. The
+            # [wm_socket] suite already guards D-14's ceiling this way.
+            WM2_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
         )
         add_dependencies(test_wm2_config_smoke wm2-born-again)
         if(CONFIG_GUI_ENABLED)

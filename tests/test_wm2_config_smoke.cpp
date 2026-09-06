@@ -709,6 +709,76 @@ TEST_CASE("a save with nothing changed leaves the user file untouched",
 
 
 // =============================================================================
+// The Appearance page, checked where it can be checked without a toolkit
+// =============================================================================
+
+TEST_CASE("the frame-thickness control is built from the parser's own bounds",
+          "[wm2_config_smoke]")
+{
+    // The slider's range is not spelled 1 and 50 in the page's source; it is
+    // read from configKeySpecFor("frame-thickness"), which is the same table
+    // the window manager validates a `set` against. So asserting the bounds
+    // here asserts what the control can ask for -- and a third hand-written
+    // copy of the range is what this arrangement exists to prevent.
+    const ConfigKeySpec* spec = configKeySpecFor("frame-thickness");
+    REQUIRE(spec != nullptr);
+    CHECK(spec->kind == ConfigValueKind::Integer);
+    CHECK(spec->minValue == 1);
+    CHECK(spec->maxValue == 50);
+}
+
+TEST_CASE("the font value is read through the chooser interface, not the deprecated getter",
+          "[wm2_config_smoke]")
+{
+    // A SOURCE-LEVEL guard, the same shape the [wm_socket] suite uses to keep
+    // per-window data out of the status reply. gtk_font_button_get_font_name()
+    // has been deprecated since GTK 3.22 (09-RESEARCH.md Pitfall 5) and still
+    // WORKS on the 3.24 both Ubuntu targets ship -- so nothing at runtime would
+    // notice its return, and only a reader of the source, or this, would.
+    const std::string page =
+        readFileOrEmpty(std::string(WM2_SOURCE_DIR) + "/apps/wm2-config/AppearancePage.cpp");
+    REQUIRE_FALSE(page.empty());
+
+    CHECK(page.find("gtk_font_chooser_get_font(") != std::string::npos);
+    CHECK(page.find("gtk_font_button_get_font_name") == std::string::npos);
+    CHECK(page.find("gtk_font_button_get_font(") == std::string::npos);
+
+    // The same rule for the colour half: the chooser interface, not the
+    // button's own accessor.
+    CHECK(page.find("gtk_color_chooser_get_rgba(") != std::string::npos);
+    CHECK(page.find("gtk_color_button_get_rgba") == std::string::npos);
+}
+
+TEST_CASE("the Appearance page carries what D-09 assigns to it and nothing else",
+          "[wm2_config_smoke]")
+{
+    const std::string page =
+        readFileOrEmpty(std::string(WM2_SOURCE_DIR) + "/apps/wm2-config/AppearancePage.cpp");
+    REQUIRE_FALSE(page.empty());
+
+    // The nine colours, both fonts and frame thickness get a control.
+    for (const char* key : {"tab-foreground", "tab-background", "frame-background",
+                            "button-background", "borders", "menu-foreground",
+                            "menu-background", "menu-highlight", "menu-borders",
+                            "tab-font", "menu-font", "frame-thickness"}) {
+        INFO("key: " << key);
+        CHECK(page.find(std::string("\"") + key + "\"") != std::string::npos);
+    }
+
+    // And nothing D-09 assigns to the Behaviour page has wandered onto this
+    // one. Checked by absence, which is the half a "does it have everything"
+    // assertion cannot cover.
+    for (const char* elsewhere : {"click-to-focus", "raise-on-focus", "auto-raise",
+                                  "focus-stealing-prevention", "auto-raise-delay",
+                                  "pointer-stopped-delay", "destroy-window-delay",
+                                  "new-window-command", "exec-using-shell"}) {
+        INFO("key that belongs on another page: " << elsewhere);
+        CHECK(page.find(std::string("\"") + elsewhere + "\"") == std::string::npos);
+    }
+}
+
+
+// =============================================================================
 // The window itself
 // =============================================================================
 
