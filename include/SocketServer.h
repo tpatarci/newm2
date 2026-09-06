@@ -279,7 +279,13 @@ private:
     };
 
     void acceptPending();
-    void readConnection(Connection& c, const Handler& handler);
+    // Takes the INDEX rather than a reference. The handler is allowed to call
+    // back into this server -- the window manager's does, on every `reload`
+    // (D-08) -- so a reference held across it can name a connection the
+    // vector has shifted, moved from or destroyed. The index is re-looked-up
+    // after every handler call and validated against the descriptor it named
+    // on entry (CR-01).
+    void readConnection(std::size_t index, const Handler& handler);
     void deliver(Connection& c, const std::string& line, bool closeAfter);
     void flush(Connection& c);
     void expireSilent();
@@ -307,4 +313,19 @@ private:
 
     std::vector<Connection> m_clients;
     std::vector<uid_t>      m_warnedUids;
+
+    // --- Re-entrancy (CR-01) ------------------------------------------------
+    //
+    // NON-ZERO WHILE A SERVICING PASS IS IN FLIGHT, which is precisely the
+    // window in which a handler may call back into this object. `reload`
+    // reaches WindowManager::reloadConfigFromDisk(), which broadcasts D-08's
+    // notice on this very server, and broadcast() ends in reap() -- an
+    // erase-remove over the vector the servicing loop is walking.
+    //
+    // reap() therefore DEFERS while this is non-zero and records that it owes
+    // one, and service() pays the debt once, after every handler has returned.
+    // The window manager has one thread, so this is a re-entrancy counter and
+    // not a lock: it counts nesting, never contention.
+    std::size_t m_serviceDepth = 0;
+    bool        m_reapPending  = false;
 };

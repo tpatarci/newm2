@@ -384,3 +384,289 @@ TEST_CASE("A file that is not a socket is never reclaimed", "[config_socket][sta
     struct stat st;
     CHECK(::lstat(filePath.c_str(), &st) == 0);
 }
+
+
+// -----------------------------------------------------------------------------
+// Re-entrancy: a handler that calls back into the server (CR-01)
+// -----------------------------------------------------------------------------
+//
+// The window manager's own handler does exactly this. `reload` reaches
+// WindowManager::reloadConfigFromDisk(), which ends by broadcasting D-08's
+// notice on the very server that is in the middle of calling it -- and
+// broadcast() reaps the connection vector. The transport therefore has to be
+// re-entrancy-safe on its own account rather than by a contract the one handler
+// that exists does not honour.
+//
+// These cases drive the server directly, with no window manager and no display:
+// a scripted handler that broadcasts from inside a `reload` is the whole
+// reproduction.
+
+namespace {
+
+// The server's own directory, rooted in a temporary XDG_RUNTIME_DIR so nothing
+// touches the real per-user one. Removes the directory listen() created.
+class ServerHome {
+public:
+    explicit ServerHome(TempDir& dir)
+    {
+        RuntimeDirEnv::set(dir.path());
+        m_directory = configSocketDirectory();
+    }
+    ~ServerHome() { ::rmdir(m_directory.c_str()); }
+
+    ServerHome(const ServerHome&) = delete;
+    ServerHome& operator=(const ServerHome&) = delete;
+
+    const std::string& directory() const { return m_directory; }
+
+private:
+    std::string m_directory;
+};
+
+
+// A client end of the socket, closed by the descriptor it opened.
+class ClientEnd {
+public:
+    explicit ClientEnd(const std::string& path)
+    {
+        m_fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (m_fd < 0) return;
+
+        struct sockaddr_un addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        if (path.size() + 1 > sizeof(addr.sun_path)) { close(); return; }
+        std::memcpy(addr.sun_path, path.c_str(), path.size());
+
+        if (::connect(m_fd, reinterpret_cast<struct sockaddr*>(&addr),
+                      sizeof(addr)) != 0) {
+            close();
+        }
+    }
+    ~ClientEnd() { close(); }
+
+    ClientEnd(const ClientEnd&) = delete;
+    ClientEnd& operator=(const ClientEnd&) = delete;
+
+    bool open() const { return m_fd >= 0; }
+    int  fd() const { return m_fd; }
+
+    void close()
+    {
+        if (m_fd >= 0) ::close(m_fd);
+        m_fd = -1;
+    }
+
+    bool send(const std::string& bytes) const
+    {
+        std::size_t sent = 0;
+        while (sent < bytes.size()) {
+            const ssize_t n = ::send(m_fd, bytes.data() + sent, bytes.size() - sent,
+                                     MSG_NOSIGNAL);
+            if (n <= 0) return false;
+            sent += static_cast<std::size_t>(n);
+        }
+        return true;
+    }
+
+    // Everything readable right now, appended to `out`. Never blocks.
+    void drain(std::string& out) const
+    {
+        for (;;) {
+            char buf[4096];
+            const ssize_t n = ::recv(m_fd, buf, sizeof(buf), MSG_DONTWAIT);
+            if (n <= 0) return;
+            out.append(buf, static_cast<std::size_t>(n));
+        }
+    }
+
+private:
+    int m_fd = -1;
+};
+
+
+std::string encode(ConfigMessageType type)
+{
+    ConfigMessage m;
+    m.type = type;
+    return configProtocolEncode(m);
+}
+
+
+std::string helloLine()
+{
+    ConfigMessage m;
+    m.type = ConfigMessageType::Hello;
+    m.program = "test";
+    m.protocol = kConfigProtocolVersion;
+    return configProtocolEncode(m);
+}
+
+
+std::string getLine(const std::string& key)
+{
+    ConfigMessage m;
+    m.type = ConfigMessageType::Get;
+    m.key = key;
+    return configProtocolEncode(m);
+}
+
+
+// The window manager's handler, reduced to the one property that matters here:
+// a `reload` broadcasts on the server that is calling it (src/Manager.cpp's
+// reloadConfigFromDisk does precisely this, D-08).
+class ReentrantHandler {
+public:
+    explicit ReentrantHandler(ConfigSocketServer& server) : m_server(server) {}
+
+    ConfigSocketReply operator()(const ConfigSocketRequest& request) const
+    {
+        ConfigSocketReply out;
+        ConfigMessage in;
+        if (configProtocolDecode(request.line, in) != ConfigDecodeResult::Ok) {
+            ConfigMessage error;
+            error.type = ConfigMessageType::Error;
+            error.reason = "undecodable";
+            out.line = configProtocolEncode(error);
+            return out;
+        }
+
+        switch (in.type) {
+        case ConfigMessageType::Hello: {
+            ConfigMessage ack;
+            ack.type = ConfigMessageType::HelloAck;
+            ack.program = "wm2-born-again";
+            ack.protocol = kConfigProtocolVersion;
+            out.line = configProtocolEncode(ack);
+            out.helloAccepted = true;
+            return out;
+        }
+        case ConfigMessageType::Reload:
+            // THE RE-ENTRY. Everything CR-01 is about happens inside this call.
+            m_server.broadcast(encode(ConfigMessageType::Reloaded));
+            out.line = encode(ConfigMessageType::Reloaded);
+            return out;
+        case ConfigMessageType::Get: {
+            ConfigMessage value;
+            value.type = ConfigMessageType::Value;
+            value.key = in.key;
+            value.value = "answered";
+            out.line = configProtocolEncode(value);
+            return out;
+        }
+        default: {
+            ConfigMessage error;
+            error.type = ConfigMessageType::Error;
+            error.reason = "unexpected";
+            out.line = configProtocolEncode(error);
+            return out;
+        }
+        }
+    }
+
+private:
+    ConfigSocketServer& m_server;
+};
+
+
+// One servicing pass, exactly as WindowManager::nextEvent() performs it: build
+// the set the server asked for, poll it, hand it back at the same index.
+void pump(ConfigSocketServer& server, const ConfigSocketServer::Handler& handler,
+          int timeoutMs = 50)
+{
+    std::vector<struct pollfd> fds;
+    server.appendPollFds(fds);
+    if (fds.empty()) return;
+    ::poll(fds.data(), fds.size(), timeoutMs);
+    server.service(fds, 0, handler);
+}
+
+
+std::size_t countLines(const std::string& text, const std::string& needle)
+{
+    std::size_t found = 0;
+    std::size_t start = 0;
+    for (;;) {
+        const std::size_t nl = text.find('\n', start);
+        if (nl == std::string::npos) break;
+        if (text.compare(start, nl - start, needle) == 0) ++found;
+        start = nl + 1;
+    }
+    return found;
+}
+
+}  // namespace
+
+
+TEST_CASE("A broadcast from inside a handler does not disturb the connection "
+          "being served",
+          "[config_socket][reentrancy]")
+{
+    RuntimeDirEnv guard;
+    TempDir home;
+    REQUIRE(home.valid());
+    ServerHome server_home(home);
+
+    ConfigSocketServer server;
+    REQUIRE(server.listen(":reentry"));
+
+    ReentrantHandler handler(server);
+    const ConfigSocketServer::Handler fn =
+        [&handler](const ConfigSocketRequest& r) { return handler(r); };
+
+    // TWO connections, and the ORDER matters: A is accepted first and therefore
+    // sits at index 0, ahead of the connection whose request does the work.
+    ClientEnd a(server.path());
+    ClientEnd b(server.path());
+    REQUIRE(a.open());
+    REQUIRE(b.open());
+
+    pump(server, fn);
+    REQUIRE(server.clientCount() == 2);
+
+    // Both complete the handshake: broadcast() writes to hello-completed
+    // connections only, so a silent A would never be in the set at all.
+    REQUIRE(a.send(helloLine()));
+    REQUIRE(b.send(helloLine()));
+    pump(server, fn);
+
+    std::string fromA;
+    std::string fromB;
+    a.drain(fromA);
+    b.drain(fromB);
+    REQUIRE(countLines(fromA, "{\"type\":\"hello-ack\",\"program\":\"wm2-born-again\","
+                              "\"protocol\":1}") == 1);
+    fromA.clear();
+    fromB.clear();
+
+    // A goes away without the server having noticed yet -- a wm2-ctl that
+    // exited, a settings window that was killed. Its Connection is still at
+    // index 0 with nothing reaped.
+    a.close();
+
+    // B pipelines two frames in ONE write, which is what makes the damage
+    // visible rather than merely latent: the reload's broadcast reaps A from
+    // under the framing loop that is still holding B's buffer, and the second
+    // frame is what that loop was about to read.
+    REQUIRE(b.send(encode(ConfigMessageType::Reload) + getLine("tab-font")));
+
+    pump(server, fn);
+    pump(server, fn);
+    b.drain(fromB);
+
+    // The reply to the reload, and the reply to the request that followed it in
+    // the same write. Both, or the framing loop lost its place.
+    CHECK(countLines(fromB, "{\"type\":\"reloaded\"}") >= 1);
+    CHECK(countLines(fromB, "{\"type\":\"value\",\"key\":\"tab-font\","
+                            "\"value\":\"answered\"}") == 1);
+
+    // And the server is still serving: another request is answered normally.
+    REQUIRE(b.send(getLine("menu-font")));
+    pump(server, fn);
+    fromB.clear();
+    b.drain(fromB);
+    CHECK(countLines(fromB, "{\"type\":\"value\",\"key\":\"menu-font\","
+                            "\"value\":\"answered\"}") == 1);
+
+    server.close();
+}

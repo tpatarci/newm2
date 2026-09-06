@@ -377,20 +377,27 @@ void ConfigSocketServer::service(const std::vector<struct pollfd>& fds,
 
         // Connections FIRST, so nothing an accept does can shift the indices
         // being read here.
+        //
+        // THE WHOLE LOOP IS ONE SERVICING PASS (CR-01). A handler is allowed to
+        // call back into this server -- the window manager's broadcasts D-08's
+        // reload notice from inside the `reload` it is answering -- and a reap
+        // running under this loop would erase, shift and destroy the very
+        // elements it is indexing. So reap() defers while the depth is
+        // non-zero and is paid once, below, when every handler has returned.
+        ++m_serviceDepth;
         for (std::size_t i = 0; i < m_clients.size(); ++i) {
-            Connection& c = m_clients[i];
             const struct pollfd& p = fds[firstIndex + 1 + i];
-            if (p.fd != c.fd) continue;
+            if (p.fd != m_clients[i].fd) continue;
 
-            if (p.revents & POLLOUT) flush(c);
-            if (c.dead) continue;
+            if (p.revents & POLLOUT) flush(m_clients[i]);
+            if (m_clients[i].dead) continue;
 
             switch (socketServerDecide(p.revents)) {
             case SocketAction::ReadClient:
-                readConnection(c, handler);
+                readConnection(i, handler);
                 break;
             case SocketAction::CloseClient:
-                closeConnection(c);
+                closeConnection(m_clients[i]);
                 break;
             case SocketAction::Accept:
                 // Unreachable for a connection role; named rather than left to
@@ -400,6 +407,7 @@ void ConfigSocketServer::service(const std::vector<struct pollfd>& fds,
                 break;
             }
         }
+        --m_serviceDepth;
 
         reap();
 
@@ -451,59 +459,98 @@ void ConfigSocketServer::acceptPending()
 }
 
 
-void ConfigSocketServer::readConnection(Connection& c, const Handler& handler)
+void ConfigSocketServer::readConnection(std::size_t index, const Handler& handler)
 {
+    // BY INDEX, NEVER BY A REFERENCE HELD ACROSS THE HANDLER (CR-01). The
+    // handler is the window manager's, and a `reload` reaches
+    // reloadConfigFromDisk(), which broadcasts on this server -- so control
+    // re-enters this object between the frame being extracted and the reply
+    // being written. A `Connection&` taken before the call and used after it is
+    // a reference into a vector the call may have shifted, moved from or
+    // shortened; the ASan report that led to this shape named exactly that
+    // write. The descriptor the index named on entry is remembered too, so an
+    // index that survives while its OCCUPANT changed is caught as well.
+    if (index >= m_clients.size()) return;
+    const int fdAtEntry = m_clients[index].fd;
+
     // ONE receive per readable notification. Not a loop: a peer writing as fast
     // as this process can read would otherwise keep the window manager inside
     // this function indefinitely, which is the same stall a blocking read would
     // cause by a different route (T-9-15).
-    char buf[4096];
-    const ssize_t n = ::recv(c.fd, buf, sizeof(buf), 0);
+    {
+        Connection& c = m_clients[index];
 
-    if (n == 0) {                       // orderly shutdown by the peer
-        closeConnection(c);
-        return;
-    }
-    if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return;
-        closeConnection(c);
-        return;
-    }
+        char buf[4096];
+        const ssize_t n = ::recv(c.fd, buf, sizeof(buf), 0);
 
-    // The bound is enforced HERE, at the transport, and not only in the
-    // decoder: the decoder never sees a frame this refuses (T-9-14).
-    if (c.in.size() + static_cast<std::size_t>(n) > kConfigProtocolMaxLine) {
-        // Everything up to the bound is already more than any legal frame.
-        deliver(c, errorLine("message too long"), true);
-        c.in.clear();
-        return;
-    }
-    c.in.append(buf, static_cast<std::size_t>(n));
-
-    for (;;) {
-        const std::size_t nl = c.in.find('\n');
-        if (nl == std::string::npos) {
-            // No frame yet. A buffer that has reached the bound without a
-            // newline never will have one, so it is refused now rather than
-            // held (the no-newline-forever case).
-            if (c.in.size() >= kConfigProtocolMaxLine) {
-                deliver(c, errorLine("message too long"), true);
-                c.in.clear();
-            }
+        if (n == 0) {                       // orderly shutdown by the peer
+            closeConnection(c);
+            return;
+        }
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return;
+            closeConnection(c);
             return;
         }
 
+        // The bound is enforced HERE, at the transport, and not only in the
+        // decoder: the decoder never sees a frame this refuses (T-9-14).
+        if (c.in.size() + static_cast<std::size_t>(n) > kConfigProtocolMaxLine) {
+            // Everything up to the bound is already more than any legal frame.
+            deliver(c, errorLine("message too long"), true);
+            c.in.clear();
+            return;
+        }
+        c.in.append(buf, static_cast<std::size_t>(n));
+    }
+
+    for (;;) {
+        // RE-TAKEN every iteration, and validated first. Nothing below this
+        // line may be carried across the handler call at the bottom of the
+        // loop.
+        if (index >= m_clients.size()) return;
+        if (m_clients[index].fd != fdAtEntry) return;
+        if (m_clients[index].closing || m_clients[index].dead) return;
+
+        std::string line;
+        bool helloSeen = false;
+        {
+            Connection& c = m_clients[index];
+
+            const std::size_t nl = c.in.find('\n');
+            if (nl == std::string::npos) {
+                // No frame yet. A buffer that has reached the bound without a
+                // newline never will have one, so it is refused now rather than
+                // held (the no-newline-forever case).
+                if (c.in.size() >= kConfigProtocolMaxLine) {
+                    deliver(c, errorLine("message too long"), true);
+                    c.in.clear();
+                }
+                return;
+            }
+
+            line      = c.in.substr(0, nl + 1);
+            helloSeen = c.helloSeen;
+            c.in.erase(0, nl + 1);
+        }
+
         ConfigSocketRequest req;
-        req.line      = c.in.substr(0, nl + 1);
-        req.helloSeen = c.helloSeen;
-        c.in.erase(0, nl + 1);
+        req.line      = std::move(line);
+        req.helloSeen = helloSeen;
 
         const ConfigSocketReply reply = handler(req);
-        if (reply.helloAccepted) c.helloSeen = true;
+
+        // The re-look-up. A handler that closed this connection, or a reap
+        // that ran despite the deferral (a caller outside service(), which is
+        // allowed), leaves nothing here to write to.
+        if (index >= m_clients.size()) return;
+        if (m_clients[index].fd != fdAtEntry) return;
+
+        Connection& after = m_clients[index];
+        if (reply.helloAccepted) after.helloSeen = true;
         if (!reply.line.empty() || reply.closeAfterSend) {
-            deliver(c, reply.line, reply.closeAfterSend);
+            deliver(after, reply.line, reply.closeAfterSend);
         }
-        if (c.closing || c.dead) return;
     }
 }
 
@@ -592,9 +639,23 @@ void ConfigSocketServer::closeConnection(Connection& c)
 
 void ConfigSocketServer::reap()
 {
+    // DEFERRED WHILE A SERVICING PASS IS IN FLIGHT (CR-01). Every path that
+    // marks a connection dead ends here -- closeConnection() through
+    // expireSilent(), dropOldestSilent(), flush() and deliver(), and
+    // broadcast(), which a handler may call while this object is walking its
+    // own vector. Erasing there shifts and destroys elements the servicing loop
+    // still names. The debt is recorded and paid by service() the moment the
+    // last handler has returned, so a dead connection lives at most to the end
+    // of the pass that killed it and never past a poll().
+    if (m_serviceDepth != 0) {
+        m_reapPending = true;
+        return;
+    }
+
     m_clients.erase(std::remove_if(m_clients.begin(), m_clients.end(),
                                    [](const Connection& c) { return c.dead; }),
                     m_clients.end());
+    m_reapPending = false;
 }
 
 
