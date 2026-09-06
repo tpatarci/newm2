@@ -1918,15 +1918,17 @@ std::string canonicalValue(const ConfigKeySpec& spec, const std::string& value)
 }  // namespace
 
 
-bool WindowManager::reloadMenuColours(const Config &next, std::string &keyOut)
+bool WindowManager::openMenuColours(const Config &next, MenuPalette &out,
+                                   std::string &keyOut)
 {
     Visual  *visual = DefaultVisual(display(), m_screenNumber);
     Colormap cmap   = DefaultColormap(display(), m_screenNumber);
 
-    // ALLOCATE-THEN-SWAP, exactly as Border::reloadColours() does it: all four
-    // values into locals, and only a complete success assigns anything.
-    // XftColorWrap's move-assignment frees what it replaces, so the swap below
-    // is where the old colours are released and not one statement earlier.
+    // ALLOCATE, exactly as Border::openPalette() does it: all four values into
+    // a staged palette, and nothing the menu draws with is touched here.
+    // XftColorWrap's move-assignment frees what it replaces, so the old
+    // colours are released in installMenuColours() and nowhere else -- and a
+    // staged palette that is abandoned frees its own in its destructor.
     x11::XftColorWrap fg(display(), visual, cmap, next.menuForeground.c_str());
     if (!fg) { keyOut = "menu-foreground"; return false; }
     x11::XftColorWrap bg(display(), visual, cmap, next.menuBackground.c_str());
@@ -1940,10 +1942,22 @@ bool WindowManager::reloadMenuColours(const Config &next, std::string &keyOut)
         return false;
     }
 
-    m_menuFgColor     = std::move(fg);
-    m_menuBgColor     = std::move(bg);
-    m_menuHlColor     = std::move(hl);
-    m_menuBorderPixel = borderPixel;
+    out.foreground  = std::move(fg);
+    out.background  = std::move(bg);
+    out.highlight   = std::move(hl);
+    out.borderPixel = borderPixel;
+    return true;
+}
+
+
+void WindowManager::installMenuColours(MenuPalette &palette)
+{
+    if (!palette.foreground) return;   // nothing was staged
+
+    m_menuFgColor     = std::move(palette.foreground);
+    m_menuBgColor     = std::move(palette.background);
+    m_menuHlColor     = std::move(palette.highlight);
+    m_menuBorderPixel = palette.borderPixel;
 
     // The three popups are UNMAPPED between uses and rebuilt on every opening,
     // so there is no live drawing to repair here -- only the state the server
@@ -1957,7 +1971,6 @@ bool WindowManager::reloadMenuColours(const Config &next, std::string &keyOut)
         XSetWindowBackground(display(), w, m_menuBgColor->pixel);
         XSetWindowBorder(display(), w, m_menuBorderPixel);
     }
-    return true;
 }
 
 
@@ -2064,15 +2077,15 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
         return false;
     }
 
-    // --- Everything that can FAIL happens before anything is stored ---------
+    // --- Everything that can FAIL happens before anything is COMMITTED ------
     //
     // Plan 09-04 stored `next` first, because the one live setting it applied
     // could not fail. A colour can: `set tab-background nonsense` is a value
     // the CONFIG PARSER accepts verbatim (colours are validated by the server,
-    // not by Config) and the X server then refuses. Storing first and failing
-    // second would leave `get tab-background` reporting a value nothing is
-    // drawn in -- so the order is now validate, then store, then apply, and a
-    // failure returns having changed nothing at all.
+    // not by Config) and the X server then refuses. A font can too. So the
+    // order is: allocate and open EVERY failable resource into a stage, then
+    // install them all, then store, then apply -- and a failure at any point
+    // returns having changed nothing at all, on the screen or in m_config.
     const bool coloursChanged =
         next.tabForeground    != previous.tabForeground    ||
         next.tabBackground    != previous.tabBackground    ||
@@ -2084,55 +2097,27 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
         next.menuHighlight    != previous.menuHighlight    ||
         next.menuBorders      != previous.menuBorders;
 
-    if (coloursChanged) {
-        // PRE-FLIGHT. Every one of the nine is resolved before either reload
-        // begins, so the two reloads below cannot leave the frame palette new
-        // and the menu palette old: by the time the first of them commits, the
-        // server has already agreed that all nine names parse.
-        //
-        // WHAT THIS DOES AND DOES NOT PROVE (I-02). It proves the nine NAMES
-        // parse. It is NOT the same allocation the reloads then perform:
-        // tryAllocateColour here, XftColorAllocName through x11::XftColorWrap
-        // in reloadMenuColours (src/Manager.cpp's colour helpers), and in
-        // Border::reloadColours two further Xft colours, two derived shades
-        // (tryAllocateShadeOf) and up to three GCs that this loop never
-        // touches. So the "a half-applied palette needs an allocation that
-        // fails after an identical one succeeded" reasoning recorded against
-        // CR-04 is not literally true.
-        //
-        // The invariant is held by the VISUAL CLASS, not by this loop: on the
-        // TrueColor visuals this project targets both routes reduce to parsing
-        // a name and computing a pixel, and Border::reloadColours is
-        // allocate-then-swap, so its own failures commit nothing. Written down
-        // here so a later reader does not take the pre-flight for a guarantee
-        // it cannot give on a visual that allocates from a map.
-        const struct { const char *key; const std::string *value; } palette[] = {
-            {"tab-foreground",    &next.tabForeground},
-            {"tab-background",    &next.tabBackground},
-            {"frame-background",  &next.frameBackground},
-            {"button-background", &next.buttonBackground},
-            {"borders",           &next.borders},
-            {"menu-foreground",   &next.menuForeground},
-            {"menu-background",   &next.menuBackground},
-            {"menu-highlight",    &next.menuHighlight},
-            {"menu-borders",      &next.menuBorders},
-        };
-        for (const auto &entry : palette) {
-            unsigned long ignored = 0;
-            if (!tryAllocateColour(entry.value->c_str(), ignored)) {
-                reasonOut = std::string("the X server cannot parse the ") +
-                            entry.key + " colour";
-                return false;
-            }
-        }
+    // STAGED, NOT COMMITTED. Both palettes are ALLOCATED here -- the frame's
+    // five pixels, two Xft colours, two derived bevel shades and three
+    // graphics contexts, and the menu's three Xft colours and border pixel --
+    // and neither is installed until every font below has opened too. The
+    // staged values live to the end of the function and are freed by their own
+    // destructors on any early return, so a refusal leaks nothing.
+    //
+    // THE NAME PRE-FLIGHT THAT USED TO STAND HERE IS GONE, and its caveat with
+    // it (I-02): it proved the nine names PARSE through tryAllocateColour,
+    // which is not the allocation either reload then performed, so it could
+    // never guarantee what it was written to guarantee. Staging both palettes
+    // through the very allocations that will be installed proves the same
+    // thing exactly rather than by analogy -- on any visual, not only the
+    // TrueColor ones this project targets.
+    Border::Palette framePalette;
+    MenuPalette     menuPalette;
 
+    if (coloursChanged) {
         std::string offending;
-        if (!Border::reloadColours(this, next, offending) ||
-            !reloadMenuColours(next, offending)) {
-            // Unreachable after the pre-flight above unless the colormap
-            // filled between the two, which on the TrueColor visuals this
-            // project targets cannot happen. Reported rather than asserted,
-            // because a window manager must not abort on a colour.
+        if (!Border::openPalette(this, next, framePalette, offending) ||
+            !openMenuColours(next, menuPalette, offending)) {
             reasonOut = "could not allocate the " + offending + " colour";
             return false;
         }
@@ -2176,6 +2161,18 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
         return false;
     }
 
+    // --- COMMIT: everything that could fail has already succeeded -----------
+    //
+    // ALL OR NOTHING, and the colours are part of "all". An earlier form
+    // installed the two palettes where they were allocated, above the fonts --
+    // so a reload carrying a colour AND an unopenable font returned false with
+    // the palettes already swapped: every frame built afterwards wore colours
+    // `get` denied, and a client could not repair it, because setting the old
+    // colour back computes coloursChanged == false and reloads nothing.
+    if (coloursChanged) {
+        Border::installPalette(this, framePalette);
+        installMenuColours(menuPalette);
+    }
     if (tabFontChanged)  Border::installTabFace(this, newTabFace);
     if (menuFontChanged) installMenuFace(std::move(newMenuFace));
 

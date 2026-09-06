@@ -380,13 +380,19 @@ void Border::loadTabFont()
 // ---------------------------------------------------------------------------
 // Live colour reload (CGUI-04, plan 09-05)
 //
-// ALLOCATE-THEN-SWAP, and the ordering is the whole safety property. Every new
-// value -- five pixels, two Xft colours, two derived bevel shades and three
-// graphics contexts -- is obtained into a LOCAL first. Only when every one of
-// them has succeeded is a single old value released. A failure at any point
-// therefore leaves the window manager drawing with exactly the palette it had,
-// which is what threat T-9-26 and this plan's standing prohibition require;
-// freeing first and hoping would leave a frame with no colour at all.
+// ALLOCATE, THEN SWAP -- and the two halves are two FUNCTIONS, which is the
+// whole safety property. Every new value -- five pixels, two Xft colours, two
+// derived bevel shades and three graphics contexts -- is obtained into a
+// staged Palette by openPalette(), and nothing that draws sees any of it until
+// installPalette() takes it. A failure at any point therefore leaves the
+// window manager drawing with exactly the palette it had, which is what threat
+// T-9-26 and this plan's standing prohibition require; freeing first and
+// hoping would leave a frame with no colour at all.
+//
+// The split is not decoration. applyConfig() applies a whole Config, so a
+// reload can carry a colour and a font in one edit, and a palette that
+// installed itself before the font was opened committed half a refused
+// configuration -- see the comment on Border::Palette in include/Border.h.
 //
 // A note on what is NOT released here. The five pixel values come from
 // XAllocNamedColor and are never freed, in this function or anywhere else in
@@ -399,13 +405,28 @@ void Border::loadTabFont()
 // allocation and a single free would release it for both.
 // ---------------------------------------------------------------------------
 
-bool Border::reloadColours(WindowManager *wm, const Config &next,
-                           std::string &keyOut)
+Border::Palette::~Palette()
+{
+    // Only what was never handed over. installPalette() clears the flag as it
+    // takes the two colours, so an installed palette frees nothing here and an
+    // abandoned one frees exactly what it allocated.
+    if (xftHeld && display != nullptr) {
+        XftColorFree(display, visual, colormap, &background);
+        XftColorFree(display, visual, colormap, &foreground);
+    }
+}
+
+
+bool Border::openPalette(WindowManager *wm, const Config &next, Palette &out,
+                         std::string &keyOut)
 {
     // Before the first frame exists the statics block has not run, and it
-    // reads whatever is in the config when it does. Nothing to reload, and
-    // nothing to fail.
-    if (!m_staticsInitialised) return true;
+    // reads whatever is in the config when it does. Nothing to allocate
+    // against, and nothing to fail.
+    if (!m_staticsInitialised) {
+        out.nothingToInstall = true;
+        return true;
+    }
 
     Display *d = wm->display();
     Visual *visual = DefaultVisual(d, DefaultScreen(d));
@@ -431,6 +452,10 @@ bool Border::reloadColours(WindowManager *wm, const Config &next,
     }
 
     // --- allocate: the two Xft colours the tab is drawn with -----------------
+    //
+    // Handed to `out` the moment both are allocated, so from here on the
+    // staged palette owns them: every early return below destroys it, and the
+    // destructor frees exactly these two.
     XftColor newForeground, newBackground;
     if (!XftColorAllocName(d, visual, cmap, next.tabForeground.c_str(),
                            &newForeground)) {
@@ -443,11 +468,12 @@ bool Border::reloadColours(WindowManager *wm, const Config &next,
         keyOut = "tab-background";
         return false;
     }
-
-    auto abandon = [&]() {
-        XftColorFree(d, visual, cmap, &newBackground);
-        XftColorFree(d, visual, cmap, &newForeground);
-    };
+    out.display    = d;
+    out.visual     = visual;
+    out.colormap   = cmap;
+    out.foreground = newForeground;
+    out.background = newBackground;
+    out.xftHeld    = true;
 
     // --- allocate: the bevel shades, DERIVED from the new tab background -----
     //
@@ -460,7 +486,6 @@ bool Border::reloadColours(WindowManager *wm, const Config &next,
     unsigned long lightPixel = 0, shadowPixel = 0;
     if (!wm->tryAllocateShadeOf(next.tabBackground.c_str(), 0.76, lightPixel) ||
         !wm->tryAllocateShadeOf(next.tabBackground.c_str(), -0.315, shadowPixel)) {
-        abandon();
         keyOut = "tab-background";
         return false;
     }
@@ -479,7 +504,6 @@ bool Border::reloadColours(WindowManager *wm, const Config &next,
             &values);
     }
     if (!newDrawGC) {
-        abandon();
         keyOut = "tab-foreground";
         return false;
     }
@@ -506,23 +530,46 @@ bool Border::reloadColours(WindowManager *wm, const Config &next,
             GCForeground | GCLineWidth | GCFunction | GCSubwindowMode, &bv);
     }
 
-    // --- swap: nothing above can fail from here on --------------------------
+    // --- staged: nothing above installed anything ---------------------------
+    out.framePixel  = framePixel;
+    out.buttonPixel = buttonPixel;
+    out.borderPixel = borderPixel;
+    out.fgPixel     = fgPixel;
+    out.bgPixel     = bgPixel;
+    out.drawGC      = std::move(newDrawGC);
+    out.lightGC     = std::move(newLightGC);
+    out.shadowGC    = std::move(newShadowGC);
+    return true;
+}
+
+
+void Border::installPalette(WindowManager *wm, Palette &palette)
+{
+    if (palette.nothingToInstall || !palette.drawGC) return;
+
+    Display *d = wm->display();
+    Visual *visual = DefaultVisual(d, DefaultScreen(d));
+    Colormap cmap  = DefaultColormap(d, DefaultScreen(d));
+
+    // The swap, and the only place the old values are released. Exactly one
+    // set is freed and exactly one installed, so a repeated reload cannot
+    // accumulate colours (T-9-27's argument, applied to the palette).
     if (m_xftColorsAllocated) {
         XftColorFree(d, visual, cmap, &m_xftForeground);
         XftColorFree(d, visual, cmap, &m_xftBackground);
     }
-    m_xftForeground = newForeground;
-    m_xftBackground = newBackground;
+    m_xftForeground = palette.foreground;
+    m_xftBackground = palette.background;
     m_xftColorsAllocated = true;
+    palette.xftHeld = false;      // handed over; the destructor must not free them
 
-    m_frameBackgroundPixel  = framePixel;
-    m_buttonBackgroundPixel = buttonPixel;
-    m_borderPixel           = borderPixel;
+    m_frameBackgroundPixel  = palette.framePixel;
+    m_buttonBackgroundPixel = palette.buttonPixel;
+    m_borderPixel           = palette.borderPixel;
 
-    m_drawGC        = std::move(newDrawGC);
-    m_bevelLightGC  = std::move(newLightGC);
-    m_bevelShadowGC = std::move(newShadowGC);
-    return true;
+    m_drawGC        = std::move(palette.drawGC);
+    m_bevelLightGC  = std::move(palette.lightGC);
+    m_bevelShadowGC = std::move(palette.shadowGC);
 }
 
 
@@ -573,10 +620,10 @@ void Border::repaintForColourChange()
 // ---------------------------------------------------------------------------
 // Live tab-font reload (CGUI-04, plan 09-05)
 //
-// LOAD BEFORE CLOSE, for the same reason reloadColours() allocates before it
-// releases: the shared face is what every frame measures and draws its label
-// with, and a window manager holding a null one after a failed reload is the
-// outcome XDIS-04's ladder exists to prevent.
+// LOAD BEFORE CLOSE, for the same reason openPalette() allocates before
+// anything is released: the shared face is what every frame measures and draws
+// its label with, and a window manager holding a null one after a failed
+// reload is the outcome XDIS-04's ladder exists to prevent.
 //
 // The ladder here is loadTabFont()'s, walked in the same order and stopping at
 // the same rungs -- but only rungs 1 to 3, because rung 4 is "no face at all",

@@ -420,9 +420,21 @@ private:
     bool applyConfig(const Config& next, std::string& reasonOut);
 
     // The menu half of the palette reload, beside applyConfig() because that is
-    // its only caller. Allocate-then-swap, like Border::reloadColours(); false
-    // with the offending key in `keyOut`, having changed nothing.
-    bool reloadMenuColours(const Config& next, std::string& keyOut);
+    // its only caller, and split into an OPEN and an INSTALL for the same
+    // reason Border::openPalette() is: a reload applies a whole Config, so one
+    // edit can carry a colour and a font, and a palette that installed itself
+    // before the font was opened committed half a refused configuration.
+    //
+    // openMenuColours() changes nothing whichever way it answers, and reports
+    // the offending key in `keyOut`; installMenuColours() cannot fail.
+    struct MenuPalette {
+        x11::XftColorWrap foreground;
+        x11::XftColorWrap background;
+        x11::XftColorWrap highlight;
+        unsigned long     borderPixel = 0;
+    };
+    bool openMenuColours(const Config& next, MenuPalette& out, std::string& keyOut);
+    void installMenuColours(MenuPalette& palette);
 
     // The menu's half of the font reload, split into an OPEN and an INSTALL for
     // the same reason Border's is (CR-04): a reload applies a whole Config, so

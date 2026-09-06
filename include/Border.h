@@ -45,18 +45,71 @@ public:
     // Live colour and font reload (CGUI-04, plan 09-05)
     // -----------------------------------------------------------------------
 
-    // Re-allocate every colour and every graphics context this class draws
-    // with, from `next`. ALLOCATE-THEN-SWAP: every new value is obtained
-    // first, and only a complete success releases anything -- so a colour the
-    // server cannot parse leaves the previous palette entirely in place and
-    // reports the failure to the caller. Returns false with the offending key
-    // in `keyOut`, having changed nothing at all.
+    // A palette that has been ALLOCATED and not yet INSTALLED: five pixels,
+    // two Xft colours, two derived bevel shades and up to three graphics
+    // contexts, all obtained from `next` and none of them yet shared with
+    // anything that draws.
+    //
+    // The sibling of TabFace below, and it exists for the enlarged form of the
+    // same defect. applyConfig() applies a WHOLE Config on a reload, so one
+    // edit can carry a colour AND a font -- and a palette that was allocated
+    // and swapped before either face was opened left every frame built
+    // afterwards wearing colours the window manager then refused to report,
+    // with no `set` able to repair it (coloursChanged is false on the way
+    // back). Splitting the allocation from the swap lets applyConfig() prove
+    // the whole configuration applies before it commits any part of it.
+    //
+    // Owns the two Xft colours until installPalette() takes them: a staged
+    // palette that is abandoned frees them in its destructor, so a refusal
+    // upstream leaks nothing.
+    struct Palette {
+        // Nothing to install. Before the first frame exists the statics block
+        // has not run, and the first Border will read the new colours for
+        // itself -- so there is nothing to allocate against and nothing to
+        // swap.
+        bool nothingToInstall = false;
+
+        unsigned long framePixel  = 0;
+        unsigned long buttonPixel = 0;
+        unsigned long borderPixel = 0;
+        unsigned long fgPixel     = 0;
+        unsigned long bgPixel     = 0;
+
+        XftColor foreground{};
+        XftColor background{};
+        bool     xftHeld = false;   // the two above are allocated and not handed over
+
+        x11::GCPtr drawGC;
+        x11::GCPtr lightGC;      // null when the shade would not allocate
+        x11::GCPtr shadowGC;     // ditto; every draw site treats null as "no bevel"
+
+        // The connection the two Xft colours came from, so the destructor can
+        // free them with no window manager to ask.
+        Display *display  = nullptr;
+        Visual  *visual   = nullptr;
+        Colormap colormap = 0;
+
+        Palette() = default;
+        ~Palette();
+        Palette(const Palette &) = delete;
+        Palette &operator=(const Palette &) = delete;
+    };
+
+    // Allocate every colour and every graphics context this class draws with,
+    // from `next`, WITHOUT installing any of them. Changes nothing whichever
+    // way it answers; returns false with the offending key in `keyOut`.
     //
     // Static because the palette is shared by every frame: one allocation, one
-    // set of graphics contexts, one bevel derivation. The per-instance repaint
-    // that makes the new values visible is the next method down.
-    static bool reloadColours(WindowManager *wm, const Config &next,
-                              std::string &keyOut);
+    // set of graphics contexts, one bevel derivation.
+    static bool openPalette(WindowManager *wm, const Config &next, Palette &out,
+                            std::string &keyOut);
+
+    // Install a palette openPalette() produced. Cannot fail: everything that
+    // can is upstream, in the open. Exactly one set of old values is released
+    // and exactly one installed, so a repeated reload cannot accumulate
+    // colours. The per-instance repaint that makes them visible is the next
+    // method down.
+    static void installPalette(WindowManager *wm, Palette &palette);
 
     // Push the reloaded palette onto THIS frame: the new background pixels on
     // each window, a clear so the server repaints from them, and the existing
@@ -122,7 +175,7 @@ public:
     // open and the install in one call, for a caller with only one face to
     // change. LOADS BEFORE IT CLOSES -- a pattern with no usable face at any
     // rung leaves the previous face loaded and the previous tab width in
-    // force, and returns false. Static for the same reason as reloadColours().
+    // force, and returns false. Static for the same reason as openPalette().
     static bool reloadTabFont(WindowManager *wm, const std::string &pattern);
 
     // Re-lay this frame out after the shared tab font changed. The tab's

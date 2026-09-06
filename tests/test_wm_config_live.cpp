@@ -3037,6 +3037,102 @@ TEST_CASE("the same reload with a usable menu-font changes both fonts",
     CHECK(fixture.wmAlive());
 }
 
+TEST_CASE("a reload refused for its font leaves the palette it also carried "
+          "entirely alone",
+          "[wm_config_live]")
+{
+    // THE COMMIT ORDER, asserted on the screen. A reload applies a whole file,
+    // so one edit can carry a colour AND a font -- and the palette used to be
+    // reloaded (allocated AND swapped) before either face was opened. A face
+    // that would not open then returned false with m_config untouched, having
+    // already moved the shared palette every frame is built from: `get
+    // tab-background` named the old colour and the next window to open wore the
+    // new one. Sticky, too, in the same way CR-04's font defect was: setting
+    // the old colour back computes coloursChanged == false and reloads nothing.
+    //
+    // The forced font failure is the same internal lever the two cases above
+    // use, and for the same reason -- fontconfig substitutes rather than fails,
+    // so no pattern a user can type reaches the bottom of the ladder.
+    const std::string home = makeConfigHome(
+        "frame-thickness=7\n"
+        "tab-font=Sans:bold:size=12\n"
+        "tab-background=#c8cacc\n");
+    WmFixtureOptions options = fixtureWithConfigHome(home);
+    options.childEnv["WM2_FORCE_TAB_FONT_RELOAD_FAILURE"] = "1";
+    WmFixture fixture(options);
+
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d, 200, 150, 320, 240, client,
+                                          "palette-before-font");
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    const int kThickness = 7;                       // the file's value
+    const Rect band = tabBandRect(rectOf(d, frame), rectOf(d, client), kThickness);
+
+    const unsigned long oldBg = namedPixel(d, "#c8cacc");
+    const unsigned long newBg = namedPixel(d, "#ff0000");
+    REQUIRE(oldBg != ~0UL);
+    REQUIRE(newBg != ~0UL);
+
+    const Histogram bandBefore = captureRoot(d, band);
+    INFO("band before: " << describeTop(bandBefore));
+    REQUIRE(dominantPixel(bandBefore) == oldBg);
+
+    // ONE edit carrying both: a colour the server parses happily, and a font
+    // the lever makes unopenable.
+    writeConfigFile(home,
+                    "frame-thickness=7\n"
+                    "tab-font=Sans:bold:size=28\n"
+                    "tab-background=#ff0000\n");
+    CtlResult r = ctl(fixture, {"reload"});
+    settleWm(d);
+
+    const Histogram bandAfter = captureRoot(d, band);
+
+    // THE NEW FRAME is where a committed palette shows, exactly as the new
+    // frame is where a committed tab width showed for CR-04: every window
+    // built after the refusal reads the shared pixels the refused reload left
+    // behind.
+    Window late = None;
+    Window lateFrame = mapClientAndAwaitFrame(d, 560, 380, 240, 180, late,
+                                              "after-refusal");
+    REQUIRE(lateFrame != None);
+    settleWm(d);
+    const Rect lateBandRect =
+        tabBandRect(rectOf(d, lateFrame), rectOf(d, late), kThickness);
+    const Histogram lateBand = captureRoot(d, lateBandRect);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO(r.describe());
+    INFO("band after: " << describeTop(bandAfter));
+    INFO("late band:  " << describeTop(lateBand));
+
+    // The reload is refused whole, and says which key refused it.
+    CHECK(r.exitCode == 1);
+    CHECK(r.err.find("tab-font") != std::string::npos);
+
+    // The window manager still reports the old colour...
+    CHECK(ctlGet(fixture, "tab-background") == "#c8cacc");
+
+    // ...and so does the screen, for the frame that was already open...
+    CHECK(dominantPixel(bandAfter) == oldBg);
+    CHECK(countOf(bandAfter, newBg) == 0);
+
+    // ...and for the one opened afterwards, which is the assertion that fails
+    // when the palette was committed before the font was validated.
+    CHECK(dominantPixel(lateBand) == oldBg);
+    CHECK(countOf(lateBand, newBg) == 0);
+
+    CHECK(fixture.wmAlive());
+}
+
 
 // ---------------------------------------------------------------------------
 // A live apply does not move geometry a modal grab has already cached (WR-13)
