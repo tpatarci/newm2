@@ -296,6 +296,26 @@ TEST_CASE("parseFile handles a CRLF-terminated blank line without crashing", "[d
 
 namespace {
 
+// A scratch directory under the CURRENT working directory -- which ctest sets
+// to the build tree -- returned as an ABSOLUTE path.
+//
+// Absolute matters, and finding out why cost a red test: DesktopEntry's XDG
+// helpers discard any data directory that is not absolute, so a relative
+// XDG_DATA_HOME silently falls back to $HOME/.local/share and the scan reads
+// the DEVELOPER'S OWN desktop files. A test that does that is both wrong and a
+// standing-rule violation.
+std::string makeScratchDir(const char* templateName) {
+    std::string tmpl = templateName;
+    std::vector<char> buf(tmpl.begin(), tmpl.end());
+    buf.push_back('\0');
+    const char* made = mkdtemp(buf.data());
+    REQUIRE(made != nullptr);
+
+    char cwd[4096];
+    REQUIRE(getcwd(cwd, sizeof(cwd)) != nullptr);
+    return std::string(cwd) + "/" + made;
+}
+
 // A directory of stub executables, created under the CURRENT working directory
 // -- which ctest sets to the build tree -- rather than at a fixed path under
 // the system temporary directory, for the same reason the gate scripts stage
@@ -303,10 +323,7 @@ namespace {
 class StubBinDir {
 public:
     explicit StubBinDir(const std::vector<std::string>& names) {
-        char tmpl[] = "wm2-desktopentry-stubbin-XXXXXX";
-        const char* made = mkdtemp(tmpl);
-        REQUIRE(made != nullptr);
-        m_dir = made;
+        m_dir = makeScratchDir("wm2-desktopentry-stubbin-XXXXXX");
         for (const auto& n : names) {
             const std::string p = m_dir + "/" + n;
             {
@@ -415,4 +432,60 @@ TEST_CASE("the shipped session entry names the window manager and survives D-05 
     REQUIRE(result->name == "wm2-born-again");
     REQUIRE(result->execArgv.size() == 1);
     REQUIRE(result->execArgv[0] == "wm2-born-again");
+}
+
+TEST_CASE("the shipped wm2-config entry reaches the discovered-application list through the ordinary scanner",
+          "[desktopentry][packaging]") {
+    // The parse cases above prove the FILE is well-formed. This one proves the
+    // composition D-11's second half actually depends on: the entry, sitting
+    // where the config-gui component installs it (an `applications` directory
+    // under an XDG data root), is picked up by the SAME scanAll() the root menu
+    // calls -- no special case, no separate code path for this project's own
+    // settings window.
+    const std::string source = packagingFile("wm2-config.desktop");
+    requireReadable(source);
+
+    StubBinDir bins({"wm2-config"});
+    ScopedPath onlyStubs(bins.path());
+
+    // An XDG data root under the build tree, laid out the way the install rule
+    // lays out a real prefix: <root>/applications/wm2-config.desktop.
+    const std::string dataHome = makeScratchDir("wm2-desktopentry-xdghome-XXXXXX");
+    const std::string appsDir = dataHome + "/applications";
+    REQUIRE(mkdir(appsDir.c_str(), 0755) == 0);
+    const std::string installed = appsDir + "/wm2-config.desktop";
+    {
+        std::ifstream in(source, std::ios::binary);
+        std::ofstream out(installed, std::ios::binary);
+        out << in.rdbuf();
+    }
+
+    char* origDirs = std::getenv("XDG_DATA_DIRS");
+    char* origHome = std::getenv("XDG_DATA_HOME");
+    std::string origDirsStr, origHomeStr;
+    if (origDirs) origDirsStr = origDirs;
+    if (origHome) origHomeStr = origHome;
+
+    // A data-dirs list of one nonexistent directory, so the ONLY entry the scan
+    // can find is the one just installed -- the assertion below is then about
+    // this file and not about whatever the developer's machine happens to have.
+    setenv("XDG_DATA_DIRS", "/nonexistent/wm2-packaging-test", 1);
+    setenv("XDG_DATA_HOME", dataHome.c_str(), 1);
+
+    auto apps = DesktopEntry::scanAll();
+
+    if (origDirsStr.empty()) unsetenv("XDG_DATA_DIRS");
+    else setenv("XDG_DATA_DIRS", origDirsStr.c_str(), 1);
+    if (origHomeStr.empty()) unsetenv("XDG_DATA_HOME");
+    else setenv("XDG_DATA_HOME", origHomeStr.c_str(), 1);
+
+    std::remove(installed.c_str());
+    rmdir(appsDir.c_str());
+    rmdir(dataHome.c_str());
+
+    REQUIRE(apps.size() == 1);
+    REQUIRE(apps[0].category == "Settings");
+    REQUIRE(apps[0].execArgv.size() == 1);
+    REQUIRE(apps[0].execArgv[0] == "wm2-config");
+    REQUIRE(apps[0].source == AppEntry::Source::Desktop);
 }
