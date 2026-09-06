@@ -2893,3 +2893,77 @@ TEST_CASE("a peer that stops reading does not hang the client for ever",
     CHECK(refused);
     CHECK(elapsed < 30000);
 }
+
+
+TEST_CASE("one readable notification does not license an unbounded read",
+          "[wm2_config_smoke][protocol][nonblocking]")
+{
+    ScriptedPeer peer(shortSocketPath("wr10drain"));
+    REQUIRE(peer.listening());
+
+    ProtocolClient client;
+    REQUIRE(client.connect(peer.path()));
+
+    const int fd = peer.connection(5000);
+    REQUIRE(fd >= 0);
+
+    int notices = 0;
+    client.setNoticeHandler([&notices]() { ++notices; });
+
+    // A peer streaming well-formed short lines: every one of them decodes, so
+    // the old growth guard -- which required the ABSENCE of a newline -- never
+    // fired, and the drain loop stayed inside onReadable() with m_in growing.
+    ConfigMessage reloaded;
+    reloaded.type = ConfigMessageType::Reloaded;
+    const std::string line = configProtocolEncode(reloaded);
+    REQUIRE(line.size() < 64);
+
+    // Written non-blocking, so filling the socket buffer cannot hang the case.
+    const int peerFlags = ::fcntl(fd, F_GETFL, 0);
+    REQUIRE(peerFlags >= 0);
+    REQUIRE(::fcntl(fd, F_SETFL, peerFlags | O_NONBLOCK) == 0);
+
+    // Queued in BATCHES rather than one line per send(). An AF_UNIX stream
+    // socket charges its buffer per skb, not per byte, so a few hundred
+    // twenty-byte writes fill it long before the byte count gets anywhere near
+    // the drain bound -- which would make the case measure the kernel's
+    // accounting instead of the client's loop.
+    constexpr int kLinesPerBatch = 100;
+    std::string batch;
+    for (int i = 0; i < kLinesPerBatch; ++i) batch += line;
+
+    int sent = 0;
+    for (;;) {
+        const ssize_t n = ::send(fd, batch.data(), batch.size(), MSG_NOSIGNAL);
+        if (n != static_cast<ssize_t>(batch.size())) break;
+        sent += kLinesPerBatch;
+        if (sent > 100000) break;
+    }
+    // More than one callback's worth, or the case proves nothing. The queue
+    // depth is the kernel's to decide, so a host whose AF_UNIX buffers are too
+    // small to hold more than the bound SKIPS with the reason rather than
+    // passing vacuously.
+    const int needed =
+        static_cast<int>(kProtocolClientMaxDrainPerCallback / line.size()) + 1;
+    if (sent < needed) {
+        SKIP("this host's AF_UNIX socket buffer held only " +
+             std::to_string(sent) + " frames, fewer than the " +
+             std::to_string(needed) + " one drain bound allows, so a bounded "
+             "drain cannot be told from an unbounded one here");
+    }
+
+    client.onReadable();
+    const int afterOne = notices;
+
+    INFO("peer queued " << sent << " lines; one callback consumed " << afterOne);
+
+    // Progress was made, and the callback RETURNED with work still waiting --
+    // which is what keeps the main loop repainting instead of the process
+    // growing until the OOM killer takes it.
+    CHECK(afterOne > 0);
+    CHECK(afterOne < sent);
+
+    // And nothing is lost: the rest arrives on the callbacks that follow.
+    CHECK(client.pumpUntil([&]() { return notices >= sent; }, 10000));
+    CHECK(client.connected());
+}

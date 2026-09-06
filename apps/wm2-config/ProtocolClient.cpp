@@ -331,7 +331,55 @@ void ProtocolClient::onReadable()
 {
     if (m_fd < 0) return;
 
+    // BOUNDED PER CALLBACK, AND FRAMES ARE PARSED AS THEY COMPLETE (WR-10).
+    //
+    // The old shape drained until EAGAIN and only then parsed. Its growth
+    // guard required the ABSENCE of a newline, so a peer streaming
+    // well-formed short lines faster than the loop could exit kept the GTK
+    // main loop inside this function with m_in growing without limit -- the
+    // window frozen and the process growing until the OOM killer took it.
+    //
+    // This is the same "a single readable notification does not license an
+    // unbounded read" rule the window manager's side states as
+    // non-negotiable (src/SocketServer.cpp's rule 1). The client is a GLib
+    // source, so it takes the bound in bytes and returns; whatever is left is
+    // still readable, and the source fires again immediately.
+    std::size_t drained = 0;
+
     for (;;) {
+        // Frames FIRST, so m_in never holds more than one incomplete line and
+        // the bound below is about the socket rather than about the buffer.
+        for (;;) {
+            const std::size_t nl = m_in.find('\n');
+            if (nl == std::string::npos) break;
+            const std::string line = m_in.substr(0, nl + 1);
+            m_in.erase(0, nl + 1);
+
+            ConfigMessage message;
+            if (configProtocolDecode(line, message) != ConfigDecodeResult::Ok) {
+                // Undecodable is not the same as absent: a peer producing
+                // lines this build cannot read is not one we may keep sending
+                // values to.
+                disconnect(State::Refused,
+                           "the window manager sent a message this program cannot read");
+                return;
+            }
+            dispatch(message);
+            if (m_fd < 0) return;    // a handler, or dispatch itself, dropped us
+        }
+
+        // A frame longer than the contract allows is refused HERE rather than
+        // buffered until this process runs out of memory. Asserted with no
+        // regard to newlines, because the framing loop above has already taken
+        // every complete line out: whatever is left IS an incomplete frame.
+        if (m_in.size() > kConfigProtocolMaxLine) {
+            disconnect(State::Refused,
+                       "the window manager sent a line longer than the protocol allows");
+            return;
+        }
+
+        if (drained >= kProtocolClientMaxDrainPerCallback) return;  // finish next callback
+
         char buf[4096];
         const ssize_t n = ::recv(m_fd, buf, sizeof(buf), MSG_DONTWAIT);
         if (n == 0) {
@@ -340,40 +388,13 @@ void ProtocolClient::onReadable()
         }
         if (n < 0) {
             if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return;
             disconnect(State::NoSocket,
                        std::string("the connection failed: ") + std::strerror(errno));
             return;
         }
         m_in.append(buf, static_cast<std::size_t>(n));
-
-        // A frame longer than the contract allows is refused HERE rather than
-        // buffered until this process runs out of memory. The window manager
-        // applies the same bound to what it reads from us.
-        if (m_in.size() > kConfigProtocolMaxLine * 2 &&
-            m_in.find('\n') == std::string::npos) {
-            disconnect(State::Refused,
-                       "the window manager sent a line longer than the protocol allows");
-            return;
-        }
-    }
-
-    for (;;) {
-        const std::size_t nl = m_in.find('\n');
-        if (nl == std::string::npos) break;
-        const std::string line = m_in.substr(0, nl + 1);
-        m_in.erase(0, nl + 1);
-
-        ConfigMessage message;
-        if (configProtocolDecode(line, message) != ConfigDecodeResult::Ok) {
-            // Undecodable is not the same as absent: a peer producing lines
-            // this build cannot read is not one we may keep sending values to.
-            disconnect(State::Refused,
-                       "the window manager sent a message this program cannot read");
-            return;
-        }
-        dispatch(message);
-        if (m_fd < 0) return;    // a handler, or dispatch itself, dropped us
+        drained += static_cast<std::size_t>(n);
     }
 }
 

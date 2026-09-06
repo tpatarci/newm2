@@ -50,6 +50,22 @@
 #include <string>
 
 
+// The most bytes one onReadable() call takes off the socket before returning to
+// the main loop. Whatever is left is still readable, so the GLib source fires
+// again at once and no message is delayed by more than a turn of the loop --
+// but a peer streaming faster than this process can parse cannot hold the loop
+// inside one callback (WR-10).
+//
+// TWO MAXIMUM-LENGTH FRAMES. Large enough that a callback always makes
+// progress on the largest legal message rather than nibbling at it, and large
+// enough to swallow the whole of the twenty-three-reply burst the window reads
+// at startup in one turn; small enough that a flooding peer yields the loop
+// promptly. Expressed in the protocol's own bound rather than as a round
+// number, so the two cannot drift apart.
+inline constexpr std::size_t kProtocolClientMaxDrainPerCallback =
+    2 * kConfigProtocolMaxLine;
+
+
 class ProtocolClient {
 public:
     enum class State {
