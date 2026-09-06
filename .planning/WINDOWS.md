@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 24
+open_count: 26
 waived_count: 8
 fixed_count: 9
-total_count: 41
-last_updated: 2026-09-06T22:51:09.093Z
+total_count: 43
+last_updated: 2026-09-07T00:00:00.000Z
 ---
 
 # Broken Windows Ledger
@@ -56,6 +56,8 @@ last_updated: 2026-09-06T22:51:09.093Z
 | 39 | 09 | unrun-verify | apps/wm2-ctl/main.cpp | 214 | Codex PR-review fix P1 (wm2-ctl non-blocking socket, commit 3ef61cc): the CONNECT half is covered by a RED-first [wm_config_live] case (a saturated accept queue; the tool now exits 2 on its own 15 s deadline instead of hanging until the harness watchdog kills it). The SEND half -- the EAGAIN arm that now waits on POLLOUT instead of spinning -- has no automated case. Reaching it needs the peer to stop reading AND more than one socket buffer of data in flight; AF_UNIX stream flow control is charged to the SENDER's SO_SNDBUF (default ~208 KB on this host, not settable from outside the tool) while Linux caps a single argv string at MAX_ARG_STRLEN = 128 KB, so no invocation a test can construct fills it. Verified by reading instead: the arm is the same shape as ProtocolClient.cpp's, which WR-09 closed and which is exercised there. | open |  | 2026-09-06T21:48:51.990Z |  |
 | 40 | 09 | unrun-verify | src/Client.cpp |  | Codex PR-review pass 2, P2 fullscreen fix (commit 60c758f): the deferred-refresh flags are driven RED-first for a frame-thickness and a tab-background change applied while a client is fullscreen ([wm_config_live] "a client that was fullscreen while the configuration moved comes back wearing the new one"). Two arms share that code and have no case of their own: a TAB-FONT change during fullscreen (it sets the same m_frameLayoutStale flag and is replayed through the same Border::relayoutForTabFont call, so the case would differ only in which key is set), and a client that is HIDDEN as well as fullscreen when the change arrives (the frame windows are unmapped, so the geometry is assertable but no pixel is). Verified by reading: applyDeferredFrameRefresh() has one path and the thickness case reaches all of it. | open |  | 2026-09-06T22:51:02.152Z |  |
 | 41 | 09 | unrun-verify | apps/wm2-config/FormState.cpp |  | Codex PR-review pass 2, P2 lower-layer fix (commit e981cdd): FormState::refreshLowerLayers is driven RED-first for a single setting through the reload path ([wm2_config_smoke] "a file re-read moves what Reset will produce, and keeps the edits it finds"), and the window wiring is asserted by a comment-stripped source guard on onReloadNotice() rather than by a driven GTK reload -- the same precedent row 21 records for the entry-dialog case. Two arms have no case: the MENU-ENTRIES half (m_menuBelowUser, and a pending menu reset following the new lower layer), and the SAVE path, which re-reads the layers for the same reason and now refreshes them the same way. Both are the same three lines of the same function as the covered arm. | open |  | 2026-09-06T22:51:09.093Z |  |
+| 42 | 09 | unrun-verify | src/Manager.cpp |  | Codex PR-review pass 3, P2 socket-property fix (commit d58e17a): the SHUTDOWN arm is driven RED-first ([wm_socket] "The published socket path is withdrawn when the window manager exits" -- the fixture's X server outlives the window manager, so the root window is still there to be asked after a clean SIGTERM exit; red on CHECK(withdrawn) with _WM2_CONFIG_SOCKET still naming the unlinked node). The STARTUP arm -- setupEwmhProperties()'s new else, which deletes a PREDECESSOR's stale property when this start could not bind -- has no case. It needs a property planted on root BEFORE the window manager publishes, and WmFixture spawns the window manager inside its own constructor with no hook to run anything first; a second window manager cannot be started on a fixture's display either (the display dies with the fixture, and _WM2_RUNNING makes one owner per display). The nearest driven case, "A socket path too long for the address structure is named, not truncated", asserts the property is absent after a no-listener start but cannot distinguish the else branch from the old no-else code, because nothing stale was there to remove. Verified by reading: the else is one XDeleteProperty through the same helper release() uses, and that helper is exercised. | open |  | 2026-09-07T00:00:00.000Z |  |
+| 43 | 09 | unrun-verify | src/Events.cpp |  | Codex PR-review pass 3, P2 failed-listener fix (commit 8df55d8): the TRANSPORT half is driven RED-first ([config_socket] "a listener that poll() reports as failed shuts the server down" -- POLLNVAL injected into the listener's revents by hand; red on isListening(), on the next poll set being non-empty, on the connection count and on the socket node still existing). The WINDOW MANAGER half -- serviceConfigSocket() reading the isListening() transition and withdrawing _WM2_CONFIG_SOCKET when a live listener dies mid-session -- has no case. Nothing outside the process can make the real binary's listening descriptor report POLLERR/POLLHUP/POLLNVAL: the descriptor is private to the window manager, and there is no lever to close or corrupt it (the WM2_FORCE_* levers are all read once at startup). Verified by reading: the transition is a two-line guard around the same unpublishConfigSocketPath() that release() calls, and that call is exercised by [wm_socket] "The published socket path is withdrawn when the window manager exits". | open |  | 2026-09-07T00:00:00.000Z |  |
 
 ````json
 [
@@ -549,6 +551,30 @@ last_updated: 2026-09-06T22:51:09.093Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-06T22:51:09.093Z",
+    "resolved_at": null
+  },
+  {
+    "id": 42,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "src/Manager.cpp",
+    "line": null,
+    "description": "Codex PR-review pass 3, P2 socket-property fix (commit d58e17a): the SHUTDOWN arm is driven RED-first ([wm_socket] \"The published socket path is withdrawn when the window manager exits\" -- the fixture's X server outlives the window manager, so the root window is still there to be asked after a clean SIGTERM exit; red on CHECK(withdrawn) with _WM2_CONFIG_SOCKET still naming the unlinked node). The STARTUP arm -- setupEwmhProperties()'s new else, which deletes a PREDECESSOR's stale property when this start could not bind -- has no case. It needs a property planted on root BEFORE the window manager publishes, and WmFixture spawns the window manager inside its own constructor with no hook to run anything first; a second window manager cannot be started on a fixture's display either (the display dies with the fixture, and _WM2_RUNNING makes one owner per display). The nearest driven case, \"A socket path too long for the address structure is named, not truncated\", asserts the property is absent after a no-listener start but cannot distinguish the else branch from the old no-else code, because nothing stale was there to remove. Verified by reading: the else is one XDeleteProperty through the same helper release() uses, and that helper is exercised.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-07T00:00:00.000Z",
+    "resolved_at": null
+  },
+  {
+    "id": 43,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "src/Events.cpp",
+    "line": null,
+    "description": "Codex PR-review pass 3, P2 failed-listener fix (commit 8df55d8): the TRANSPORT half is driven RED-first ([config_socket] \"a listener that poll() reports as failed shuts the server down\" -- POLLNVAL injected into the listener's revents by hand; red on isListening(), on the next poll set being non-empty, on the connection count and on the socket node still existing). The WINDOW MANAGER half -- serviceConfigSocket() reading the isListening() transition and withdrawing _WM2_CONFIG_SOCKET when a live listener dies mid-session -- has no case. Nothing outside the process can make the real binary's listening descriptor report POLLERR/POLLHUP/POLLNVAL: the descriptor is private to the window manager, and there is no lever to close or corrupt it (the WM2_FORCE_* levers are all read once at startup). Verified by reading: the transition is a two-line guard around the same unpublishConfigSocketPath() that release() calls, and that call is exercised by [wm_socket] \"The published socket path is withdrawn when the window manager exits\".",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-07T00:00:00.000Z",
     "resolved_at": null
   }
 ]
