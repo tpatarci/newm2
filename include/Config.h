@@ -171,3 +171,61 @@ struct Config {
 // XDG path resolution (exposed for testing)
 std::string xdgConfigHome();
 std::vector<std::string> xdgConfigDirs();
+
+
+// -----------------------------------------------------------------------------
+// The settable surface, described rather than re-listed (plan 09-04)
+// -----------------------------------------------------------------------------
+//
+// Everything below is a VIEW of the option table src/Config.cpp already carries
+// -- the one plan 08-13 introduced so that getopt_long()'s array and the --help
+// text could not drift apart. The configuration socket's `set` needs the same
+// knowledge in a third place (what kind of value a key takes, and for an
+// integer what range the parser clamps it to), and a third hand-written list
+// would drift exactly as the first two used to.
+//
+// So there is no new table here. configKeySpecs() is built from kOptionSpecs,
+// and the integer bounds moved INTO those rows: Config::applyKeyValue() and
+// Config::applyCliArgs() now read 1..50 and 1..60000 from the same rows this
+// view exposes, instead of each spelling the numbers out again.
+//
+// Why the socket needs it at all: the prohibition this phase carries is that a
+// value arriving over the socket must never reach window-manager state without
+// the validation the config file performs. The parser's answer to a bad value
+// is to CLAMP it and warn on stderr -- correct for a file being read at
+// startup, wrong for a request that has a client waiting for an answer. The
+// dispatcher therefore checks kind and range BEFORE handing the value to the
+// very same Config::applyKeyValue(), and refuses what the parser would have
+// silently corrected. Stricter than the file, never looser.
+
+enum class ConfigValueKind {
+    String,   // taken verbatim
+    Boolean,  // true/false/1/0
+    Integer   // clamped to [minValue, maxValue]
+};
+
+struct ConfigKeySpec {
+    std::string     name;
+    ConfigValueKind kind = ConfigValueKind::String;
+    int             minValue = 0;   // Integer only
+    int             maxValue = 0;   // Integer only
+    std::string     summary;        // the same one --help prints
+};
+
+// Every key the parser accepts as a single key=value setting, in the order the
+// option table declares them. `rule-*` and `menu-entry-*` are deliberately
+// absent: they are ordered repeated groups rather than independent settings,
+// which is the same reason configFileManagedKeys() omits them. A
+// [wm_config_live] case asserts the two lists name exactly the same keys.
+const std::vector<ConfigKeySpec>& configKeySpecs();
+
+// The spec for one key, or nullptr for a key that is not a single setting.
+const ConfigKeySpec* configKeySpecFor(const std::string& key);
+
+// The EFFECTIVE value of one key, spelled the way the config file would spell
+// it: a boolean as "true" or "false", an integer in decimal, a string
+// verbatim. False for a key configKeySpecs() does not name, leaving `out`
+// untouched -- which is how a caller distinguishes "unknown key" from "set to
+// the empty string".
+bool configValueForKey(const Config& config, const std::string& key,
+                       std::string& out);

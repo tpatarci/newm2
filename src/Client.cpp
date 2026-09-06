@@ -1600,6 +1600,32 @@ void Client::unhide(bool map)
 }
 
 
+void Client::relayoutFrame()
+{
+    // Three windows have no frame to re-lay out, and each is skipped for its
+    // own reason rather than by one catch-all guard:
+    //
+    //   * a client not yet managed has no frame windows at all;
+    //   * a FRAMELESS client (a dock, a notification, a rule-no-decorate
+    //     window) is managed with its own window as parent, deliberately;
+    //   * a FULLSCREEN client has had its frame STRIPPED and its window
+    //     reparented to root -- Border::restoreFromFullscreen() rebuilds the
+    //     frame later, and by then it reads the new thickness through
+    //     xIndent()/yIndent() like everything else, so the change is not lost.
+    if (!m_managed) return;
+    if (m_frameless) return;
+    if (m_isFullscreen) return;
+    if (!m_border) return;
+
+    // m_x/m_y/m_w/m_h are the CLIENT's geometry, not the frame's, and they are
+    // passed through unchanged: a thickness change moves decoration, never the
+    // user's content. Not clamped back on screen either -- a clamp would move a
+    // window the user placed, which is a bigger surprise than a frame edge
+    // sitting a few pixels off the top-left corner.
+    m_border->relayoutForFrameThickness(m_x, m_y, m_w, m_h);
+}
+
+
 void Client::rename()
 {
     if (m_frameless) return;                 // no tab to relabel

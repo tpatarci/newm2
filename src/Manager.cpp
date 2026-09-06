@@ -1,5 +1,6 @@
 #include "Manager.h"
 #include "Client.h"
+#include "Border.h"   // FRAME_WIDTH -- the live frame thickness applyConfig() writes
 #include "TimestampWait.h"
 #include <string>
 #include <cstring>
@@ -67,8 +68,10 @@ bool ignoreBadWindowErrors = false;
 const char *const WindowManager::m_menuCreateLabel = "New";
 
 
-WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& apps)
+WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& apps,
+                             int argc, char** argv)
     : m_config(config)
+    , m_savedConfig(config)
     , m_screenNumber(0)
     , m_root(None)
     , m_defaultColormap(None)
@@ -104,6 +107,11 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     , m_pointerStoppedDeadlineActive(false)
     , m_autoRaiseDeadlineActive(false)
 {
+    // DISC-07: keep the command line for reload. argv[0] is included because
+    // getopt_long() skips it and because it is what an error message would
+    // name.
+    for (int i = 0; i < argc && argv && argv[i]; ++i) m_cliArgs.emplace_back(argv[i]);
+
     std::fprintf(stderr, "\nwm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.\n"
                  "  Parts derived from 9wm Copyright (c) 1994-96 David Hogan\n"
                  "  Copying and redistribution encouraged.  No warranty.\n\n");
@@ -1715,6 +1723,212 @@ ConfigMessage WindowManager::statusReplyMessage() const
 }
 
 
+// =============================================================================
+// Live configuration (CGUI-04, plan 09-04)
+// =============================================================================
+
+namespace {
+
+// A whole string, or nothing. std::stoi("12abc") happily returns 12, which over
+// a socket would mean answering "yes" to a request nobody made; the config FILE
+// can afford that laxity because it warns on stderr to a user who is reading
+// it, and a client waiting on a reply cannot.
+bool parseWholeInt(const std::string& text, int& out)
+{
+    if (text.empty()) return false;
+    std::size_t consumed = 0;
+    long long value = 0;
+    try {
+        value = std::stoll(text, &consumed);
+    } catch (const std::exception&) {
+        return false;
+    }
+    if (consumed != text.size()) return false;
+    if (value < -2147483648LL || value > 2147483647LL) return false;
+    out = static_cast<int>(value);
+    return true;
+}
+
+// The four spellings Config's parseBool() gives a meaning to, and no others.
+// The parser maps every OTHER string to false silently -- fine for a file being
+// read once at startup, wrong for a request, because `set click-to-focus yes`
+// would be acknowledged while meaning the opposite of what was typed.
+bool parseStrictBool(const std::string& text, bool& out)
+{
+    std::string lower;
+    lower.reserve(text.size());
+    for (unsigned char c : text) lower += static_cast<char>(std::tolower(c));
+
+    if (lower == "true"  || lower == "1") { out = true;  return true; }
+    if (lower == "false" || lower == "0") { out = false; return true; }
+    return false;
+}
+
+// How the accepted value will read back out of the Config once the parser has
+// stored it. Compared against the real read-back below, so a future divergence
+// between this file's pre-validation and Config::applyKeyValue() is caught by
+// the code rather than shipped.
+std::string canonicalValue(const ConfigKeySpec& spec, const std::string& value)
+{
+    switch (spec.kind) {
+    case ConfigValueKind::Boolean: {
+        bool parsed = false;
+        parseStrictBool(value, parsed);
+        return parsed ? "true" : "false";
+    }
+    case ConfigValueKind::Integer: {
+        int parsed = 0;
+        parseWholeInt(value, parsed);
+        return std::to_string(parsed);
+    }
+    case ConfigValueKind::String:
+        break;
+    }
+    return value;
+}
+
+}  // namespace
+
+
+void WindowManager::applyConfig(const Config &next)
+{
+    // DISC-06a. Read the declaration in include/Manager.h before adding to
+    // this function: the rule is that every field is diffed here, and that
+    // nothing anywhere else in the codebase writes running state from a Config.
+
+    const int previousThickness = m_config.frameThickness;
+
+    // Stored FIRST and WHOLE, so a field this plan does not yet apply live is
+    // still the value the window manager reports and the value the next thing
+    // to read it sees. A later plan adding a branch below therefore only has to
+    // write the application, never the assignment.
+    m_config = next;
+
+    // --- Frame thickness ----------------------------------------------------
+    //
+    // The diff is what makes the idempotency guarantee true: a `set` that names
+    // the value already in force does no work at all, so a client that repeats
+    // itself cannot make the desktop flicker or the frames drift.
+    if (next.frameThickness != previousThickness) {
+        FRAME_WIDTH = next.frameThickness;
+
+        // Both lists. addToHiddenList() MOVES a client out of m_clients rather
+        // than copying it, so walking only m_clients would leave every hidden
+        // window wearing the old thickness the moment it is unhidden.
+        for (const auto &client : m_clients)       client->relayoutFrame();
+        for (const auto &client : m_hiddenClients) client->relayoutFrame();
+
+        XFlush(display());
+    }
+}
+
+
+bool WindowManager::applyConfigSet(const std::string &key, const std::string &value,
+                                   std::string &reasonOut)
+{
+    const ConfigKeySpec *spec = configKeySpecFor(key);
+    if (!spec) {
+        // Not a single setting. `rule-*` and `menu-entry-*` land here too, and
+        // deliberately: they are ordered repeated groups, and applying one of
+        // them in isolation would mean something different from what the same
+        // line means in a file.
+        reasonOut = "unknown setting";
+        return false;
+    }
+
+    // --- Validation, BEFORE the parser sees anything -------------------------
+    //
+    // This is the whole of the prohibition this plan carries. The parser's
+    // answer to a bad value is to CLAMP it and warn on stderr; that is right
+    // for a file read at startup and wrong for a request with a client waiting,
+    // because a clamp would be acknowledged as though it were what was asked
+    // for. So the range and the kind are checked here and the value is refused
+    // -- and then the value that survives is applied through the very same
+    // Config::applyKeyValue(). Stricter than the file path, never looser: no
+    // value reaches state by this route that the file route would have rejected.
+    switch (spec->kind) {
+    case ConfigValueKind::Boolean: {
+        bool parsed = false;
+        if (!parseStrictBool(value, parsed)) {
+            reasonOut = "expected true or false";
+            return false;
+        }
+        break;
+    }
+    case ConfigValueKind::Integer: {
+        int parsed = 0;
+        if (!parseWholeInt(value, parsed)) {
+            reasonOut = "expected a whole number";
+            return false;
+        }
+        if (parsed < spec->minValue || parsed > spec->maxValue) {
+            reasonOut = "value out of range (" + std::to_string(spec->minValue) +
+                        " to " + std::to_string(spec->maxValue) + ")";
+            return false;
+        }
+        break;
+    }
+    case ConfigValueKind::String:
+        // Taken verbatim, exactly as the file takes it. A colour or a font
+        // pattern is validated by the server and by fontconfig respectively,
+        // both of which degrade rather than fail -- the same treatment a value
+        // in the file gets.
+        break;
+    }
+
+    // --- Application, on a COPY ---------------------------------------------
+    Config next = m_config;
+    next.applyKeyValue(key, value);
+
+    // And the read-back check: did the parser actually store what was agreed?
+    // A mismatch here means the validation above and Config::applyKeyValue()
+    // have come to disagree -- a bug, not a user error -- so it fails CLOSED,
+    // leaving m_config untouched, rather than applying something nobody
+    // authorised.
+    std::string after;
+    if (!configValueForKey(next, key, after) || after != canonicalValue(*spec, value)) {
+        reasonOut = "the configuration parser did not accept this value";
+        return false;
+    }
+
+    applyConfig(next);
+    return true;
+}
+
+
+bool WindowManager::reloadConfigFromDisk(std::string &reasonOut)
+{
+    // A file that does not exist is not an error -- that is the ordinary state
+    // of a machine with no user configuration, and Config::applyFile() skips it
+    // silently. A file that EXISTS and cannot be read is a different thing
+    // entirely: silently carrying on would report a successful reload that did
+    // not read the user's settings.
+    const std::string userFile = xdgConfigHome() + "/wm2-born-again/config";
+    if (::access(userFile.c_str(), F_OK) == 0 &&
+        ::access(userFile.c_str(), R_OK) != 0) {
+        reasonOut = "cannot read " + userFile;
+        return false;
+    }
+
+    // The WHOLE layered load, command line included, rather than the file
+    // merged onto current state. That is what makes an override given at
+    // startup still win afterwards, and it is also what discards a `set` made
+    // over the socket -- which is correct, because a `set` writes no file
+    // (D-01) and so has nothing on disk to be re-read.
+    std::vector<char *> argv;
+    argv.reserve(m_cliArgs.size() + 1);
+    for (std::string &arg : m_cliArgs) argv.push_back(&arg[0]);
+    argv.push_back(nullptr);
+
+    Config next = Config::load(static_cast<int>(m_cliArgs.size()),
+                               argv.empty() ? nullptr : argv.data());
+
+    m_savedConfig = next;
+    applyConfig(next);
+    return true;
+}
+
+
 // One frame in, one decision out.
 //
 // D-15 IS ENFORCED HERE AND NOWHERE ELSE: a message arriving before a handshake
@@ -1734,6 +1948,18 @@ ConfigSocketReply WindowManager::handleConfigRequest(const ConfigSocketRequest &
         error.reason = reason;
         out.line = configProtocolEncode(error);
         out.closeAfterSend = close;
+    };
+
+    // A refusal that NAMES THE KEY, for get and set. The connection is always
+    // kept open: a client that asked about a key this build does not know is
+    // not a stranger, it is a client that guessed wrong, and it may well have
+    // more to say.
+    auto refuseKey = [&out](const std::string &key, const char *reason) {
+        ConfigMessage error;
+        error.type = ConfigMessageType::Error;
+        error.key = key;
+        error.reason = reason;
+        out.line = configProtocolEncode(error);
     };
 
     switch (result) {
@@ -1781,15 +2007,47 @@ ConfigSocketReply WindowManager::handleConfigRequest(const ConfigSocketRequest &
         out.line = configProtocolEncode(statusReplyMessage());
         return out;
 
-    case ConfigMessageType::Get:
-    case ConfigMessageType::Set:
-    case ConfigMessageType::Reload:
-        // Frozen in the contract, served by a LATER PLAN in this phase (the
-        // wm2-ctl verbs and live apply). Refused by name rather than ignored,
-        // and WITHOUT closing the connection: a client that asks early learns
-        // this build does not serve it yet and can carry on with status.
-        refuse("not served by this build", false);
+    case ConfigMessageType::Get: {
+        // Answered from the EFFECTIVE config, never from the file: the question
+        // a client is asking is "what are you using?", and after a `set` those
+        // two are deliberately different things.
+        std::string value;
+        if (!configValueForKey(m_config, message.key, value)) {
+            refuseKey(message.key, "unknown setting");
+            return out;
+        }
+        ConfigMessage reply;
+        reply.type = ConfigMessageType::Value;
+        reply.key = message.key;
+        reply.value = value;
+        out.line = configProtocolEncode(reply);
         return out;
+    }
+
+    case ConfigMessageType::Set: {
+        std::string reason;
+        if (!applyConfigSet(message.key, message.value, reason)) {
+            refuseKey(message.key, reason.c_str());
+            return out;
+        }
+        ConfigMessage ack;
+        ack.type = ConfigMessageType::Ack;
+        ack.key = message.key;
+        out.line = configProtocolEncode(ack);
+        return out;
+    }
+
+    case ConfigMessageType::Reload: {
+        std::string reason;
+        if (!reloadConfigFromDisk(reason)) {
+            refuse(reason.c_str(), false);
+            return out;
+        }
+        ConfigMessage reloaded;
+        reloaded.type = ConfigMessageType::Reloaded;
+        out.line = configProtocolEncode(reloaded);
+        return out;
+    }
 
     case ConfigMessageType::HelloAck:
     case ConfigMessageType::Value:

@@ -1243,6 +1243,39 @@ void Border::configure(int x, int y, int w, int h,
 
 
 
+void Border::relayoutForFrameThickness(int x, int y, int w, int h)
+{
+    // A client that was never framed (or is fullscreen, its frame stripped) has
+    // nothing here to re-lay out. Checked rather than assumed: configure()
+    // would CREATE the frame windows from this call, which is not what a
+    // thickness change should do.
+    if (!m_parent || m_parent == root()) return;
+
+    // The resize handle is created FRAME_WIDTH*2 square and shaped from the
+    // same number; configure() below only ever moves it. Both have to be
+    // redone or the corner grabber keeps the old thickness's size and its
+    // triangular shape stops matching the frame it sits in.
+    if (m_resize != None) {
+        XResizeWindow(display(), m_resize, FRAME_WIDTH * 2, FRAME_WIDTH * 2);
+        shapeResize();
+    }
+
+    // force = true is load-bearing. w and h have NOT changed -- only the
+    // indents around them have -- and without the force, configure()'s
+    // "did the size change?" test skips the reshape of the frame and the tab,
+    // which are precisely the two windows the thickness governs. The result
+    // would be a frame that moved but kept its old outline.
+    configure(x, y, w, h, CWX | CWY | CWWidth | CWHeight, Above, true);
+
+    // The child moves to the new content offset and keeps its own size, so its
+    // absolute position on screen is unchanged: the frame origin moved by
+    // exactly the amount the indent grew. That is why no synthetic
+    // ConfigureNotify is owed here -- ICCCM reports absolute position and size,
+    // and neither changed.
+    XMoveWindow(display(), m_child, xIndent(), yIndent());
+}
+
+
 void Border::moveTo(int x, int y)
 {
     XWindowChanges wc;

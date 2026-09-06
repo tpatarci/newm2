@@ -38,10 +38,27 @@ class Client;
 
 class WindowManager {
 public:
-    WindowManager(const Config& config, const std::vector<AppEntry>& apps);
+    // argc/argv are retained for `reload` (DISC-07, plan 09-04): re-reading the
+    // configuration means re-running the WHOLE layered load -- defaults, system
+    // file, user file, command line -- and the command line is the top layer.
+    // Merging the file onto current state instead would let a `--frame-thickness`
+    // given at startup be silently overridden by the file on the first reload.
+    // Defaulted so a caller with no command line to offer still compiles; then
+    // the CLI layer is simply empty.
+    WindowManager(const Config& config, const std::vector<AppEntry>& apps,
+                  int argc = 0, char** argv = nullptr);
     ~WindowManager();
 
+    // The EFFECTIVE configuration -- what the window manager is drawing with
+    // right now, which after a socket `set` is not what any file on disk says.
     const Config& config() const { return m_config; }
+
+    // DISC-07: the last configuration READ FROM DISK, as a snapshot taken at
+    // startup and replaced by every successful `reload`. The difference between
+    // this and config() above is exactly the set of changes made over the
+    // socket and not saved, which is what makes the GUI's "revert" expressible
+    // as "send the saved values back" rather than as a new message type.
+    const Config& savedConfig() const { return m_savedConfig; }
 
     void fatal(const char *message);
 
@@ -156,6 +173,17 @@ private:
     void scanInitialWindows();
 
     Config m_config;
+
+    // DISC-07's second half. Populated from the same Config the constructor was
+    // handed, replaced wholesale by a successful reload, and never touched by a
+    // `set` -- because a `set` writes no file (D-01), so the saved state does
+    // not change when one arrives.
+    Config m_savedConfig;
+
+    // argv, copied rather than aliased. The pointers main() was handed do live
+    // for the whole process, but a copy costs a few hundred bytes once and
+    // removes the question entirely.
+    std::vector<std::string> m_cliArgs;
 
     // RAII-managed X11 resources (D-05)
     // IMPORTANT: m_display declared first so it is destroyed last (D-05, Pitfall 2)
@@ -311,6 +339,31 @@ private:
     // D-14's ceiling, assembled in exactly one place so there is exactly one
     // site to review.
     ConfigMessage statusReplyMessage() const;
+
+    // DISC-06a -- THE ONE FUNNEL THROUGH WHICH A CONFIGURATION CHANGE REACHES
+    // RUNNING STATE.
+    //
+    // Diffs `next` against m_config field by field and re-applies only what
+    // actually changed, then stores `next` whole. Every later plan in this
+    // phase adds a branch HERE rather than a second application path, so
+    // "what is live?" has exactly one answer and exactly one place to read it
+    // -- and so the idempotency guarantee (applying the same value twice does
+    // no second piece of work) holds for every setting by construction rather
+    // than one setting at a time.
+    void applyConfig(const Config& next);
+
+    // Serve one `set`. Validates key and value BEFORE the parser sees them --
+    // see include/Config.h for why -- then applies through the very same
+    // Config::applyKeyValue() the config file goes through, on a COPY, and
+    // hands the result to applyConfig(). Returns false with a human-readable
+    // reason in `reasonOut`, having changed nothing at all.
+    bool applyConfigSet(const std::string& key, const std::string& value,
+                        std::string& reasonOut);
+
+    // Serve one `reload`: re-run the layered load, replace the saved snapshot,
+    // apply the result. False with a reason on a read failure, having changed
+    // nothing.
+    bool reloadConfigFromDisk(std::string& reasonOut);
 
     // Start the socket and publish its path on the root window (DISC-03).
     void startConfigSocket();

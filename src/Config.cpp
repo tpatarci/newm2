@@ -174,31 +174,29 @@ void Config::applyKeyValue(const std::string& key, const std::string& value,
     if (key == "exec-using-shell")    { execUsingShell = parseBool(value); return; }
     if (key == "focus-stealing-prevention") { focusStealingPrevention = parseBool(value); return; }
 
-    // Integer settings (with clamping and error handling)
+    // Integer settings (with clamping and error handling).
+    //
+    // The bounds come from configKeySpecFor(), which is a view of the same
+    // option table --help and getopt_long() are generated from (plan 09-04).
+    // They used to be spelled out here AND in applyCliArgs() AND described in
+    // the summary prose, three places that could disagree about what "1 to 50"
+    // meant. Behaviour is unchanged: the numbers in the table are the numbers
+    // that were here.
     if (key == "auto-raise-delay" || key == "pointer-stopped-delay" ||
-        key == "destroy-window-delay") {
+        key == "destroy-window-delay" || key == "frame-thickness") {
+        const ConfigKeySpec* spec = configKeySpecFor(key);
+        const int lo = spec ? spec->minValue : 1;
+        const int hi = spec ? spec->maxValue : 60000;
         try {
-            int parsed = std::stoi(value);
-            parsed = clampInt(parsed, 1, 60000);
-            if (key == "auto-raise-delay")       autoRaiseDelay = parsed;
+            const int parsed = clampInt(std::stoi(value), lo, hi);
+            if      (key == "auto-raise-delay")      autoRaiseDelay = parsed;
             else if (key == "pointer-stopped-delay") pointerStoppedDelay = parsed;
-            else                                   destroyWindowDelay = parsed;
+            else if (key == "destroy-window-delay")  destroyWindowDelay = parsed;
+            else                                     frameThickness = parsed;
         } catch (const std::invalid_argument&) {
             std::fprintf(stderr, "wm2: warning: config key '%s': invalid integer '%s'\n", key.c_str(), value.c_str());
         } catch (const std::out_of_range&) {
             std::fprintf(stderr, "wm2: warning: config key '%s': value out of range '%s'\n", key.c_str(), value.c_str());
-        }
-        return;
-    }
-
-    if (key == "frame-thickness") {
-        try {
-            int parsed = std::stoi(value);
-            frameThickness = clampInt(parsed, 1, 50);
-        } catch (const std::invalid_argument&) {
-            std::fprintf(stderr, "wm2: warning: config key 'frame-thickness': invalid integer '%s'\n", value.c_str());
-        } catch (const std::out_of_range&) {
-            std::fprintf(stderr, "wm2: warning: config key 'frame-thickness': value out of range '%s'\n", value.c_str());
         }
         return;
     }
@@ -479,42 +477,48 @@ Config Config::load(int argc, char** argv) {
 
 enum class OptType { String, Integer, Boolean, Help };
 
+// The bounds are MACHINE-READABLE (plan 09-04), not merely described in the
+// summary prose. Config::applyKeyValue(), Config::applyCliArgs() and the
+// configuration socket's `set` all read them from here, so "1 to 50" is written
+// down exactly once. Meaningless for a String or Boolean row, where both are 0.
 struct OptionSpec {
     const char* name;
     OptType type;
+    int minValue;
+    int maxValue;
     const char* summary;
 };
 
 static const OptionSpec kOptionSpecs[] = {
     // String settings
-    {"tab-foreground",            OptType::String,  "colour of the tab label text"},
-    {"tab-background",            OptType::String,  "colour behind the tab label"},
-    {"frame-background",          OptType::String,  "colour of the window frame"},
-    {"button-background",         OptType::String,  "colour of the tab button"},
-    {"borders",                   OptType::String,  "colour of frame and tab borders"},
-    {"menu-foreground",           OptType::String,  "colour of root menu text"},
-    {"menu-background",           OptType::String,  "colour behind root menu text"},
-    {"menu-highlight",            OptType::String,  "colour of the selected menu row"},
-    {"menu-borders",              OptType::String,  "colour of the root menu border"},
-    {"tab-font",                  OptType::String,  "fontconfig pattern for the sideways tab label"},
-    {"menu-font",                 OptType::String,  "fontconfig pattern for the root menu"},
-    {"new-window-command",        OptType::String,  "command the menu's New entry runs"},
+    {"tab-foreground",            OptType::String,  0, 0, "colour of the tab label text"},
+    {"tab-background",            OptType::String,  0, 0, "colour behind the tab label"},
+    {"frame-background",          OptType::String,  0, 0, "colour of the window frame"},
+    {"button-background",         OptType::String,  0, 0, "colour of the tab button"},
+    {"borders",                   OptType::String,  0, 0, "colour of frame and tab borders"},
+    {"menu-foreground",           OptType::String,  0, 0, "colour of root menu text"},
+    {"menu-background",           OptType::String,  0, 0, "colour behind root menu text"},
+    {"menu-highlight",            OptType::String,  0, 0, "colour of the selected menu row"},
+    {"menu-borders",              OptType::String,  0, 0, "colour of the root menu border"},
+    {"tab-font",                  OptType::String,  0, 0, "fontconfig pattern for the sideways tab label"},
+    {"menu-font",                 OptType::String,  0, 0, "fontconfig pattern for the root menu"},
+    {"new-window-command",        OptType::String,  0, 0, "command the menu's New entry runs"},
 
     // Integer settings
-    {"frame-thickness",           OptType::Integer, "frame width in pixels (1-50)"},
-    {"auto-raise-delay",          OptType::Integer, "milliseconds before auto-raise (1-60000)"},
-    {"pointer-stopped-delay",     OptType::Integer, "milliseconds of pointer stillness (1-60000)"},
-    {"destroy-window-delay",      OptType::Integer, "milliseconds a tab-button press must be held to delete (1-60000)"},
+    {"frame-thickness",           OptType::Integer, 1, 50, "frame width in pixels (1-50)"},
+    {"auto-raise-delay",          OptType::Integer, 1, 60000, "milliseconds before auto-raise (1-60000)"},
+    {"pointer-stopped-delay",     OptType::Integer, 1, 60000, "milliseconds of pointer stillness (1-60000)"},
+    {"destroy-window-delay",      OptType::Integer, 1, 60000, "milliseconds a tab-button press must be held to delete (1-60000)"},
 
     // Boolean settings. Each generates BOTH --name and --no-name.
-    {"click-to-focus",            OptType::Boolean, "click a window to focus it instead of following the pointer"},
-    {"raise-on-focus",            OptType::Boolean, "raise a window when it takes focus"},
-    {"auto-raise",                OptType::Boolean, "raise the window under a stopped pointer"},
-    {"exec-using-shell",          OptType::Boolean, "run new-window-command through /bin/sh (shell-evaluated)"},
-    {"focus-stealing-prevention", OptType::Boolean, "refuse focus to windows that map without user interaction"},
+    {"click-to-focus",            OptType::Boolean, 0, 0, "click a window to focus it instead of following the pointer"},
+    {"raise-on-focus",            OptType::Boolean, 0, 0, "raise a window when it takes focus"},
+    {"auto-raise",                OptType::Boolean, 0, 0, "raise the window under a stopped pointer"},
+    {"exec-using-shell",          OptType::Boolean, 0, 0, "run new-window-command through /bin/sh (shell-evaluated)"},
+    {"focus-stealing-prevention", OptType::Boolean, 0, 0, "refuse focus to windows that map without user interaction"},
 
     // Actions
-    {"help",                      OptType::Help,    "print this message and exit"},
+    {"help",                      OptType::Help,    0, 0, "print this message and exit"},
 };
 
 // One getopt-visible flag: the spec it belongs to, whether it is that spec's
@@ -659,34 +663,94 @@ void Config::applyCliArgs(int argc, char** argv) {
         else if (std::strcmp(name, "menu-font") == 0)           menuFont = optarg;
         else if (std::strcmp(name, "new-window-command") == 0)  newWindowCommand = optarg;
 
-        // Integer settings (with clamping and error handling)
-        else if (std::strcmp(name, "frame-thickness") == 0) {
+        // Integer settings (with clamping and error handling).
+        //
+        // Bounds read from the matched row rather than repeated per option --
+        // `matched.spec` IS the row, so there is nothing to look up and nothing
+        // that can name a different range from the one --help printed.
+        else if (matched.spec->type == OptType::Integer) {
             try {
-                frameThickness = clampInt(std::stoi(optarg), 1, 50);
+                const int parsed = clampInt(std::stoi(optarg),
+                                            matched.spec->minValue,
+                                            matched.spec->maxValue);
+                if      (std::strcmp(name, "frame-thickness") == 0)       frameThickness = parsed;
+                else if (std::strcmp(name, "auto-raise-delay") == 0)      autoRaiseDelay = parsed;
+                else if (std::strcmp(name, "pointer-stopped-delay") == 0) pointerStoppedDelay = parsed;
+                else if (std::strcmp(name, "destroy-window-delay") == 0)  destroyWindowDelay = parsed;
             } catch (const std::exception&) {
-                std::fprintf(stderr, "wm2: warning: invalid --frame-thickness value '%s'\n", optarg);
-            }
-        }
-        else if (std::strcmp(name, "auto-raise-delay") == 0) {
-            try {
-                autoRaiseDelay = clampInt(std::stoi(optarg), 1, 60000);
-            } catch (const std::exception&) {
-                std::fprintf(stderr, "wm2: warning: invalid --auto-raise-delay value '%s'\n", optarg);
-            }
-        }
-        else if (std::strcmp(name, "pointer-stopped-delay") == 0) {
-            try {
-                pointerStoppedDelay = clampInt(std::stoi(optarg), 1, 60000);
-            } catch (const std::exception&) {
-                std::fprintf(stderr, "wm2: warning: invalid --pointer-stopped-delay value '%s'\n", optarg);
-            }
-        }
-        else if (std::strcmp(name, "destroy-window-delay") == 0) {
-            try {
-                destroyWindowDelay = clampInt(std::stoi(optarg), 1, 60000);
-            } catch (const std::exception&) {
-                std::fprintf(stderr, "wm2: warning: invalid --destroy-window-delay value '%s'\n", optarg);
+                std::fprintf(stderr, "wm2: warning: invalid --%s value '%s'\n", name, optarg);
             }
         }
     }
+}
+
+
+// =============================================================================
+// The settable surface, as a view of kOptionSpecs (plan 09-04)
+// =============================================================================
+
+const std::vector<ConfigKeySpec>& configKeySpecs() {
+    static const std::vector<ConfigKeySpec> specs = [] {
+        std::vector<ConfigKeySpec> out;
+        for (const OptionSpec& spec : kOptionSpecs) {
+            // --help is an action, not a setting: it has no value to get, no
+            // value to set and no line in the config file.
+            if (spec.type == OptType::Help) continue;
+
+            ConfigValueKind kind = ConfigValueKind::String;
+            if (spec.type == OptType::Boolean)      kind = ConfigValueKind::Boolean;
+            else if (spec.type == OptType::Integer) kind = ConfigValueKind::Integer;
+
+            out.push_back({spec.name, kind, spec.minValue, spec.maxValue, spec.summary});
+        }
+        return out;
+    }();
+    return specs;
+}
+
+
+const ConfigKeySpec* configKeySpecFor(const std::string& key) {
+    for (const ConfigKeySpec& spec : configKeySpecs()) {
+        if (spec.name == key) return &spec;
+    }
+    return nullptr;
+}
+
+
+bool configValueForKey(const Config& config, const std::string& key,
+                       std::string& out) {
+    // Spelled the way the config FILE spells it, because that is what makes
+    // `wm2-ctl get frame-thickness` and the line in the file the same answer to
+    // the same question -- and what lets `set` compare what the parser did with
+    // what the caller asked for.
+    if (key == "tab-foreground")    { out = config.tabForeground;   return true; }
+    if (key == "tab-background")    { out = config.tabBackground;   return true; }
+    if (key == "frame-background")  { out = config.frameBackground; return true; }
+    if (key == "button-background") { out = config.buttonBackground; return true; }
+    if (key == "borders")           { out = config.borders;         return true; }
+    if (key == "menu-foreground")   { out = config.menuForeground;  return true; }
+    if (key == "menu-background")   { out = config.menuBackground;  return true; }
+    if (key == "menu-highlight")    { out = config.menuHighlight;   return true; }
+    if (key == "menu-borders")      { out = config.menuBorders;     return true; }
+    if (key == "tab-font")          { out = config.tabFont;         return true; }
+    if (key == "menu-font")         { out = config.menuFont;        return true; }
+    if (key == "new-window-command"){ out = config.newWindowCommand; return true; }
+
+    if (key == "click-to-focus")    { out = config.clickToFocus ? "true" : "false"; return true; }
+    if (key == "raise-on-focus")    { out = config.raiseOnFocus ? "true" : "false"; return true; }
+    if (key == "auto-raise")        { out = config.autoRaise ? "true" : "false"; return true; }
+    if (key == "exec-using-shell")  { out = config.execUsingShell ? "true" : "false"; return true; }
+    if (key == "focus-stealing-prevention") {
+        out = config.focusStealingPrevention ? "true" : "false";
+        return true;
+    }
+
+    if (key == "auto-raise-delay")      { out = std::to_string(config.autoRaiseDelay); return true; }
+    if (key == "pointer-stopped-delay") { out = std::to_string(config.pointerStoppedDelay); return true; }
+    if (key == "destroy-window-delay")  { out = std::to_string(config.destroyWindowDelay); return true; }
+    if (key == "frame-thickness")       { out = std::to_string(config.frameThickness); return true; }
+
+    // Not a single setting. `out` is deliberately left untouched, so a caller
+    // can tell "no such key" from "set to the empty string".
+    return false;
 }

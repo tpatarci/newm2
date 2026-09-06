@@ -28,6 +28,18 @@ public:
                    bool force = false);
     void moveTo(int x, int y);
 
+    // Re-lay this frame out IN PLACE after FRAME_WIDTH changed (CGUI-04, plan
+    // 09-04). Every window the frame is made of -- the frame itself, the tab,
+    // the button and the resize handle -- has geometry computed from the frame
+    // thickness, and two of them (the resize handle's size and its shape) are
+    // set only at creation, so configure() alone would leave a corner grabber
+    // sized for the old thickness.
+    //
+    // Deliberately NOT a destroy-and-rebuild: rebuilding would reparent the
+    // client, which flashes and loses stacking order. The client window keeps
+    // its size and its position ON SCREEN; only the decoration around it moves.
+    void relayoutForFrameThickness(int x, int y, int w, int h);
+
     // Fullscreen support
     void stripForFullscreen();
     void restoreFromFullscreen(int x, int y, int w, int h);

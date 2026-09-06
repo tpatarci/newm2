@@ -88,6 +88,12 @@ public:
     void lower();
     void ensureVisible();
 
+    // CGUI-04 (plan 09-04): re-lay this client's decoration out for a frame
+    // thickness that changed while the window manager was running. Reached only
+    // from WindowManager::applyConfig(), which is the single funnel every live
+    // configuration change goes through.
+    void relayoutFrame();
+
     // Interaction
     void move(XButtonEvent *e);
     void resize(XButtonEvent *e, bool horizontal, bool vertical);

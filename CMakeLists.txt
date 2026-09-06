@@ -74,6 +74,34 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     m
 )
 
+# --- wm2-ctl: the display-free command-line client (CGUI-02, D-17) ---
+#
+# A TOP-LEVEL target, deliberately outside if(BUILD_TESTS): D-17 ships this in
+# the window-manager package so a droplet reached over SSH -- no desktop, no
+# toolkit -- can still drive the running window manager. A binary that only
+# existed in test builds would not be that.
+#
+# NO target_link_libraries AT ALL. That empty line is the requirement, not an
+# omission: the sources this tool needs are compiled straight into it (the
+# test_config pattern), and every one of them is display-free by construction --
+# include/ConfigProtocol.h, include/SocketServer.h and include/Config.h name no
+# X11, Xft, GTK or GLib header between them. A [wm_config_live] acceptance check
+# runs ldd over the result and fails if any of those four appear, so the day
+# somebody adds an include that drags in a display library, a test says so.
+#
+# src/Config.cpp is here for the settable-key list --help prints, which is
+# generated from configKeySpecs() -- the same option table the window manager's
+# own --help comes from, so the two tools cannot advertise different keys.
+add_executable(wm2-ctl
+    apps/wm2-ctl/main.cpp
+    src/Config.cpp
+    src/SocketServer.cpp
+)
+
+target_include_directories(wm2-ctl PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+
 # --- Tests (TEST-01, TEST-02, TEST-04) ---
 option(BUILD_TESTS "Build test suite" ON)
 
@@ -554,6 +582,70 @@ if(BUILD_TESTS)
             PROPERTIES
                 FIXTURES_REQUIRED preflight_ok
                 TIMEOUT 240
+        )
+
+        # --- Live configuration through wm2-ctl (CGUI-02, CGUI-04) ---
+        #
+        # Cloned from test_wm_socket above, minus XTEST: nothing here is driven
+        # by pointer input. The window manager is driven entirely through the
+        # REAL wm2-ctl binary as a child process, which is what makes that tool
+        # the protocol's reference client (D-17) rather than a second
+        # implementation nobody checks.
+        #
+        # Own display per fixture instance, so deliberately NO shared-display
+        # binding and NO `FIXTURES_REQUIRED xvfb_display`.
+        #
+        # Named test_wm_config_live rather than the research's
+        # test_config_live_apply so it SORTS with the other fixture-driven
+        # test_wm_* binaries instead of with the display-free test_config* ones
+        # -- that prefix is what the existing naming convention distinguishes.
+        #
+        # src/Config.cpp, src/ConfigFileWriter.cpp and src/SocketServer.cpp are
+        # compiled straight in (the test_config pattern) for the display-free
+        # cases: one asserts the settable key list and the file writer's managed
+        # key list name exactly the same settings, and one asserts the path
+        # wm2-ctl resolves is the path this build's own DISC-02 resolution
+        # produces.
+        add_executable(test_wm_config_live
+            tests/test_wm_config_live.cpp
+            src/Config.cpp
+            src/ConfigFileWriter.cpp
+            src/SocketServer.cpp
+        )
+        # PkgConfig::XEXT is for the shape extension, and only for it: the
+        # idempotency case counts ShapeNotify events, because the server
+        # suppresses ConfigureNotify for a reconfigure that changes nothing and
+        # a redundant re-layout would therefore be invisible.
+        target_link_libraries(test_wm_config_live PRIVATE
+            Catch2::Catch2WithMain
+            PkgConfig::X11
+            PkgConfig::XEXT
+        )
+        target_include_directories(test_wm_config_live PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/tests
+            ${XFT_INCLUDE_DIRS}
+        )
+
+        target_compile_definitions(test_wm_config_live PRIVATE
+            WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
+            WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
+            WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
+            # The absolute path of the built tool. Handed in rather than
+            # searched for on PATH, so a wm2-ctl installed on the developer's
+            # machine can never be the one under test.
+            WM2_CTL_PATH="$<TARGET_FILE:wm2-ctl>"
+        )
+
+        # Both binaries are exec'd, so both must exist before these run.
+        add_dependencies(test_wm_config_live wm2-born-again wm2-ctl)
+
+        # ADD_TAGS_AS_LABELS is required by D-33, or [wm_config_live] is not
+        # selectable by the anchored label gates this plan's criteria use.
+        catch_discover_tests(test_wm_config_live ADD_TAGS_AS_LABELS
+            PROPERTIES
+                FIXTURES_REQUIRED preflight_ok
+                TIMEOUT 300
         )
 
         # --- Window-rule application tests (RULES-02) ---
