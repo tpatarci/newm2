@@ -52,6 +52,34 @@ struct Config {
     std::string menuBackground  = "#C8CACC";
     std::string menuHighlight   = "#A8ACB0";
     std::string menuBorders     = "#000000";
+
+    // ------------------------------------------------------------------
+    // Fonts (plan 09-01, CONF-02)
+    //
+    // The fonts this window manager draws with lived as string literals in the
+    // code that draws with them -- rung 1 of Border::loadTabFont() and the
+    // menu-font load in WindowManager::initialiseScreen() -- until this plan.
+    // They are here now because the Phase 9 configuration GUI edits fonts
+    // (CGUI-03) and nothing it could edit existed: `grep -ci font
+    // src/Config.cpp` returned 0.
+    //
+    // DISC-05a: the value grammar is a fontconfig pattern, handed to
+    // XftFontOpenName unchanged. That is the same grammar the two literals
+    // already used, and it is why there is no separate size key -- a size key
+    // would be a second way of saying something the pattern already says, and
+    // the two could disagree.
+    //
+    // DISC-05b: each default IS the literal the binary hardcoded before this
+    // plan, character for character. A user with no config file sees no change
+    // whatsoever, which is the entire promise this plan makes to them. Change
+    // one of these strings and you have changed the shipped look of the window
+    // manager, not merely a default.
+    //
+    // D-8.5-01: `tab-font` is a permanent spelling. Key names are free to choose
+    // before v1.0 and fixed after, and there will be no deprecated aliases.
+    // ------------------------------------------------------------------
+    std::string tabFont = "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12";
+
     // Focus policy
     //
     // D-17: these three values were CORRECTED to describe what the binary

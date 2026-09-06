@@ -216,11 +216,21 @@ void Border::loadTabFont()
 
     x11::XftFontPtr font;
 
+    // The PREFERRED pattern, and the only rung the `tab-font` key reaches
+    // (plan 09-01). Its default is the literal this rung used to spell inline,
+    // so a user with no config file lands on exactly the face they landed on
+    // before.
+    //
+    // The rungs BELOW are deliberately left as literals. A fallback the user can
+    // also break is not a fallback: if `tab-font` fed rung 2 or rung 3 as well,
+    // one bad value would take out the preferred face and every net under it at
+    // once, which is the outcome the XDIS-04 ladder exists to prevent.
+    const std::string &preferred = windowManager()->config().tabFont;
+
     // Rung 1 -- the normal path (D-04 rotation, D-02 preferred chain). Silent
     // on success: this is what every healthy display does.
     if (!skipRotatedRungs) {
-        font = x11::make_xft_font_rotated(
-            display(), "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12");
+        font = x11::make_xft_font_rotated(display(), preferred.c_str());
         if (font) m_tabFontRung = TabFontRung::RotatedPreferred;
     }
 
@@ -238,8 +248,7 @@ void Border::loadTabFont()
     // horizontally across the tab instead of running down it: degraded, but
     // present and readable.
     if (!font && !skipEveryRung) {
-        font = x11::make_xft_font_name(
-            display(), "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12");
+        font = x11::make_xft_font_name(display(), preferred.c_str());
         if (font) {
             m_tabFontRung = TabFontRung::Unrotated;
             std::fprintf(stderr, "wm2: warning: no rotated tab font on this "
