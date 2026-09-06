@@ -2492,8 +2492,44 @@ TEST_CASE("wm2-config's resident memory is measured against a stated budget",
 #ifndef WM2_CONFIG_PATH
     SKIP(kGuiNotBuilt);
 #else
-    // Measured 101 MB; see the note above for how this number was chosen.
-    constexpr long kBudgetKb = 160L * 1024L;
+    // ONE BUDGET PER TREE, in the shape tests/test_wm_resource.cpp already
+    // established for the window manager's own figure and for the same reason:
+    // in the sanitizer tree every allocation gains redzones, freed memory sits
+    // in a quarantine and the shadow map is charged to RSS, so one loose number
+    // covering both trees would be meaningless in the debug one. That build is
+    // a diagnostic tool and never ships, so its budget exists only to catch a
+    // REGRESSION in that tree, not to certify a VPS.
+    //
+    // Debug: measured 101 MB, budget 160 MB -- see the note above for how the
+    // measurement was taken.
+    // ASan:  measured 172 MB over three runs, stable to a few hundred kB;
+    //        budget 272 MB, the same ~1.6x headroom the debug figure carries.
+    //
+    // The ASan constant was MISSING rather than wrong before this: the case
+    // shipped with the debug number alone, so the asan tree failed it on the
+    // instrumentation rather than on anything wm2-config does. Confirmed by
+    // rebuilding the settings window from the pre-review sources in the same
+    // tree: 171.9 to 172.5 MB, the same figure.
+    //
+    // If a run exceeds these, that is a FINDING. It is not a budget to raise.
+    constexpr long kBudgetKbDebug = 160L * 1024L;
+    constexpr long kBudgetKbAsan  = 272L * 1024L;
+
+#if defined(__SANITIZE_ADDRESS__)
+    constexpr long kBudgetKb = kBudgetKbAsan;
+    constexpr const char* kBudgetTreeName = "asan";
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+    constexpr long kBudgetKb = kBudgetKbAsan;
+    constexpr const char* kBudgetTreeName = "asan";
+#  else
+    constexpr long kBudgetKb = kBudgetKbDebug;
+    constexpr const char* kBudgetTreeName = "debug";
+#  endif
+#else
+    constexpr long kBudgetKb = kBudgetKbDebug;
+    constexpr const char* kBudgetTreeName = "debug";
+#endif
 
     WmFixture fixture;
     const std::string home = makeTree("guihome-rss");
@@ -2525,7 +2561,8 @@ TEST_CASE("wm2-config's resident memory is measured against a stated budget",
     REQUIRE(wm2test::residentKb(fixture.wm().pid(), wmKb));
 
     INFO("wm2-config resident " << guiKb << " kB against a " << kBudgetKb
-         << " kB budget; the window manager beside it holds " << wmKb << " kB");
+         << " kB " << kBudgetTreeName
+         << " budget; the window manager beside it holds " << wmKb << " kB");
 
     // Anti-vacuity: a reader that returned 0 for a live process would satisfy
     // any budget. The settings window links GTK; it cannot be under a megabyte.

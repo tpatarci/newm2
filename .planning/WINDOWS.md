@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 17
+open_count: 18
 waived_count: 8
 fixed_count: 9
-total_count: 34
-last_updated: 2026-09-06T17:35:49.158Z
+total_count: 35
+last_updated: 2026-09-06T17:59:53.329Z
 ---
 
 # Broken Windows Ledger
@@ -49,6 +49,7 @@ last_updated: 2026-09-06T17:35:49.158Z
 | 32 | 09 | unrun-verify |  |  | WR-17 review fix: install-components.sh now refuses an absolute build-dir (verified by running it: exit 2 with the reason). Not automated -- the project has no harness for gate scripts and one built for a two-line argument guard would be more apparatus than the defect. | open |  | 2026-09-06T17:35:48.788Z |  |
 | 33 | 09 | unrun-verify |  |  | WR-11 review fix: the GLib source is now detached from ProtocolClient's state handler, but the GLib wiring itself has no case -- it needs a GTK main loop, and the project has no harness that can drive a GLib source and inspect its attachment. The hook the fix hangs off IS covered display-free ([wm2_config_smoke][protocol][nonblocking], 'a disconnect from a request path still announces itself'). | open |  | 2026-09-06T17:35:48.974Z |  |
 | 34 | 09 | unrun-verify |  |  | WR-12 review fix: wm2-ctl now skips an unsolicited reloaded, and the classification is unit-tested ([config_protocol][notice]). The end-to-end interleaving is not reachable deterministically from the fixture: it needs a reload to land between wm2-ctl's hello-ack and its own reply, and nothing outside the window manager can schedule that. | open |  | 2026-09-06T17:35:49.158Z |  |
+| 35 | 09 | deviation |  |  | Pre-existing, found by the review-fix pass's asan gate: the [wm2_config_smoke] wm2-config RSS budget shipped with the debug constant alone (160 MB, measured 101 MB), so the asan tree failed it on the instrumentation -- 172 MB, stable over three runs. Confirmed pre-existing by rebuilding the settings window from the pre-review sources (c4abfc6) in the same asan tree: 171.9-172.5 MB, the same figure. Given a per-tree constant in the shape tests/test_wm_resource.cpp already established (272 MB asan, ~1.6x the measurement, the same headroom the debug figure carries). | open |  | 2026-09-06T17:59:53.329Z |  |
 
 ````json
 [
@@ -458,6 +459,18 @@ last_updated: 2026-09-06T17:35:49.158Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-06T17:35:49.158Z",
+    "resolved_at": null
+  },
+  {
+    "id": 35,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "",
+    "line": null,
+    "description": "Pre-existing, found by the review-fix pass's asan gate: the [wm2_config_smoke] wm2-config RSS budget shipped with the debug constant alone (160 MB, measured 101 MB), so the asan tree failed it on the instrumentation -- 172 MB, stable over three runs. Confirmed pre-existing by rebuilding the settings window from the pre-review sources (c4abfc6) in the same asan tree: 171.9-172.5 MB, the same figure. Given a per-tree constant in the shape tests/test_wm_resource.cpp already established (272 MB asan, ~1.6x the measurement, the same headroom the debug figure carries).",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T17:59:53.329Z",
     "resolved_at": null
   }
 ]
