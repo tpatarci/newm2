@@ -2078,3 +2078,345 @@ TEST_CASE("the category list offered by the page is the one the window manager r
     CHECK_FALSE(acked);
     CHECK_FALSE(refusal.empty());
 }
+
+
+// =============================================================================
+// The three moments the file and the desktop can disagree (D-07, D-08, D-13)
+// =============================================================================
+//
+// These are the cases the plan exists for. Each of the three is a place where a
+// settings window usually goes wrong quietly: it closes leaving a desktop that
+// matches no file, it throws away what somebody was typing because something
+// else reloaded, or it "resets" by writing the defaults into the file it was
+// supposed to take them out of.
+
+TEST_CASE("closing is silent with nothing unsaved and asks when there is something",
+          "[wm2_config_smoke]")
+{
+    // D-07's precondition, in the model rather than in the widget: the window's
+    // delete-event handler asks the form whether a save would write anything,
+    // and prompts only then. A prompt on every close would train the user to
+    // dismiss it without reading, which is the failure mode the prompt exists
+    // to avoid.
+    const std::string tree = makeTree("closeclean");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+    CHECK_FALSE(form.dirty());
+
+    REQUIRE(form.setValue("frame-thickness", "13"));
+    CHECK(form.dirty());
+
+    form.revert();
+    CHECK_FALSE(form.dirty());
+
+    // A Menu-page-only change counts too, and it produces no ConfigEdit at all
+    // -- the writer rewrites those lines as a block. A close prompt keyed on
+    // the edit list would let a user close over unsaved menu rows.
+    MenuEntryDraft draft;
+    draft.name = "Editor";
+    draft.command = "/usr/bin/vim";
+    REQUIRE(form.setMenuEntries({draft.toEntry()}));
+    CHECK(form.dirty());
+    CHECK(form.edits().empty());
+}
+
+TEST_CASE("the window's close path offers Save, Discard and Cancel and nothing else",
+          "[wm2_config_smoke]")
+{
+    const std::string window = sourceOf("apps/wm2-config/main.cpp");
+    REQUIRE_FALSE(window.empty());
+
+    // Wired to the DELETE EVENT, so the window manager's own close path and the
+    // title-bar button both go through it rather than only one of them.
+    CHECK(window.find("delete-event") != std::string::npos);
+    CHECK(window.find("Discard") != std::string::npos);
+    CHECK(window.find("Cancel") != std::string::npos);
+}
+
+TEST_CASE("Discard returns the running window manager to the saved file's values",
+          "[wm2_config_smoke]")
+{
+    // D-07's whole point. Without the send-back, closing the settings window
+    // can leave a desktop that matches no file at all -- a state the user
+    // cannot reason about the next time they open anything.
+    WmFixture fixture;
+    ProtocolClient client;
+    REQUIRE(client.connect(configSocketPath(fixture.display().c_str())));
+
+    const std::string tree = makeTree("discard");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+
+    const std::string saved = wmValue(client, "frame-thickness");
+    REQUIRE_FALSE(saved.empty());
+    const std::string edited = (saved == "13") ? "17" : "13";
+
+    REQUIRE(commitThroughForm(form, client, "frame-thickness", edited).empty());
+    REQUIRE(wmValue(client, "frame-thickness") == edited);
+
+    // Discard, exactly as the close prompt performs it: put the form back and
+    // send every value that moved BACK to the desktop.
+    const std::vector<std::pair<std::string, std::string>> restores =
+        revertAndCollectRestores(form);
+    REQUIRE_FALSE(restores.empty());
+    for (const auto& kv : restores) {
+        bool acked = false;
+        std::string refusal;
+        REQUIRE(client.sendSet(kv.first, kv.second, [&](const ConfigMessage& reply) {
+            if (reply.type == ConfigMessageType::Ack) acked = true;
+            if (reply.type == ConfigMessageType::Error) refusal = reply.reason;
+        }));
+        REQUIRE(client.pumpUntil([&]() { return acked || !refusal.empty(); }, 15000));
+        INFO("refusal for " << kv.first << ": " << refusal);
+        CHECK(acked);
+    }
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    CHECK(wmValue(client, "frame-thickness") == saved);
+    CHECK_FALSE(form.dirty());
+}
+
+TEST_CASE("Discard in file-only mode puts the form back and sends nothing",
+          "[wm2_config_smoke]")
+{
+    // There is nothing running to return, so Discard is a revert and a close.
+    // Asserted through the client rather than by inspection: a disconnected
+    // client refuses to send at all, so no value can leave this process.
+    const std::string tree = makeTree("discardfileonly");
+    writeFile(tree + "/user/wm2-born-again/config", "frame-thickness=9\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+    REQUIRE(form.setValue("frame-thickness", "21"));
+
+    ProtocolClient client;
+    CHECK_FALSE(client.connect(tree + "/there-is-no-socket-here"));
+
+    const std::vector<std::pair<std::string, std::string>> restores =
+        revertAndCollectRestores(form);
+    CHECK(form.value("frame-thickness") == "9");
+    CHECK_FALSE(form.dirty());
+
+    for (const auto& kv : restores) {
+        CHECK_FALSE(client.sendSet(kv.first, kv.second, nullptr));
+    }
+}
+
+TEST_CASE("a reload notice keeps an unsaved edit and marks it rather than replacing it",
+          "[wm2_config_smoke]")
+{
+    // D-08 and this plan's standing prohibition. Replacing a value under
+    // somebody's cursor because a file changed elsewhere is the failure this
+    // decision exists to prevent; the honest alternative is to keep the edit
+    // and SAY that the file underneath has moved.
+    const std::string tree = makeTree("reloadmark");
+    writeFile(tree + "/user/wm2-born-again/config", "frame-thickness=9\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+    REQUIRE(form.setValue("frame-thickness", "21"));
+
+    const FormField* edited = form.field("frame-thickness");
+    REQUIRE(edited != nullptr);
+    CHECK(edited->dirty);
+    CHECK_FALSE(edited->staleUnderEdit);
+
+    // The reload brought a different value for a key the user is editing.
+    form.adoptEffective("frame-thickness", "31", ValueSource::WindowManager, "");
+    edited = form.field("frame-thickness");
+    REQUIRE(edited != nullptr);
+    CHECK(edited->current == "21");          // NOT replaced
+    CHECK(edited->dirty);
+    CHECK(edited->staleUnderEdit);           // ...and marked as differing
+    CHECK(edited->effective == "31");
+
+    // An UNTOUCHED key follows the new value and is not marked, or every
+    // control on the page would light up after any reload.
+    form.adoptEffective("tab-background", "#010203", ValueSource::WindowManager, "");
+    const FormField* untouched = form.field("tab-background");
+    REQUIRE(untouched != nullptr);
+    CHECK(untouched->current == "#010203");
+    CHECK_FALSE(untouched->staleUnderEdit);
+
+    // Touching the control again clears the mark: the user has now seen it and
+    // decided, so leaving the mark up would be nagging about old news.
+    REQUIRE(form.setValue("frame-thickness", "22"));
+    CHECK_FALSE(form.field("frame-thickness")->staleUnderEdit);
+
+    // And a revert clears it too, because there is no longer an edit to mark.
+    REQUIRE(form.setValue("frame-thickness", "23"));
+    form.adoptEffective("frame-thickness", "41", ValueSource::WindowManager, "");
+    REQUIRE(form.field("frame-thickness")->staleUnderEdit);
+    form.revert();
+    CHECK_FALSE(form.field("frame-thickness")->staleUnderEdit);
+}
+
+TEST_CASE("a reload notice arriving with an entry dialog open leaves the dialog's contents alone",
+          "[wm2_config_smoke]")
+{
+    // gtk_dialog_run() spins a NESTED main loop, so the socket source keeps
+    // firing and a reload notice really can arrive with the dialog up. The
+    // dialog's contents are a MenuEntryDraft owned by the call that opened it;
+    // the reload path writes into FormState and the row list and has no route
+    // to it. That is the structural half.
+    const std::string tree = makeTree("reloaddialog");
+    writeFile(tree + "/user/wm2-born-again/config",
+              "menu-entry-name=Editor\nmenu-entry-command=/usr/bin/vim\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+    REQUIRE(form.menuEntries().size() == 1);
+
+    // What somebody is halfway through typing.
+    MenuEntryDraft open;
+    open.name = "HalfTyped";
+    open.command = "/usr/bin/some-editor --flag";
+    open.category = "Development";
+
+    // ...and a reload replaces the whole list underneath.
+    AppEntry arrived;
+    arrived.name = "SomethingElse";
+    arrived.execArgv = {"/bin/true"};
+    arrived.category = "Custom";
+    form.adoptEffectiveMenuEntries({arrived});
+
+    CHECK(open.name == "HalfTyped");
+    CHECK(open.command == "/usr/bin/some-editor --flag");
+    CHECK(open.category == "Development");
+    CHECK(open.toEntry().execArgv ==
+          std::vector<std::string>({"/usr/bin/some-editor", "--flag"}));
+
+    // And the source half: the page's refresh touches the row list only.
+    const std::string page = sourceOf("apps/wm2-config/MenuPage.cpp");
+    REQUIRE_FALSE(page.empty());
+    const std::size_t at = page.find("void MenuPage::refreshFromForm()");
+    REQUIRE(at != std::string::npos);
+    const std::size_t end = page.find("\n}\n", at);
+    REQUIRE(end != std::string::npos);
+    const std::string body = page.substr(at, end - at);
+    INFO("refreshFromForm:\n" << body);
+    CHECK(body.find("dialog") == std::string::npos);
+    CHECK(body.find("Dialog") == std::string::npos);
+    CHECK(body.find("Draft") == std::string::npos);
+}
+
+TEST_CASE("an unsaved edit that a reload made agree with the file is no longer marked",
+          "[wm2_config_smoke]")
+{
+    // The mutation case for the one above. "The edit is kept and marked" would
+    // pass just as happily against a form that marked EVERY edited key
+    // forever, which would make the mark meaningless. A reload that happens to
+    // bring exactly what the user typed is not a disagreement.
+    const std::string tree = makeTree("reloadagrees");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+    REQUIRE(form.setValue("frame-thickness", "21"));
+
+    form.adoptEffective("frame-thickness", "21", ValueSource::WindowManager, "");
+    const FormField* field = form.field("frame-thickness");
+    REQUIRE(field != nullptr);
+    CHECK(field->current == "21");
+    CHECK_FALSE(field->staleUnderEdit);
+}
+
+TEST_CASE("Reset all on a page removes that page's keys from the user file and writes no defaults",
+          "[wm2_config_smoke]")
+{
+    // D-13's per-page half, built from the per-setting reset so there is one
+    // meaning of reset. What "reset" must NOT do is write the built-in default
+    // into the file, because that would permanently hide a system-wide value
+    // the user was trying to fall back to.
+    const std::string tree = makeTree("resetall");
+    const std::string systemFile = tree + "/system/wm2-born-again/config";
+    const std::string userFile   = tree + "/user/wm2-born-again/config";
+    writeFile(systemFile, "auto-raise-delay=250\n");
+    writeFile(userFile,
+              "# a comment the writer must preserve\n"
+              "click-to-focus=true\n"
+              "auto-raise-delay=900\n"
+              "new-window-command=/usr/bin/xterm\n"
+              "tab-background=#010203\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    const ConfigLayers layers = configLayersFromDisk();
+    form.seedFromLayers(layers);
+    REQUIRE(form.value("auto-raise-delay") == "900");
+
+    const std::vector<std::string> pageKeys = {
+        "click-to-focus", "raise-on-focus", "auto-raise",
+        "focus-stealing-prevention", "auto-raise-delay",
+        "pointer-stopped-delay", "destroy-window-delay",
+        "new-window-command", "exec-using-shell",
+    };
+    const std::vector<std::string> moved = form.requestResetAll(pageKeys);
+
+    // Only the keys the file actually set can move; the rest were already
+    // showing what removal produces.
+    INFO("keys that moved: " << moved.size());
+    CHECK(contains(moved, "click-to-focus"));
+    CHECK(contains(moved, "auto-raise-delay"));
+    CHECK(contains(moved, "new-window-command"));
+
+    // The form shows the layer BELOW the user file at once, not the built-in
+    // default -- 250 here, which is neither 900 nor the compiled-in value.
+    CHECK(form.value("auto-raise-delay") == "250");
+    CHECK(form.value("auto-raise-delay") != std::to_string(Config().autoRaiseDelay));
+
+    std::string error;
+    REQUIRE(configFileWrite(layers.userFilePath, form.edits(), form.menuEntries(),
+                            form.menuEntriesChanged(), error) == ConfigWriteResult::Ok);
+    form.markSaved();
+
+    const std::string written = readFileOrEmpty(userFile);
+    INFO("user file after the reset:\n" << written);
+    for (const std::string& key : pageKeys) {
+        INFO("key: " << key);
+        CHECK(written.find(key) == std::string::npos);
+    }
+    // No default took their place, and the other page's key is untouched.
+    CHECK(written.find("900") == std::string::npos);
+    CHECK(written.find("250") == std::string::npos);
+    CHECK(written.find("tab-background=#010203") != std::string::npos);
+    CHECK(written.find("# a comment the writer must preserve") != std::string::npos);
+}
+
+TEST_CASE("Revert before Save undoes a Reset all", "[wm2_config_smoke]")
+{
+    const std::string tree = makeTree("resetallrevert");
+    writeFile(tree + "/user/wm2-born-again/config", "click-to-focus=true\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+    REQUIRE(form.value("click-to-focus") == "true");
+
+    form.requestResetAll({"click-to-focus"});
+    CHECK(form.dirty());
+    CHECK(form.value("click-to-focus") == "false");
+
+    form.revert();
+    CHECK_FALSE(form.dirty());
+    CHECK(form.value("click-to-focus") == "true");
+    CHECK(form.edits().empty());
+}
+
+TEST_CASE("the window shows the reload notice where the banner is, not in a second status region",
+          "[wm2_config_smoke]")
+{
+    const std::string window = sourceOf("apps/wm2-config/main.cpp");
+    REQUIRE_FALSE(window.empty());
+
+    // One status region. A settings window with a notice line at the top and
+    // another at the bottom makes a user check two places for one answer.
+    CHECK(window.find("notice(") != std::string::npos);
+    CHECK(window.find("m_notice") != std::string::npos);
+}
