@@ -436,6 +436,33 @@ DISPLAY=:2 xwininfo -root -tree
       windows behind.
       DONE: `[wm_lifecycle]`. Plan 08-13 fixed `unreparent()` discarding the WM's entire event queue here.
 
+- [x] `wm2-ctl` completes each of its four subcommands against a running window
+      manager and returns its documented exit code when none is running.
+      DONE (plan 09-04): `[wm_config_live]` covers all four against the real
+      binary over a real socket -- "wm2-ctl status prints the seven fields the
+      window manager reports", "wm2-ctl get prints the value the window manager
+      is actually using", "set frame-thickness re-frames a window that was
+      already mapped", and "reload re-reads the file and applies it to windows
+      already open". The three non-zero codes have their own cases: "wm2-ctl
+      exits 2 when there is no window manager to talk to", "wm2-ctl refuses a
+      malformed invocation with the usage code" (3), and "a value the parser
+      would clamp is refused and changes nothing" (1). "the settable key list
+      and the config file's managed key list agree" is what keeps `--help` from
+      advertising a key the window manager would refuse.
+- [x] The socket path is discoverable without reconstructing it: the root
+      window carries `_WM2_CONFIG_SOCKET`.
+      DONE (plan 09-03): `[wm_socket]` "The socket path is published on the root
+      window and is a socket", and `[wm_config_live]` "wm2-ctl finds the socket
+      from DISPLAY, and honours --socket" for the client half. Reading the
+      property is the documented way in; the path's spelling is written down in
+      `docs/RELEASE-NOTES.md` only so a second client can recognise it, not so
+      anyone reconstructs it.
+
+```bash
+DISPLAY=:2 xprop -root _WM2_CONFIG_SOCKET
+DISPLAY=:2 wm2-ctl status
+```
+
 ## User Interaction Checklist
 
 - [x] Root left-click menu appears, fits on screen edges, highlights correctly,
@@ -562,6 +589,58 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
       **DEFERRED**, "No automated coverage as a property" — declined by the
       operator (tpatarci, 2026-08-30). Remains open.
 
+### The configuration GUI (Phase 9)
+
+- [x] The root menu's `Configure...` entry appears when `wm2-config` is
+      installed and is absent when it is not.
+      DONE (plan 09-09): `[wm_config_runtime]` "The root menu carries a
+      Configure entry when wm2-config is on the window manager's PATH at
+      startup, and not when it is not" runs two window managers whose child
+      environments differ in one variable -- one with a directory holding the
+      real built `wm2-config` on PATH, one without -- and measures the second
+      menu one row shorter. There is no readable label channel, so the row count
+      is derived from the popup height the server reports and the row height
+      read off the highlight band. The claim the runtime case cannot make --
+      that every OTHER row, the exit row included, is at the index it already
+      had -- is pinned by five display-free `[menupaint]` cases over
+      `RootMenuLayout`, shown to fail when Configure and Exit are swapped.
+- [x] Selecting `Configure...` launches the settings window and leaves no
+      zombie behind.
+      DONE (plan 09-09): `[wm_config_runtime]` "Selecting the root menu's
+      Configure entry runs wm2-config and leaves no zombie behind". The entry
+      goes through `spawnArgv()`, the same double-fork the `New` entry uses, so
+      the reaping guarantee asserted at the end of `[wm_stress]` covers it with
+      no new process code. The case asserts a filesystem witness written by a
+      program named `wm2-config` found on the window manager's own PATH, and
+      then zero zombie children.
+      **What this row does not cover:** the case launches a shim rather than the
+      GTK binary, deliberately -- what is under test is that the entry execs a
+      program of that name through the window manager's spawn path, not that
+      GTK can open a window, which is `[wm2_config_smoke]`'s subject and is
+      covered separately below.
+- [x] The settings window's three pages open and edit what they say they edit.
+      DONE (plans 09-06, 09-07): `[wm2_config_smoke]`, which opens the real
+      built binary under Xvfb and asserts its window and connection state, and
+      drives every page's own model for the rest -- the Appearance and Behaviour
+      pages' key partition, the Menu page's rows across a save, and the
+      click-to-focus tracer, which proves a value committed through the page
+      changes how the running desktop gives focus to synthesised pointer input
+      rather than merely being stored. Screenshots of all three pages and both
+      dialogs: `.planning/phases/09-config-gui-ipc/evidence/wm2-config/`.
+- [ ] Two settings windows open at once do not overwrite each other's Save.
+      **NOT COVERED, and known.** Flagged in 09-06 and carried unclosed through
+      09-07: each instance writes the whole user file from its own picture, so
+      the second Save silently discards the first. Nothing in the phase gates
+      it. Cheap to close with an advisory lock on the user file at Save; a v1.1
+      candidate rather than a v1.0 blocker, because the situation needs a user
+      to open the settings window twice on one desktop. Remains open.
+- [ ] The `Reset this page` button is reachable without scrolling on every page.
+      **NOT COVERED, and known.** 09-07 records that the Appearance page is
+      taller than the default window, so its reset button sits below the fold;
+      the Behaviour and Menu pages show theirs. No automated case asserts
+      control visibility at the default size, and none is proposed -- this is a
+      layout judgement for the operator's screenshot review. Remains open.
+
 ## ICCCM And EWMH Checklist
 
 - [x] `WM_STATE` uses exact X11 values: Withdrawn 0, Normal 1, Iconic 3.
@@ -668,6 +747,58 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
       resources are freed before their owning `Display` closes.
       DONE: `tests/test_raii.cpp` (16 cases) plus the ASan tree. Plan 08-11 found the concrete instance of this: the per-instance `XftDraw` was destroyed AFTER its tab window, emitting `RenderBadPicture` on every window close.
 
+### The configuration socket (Phase 9)
+
+- [x] The socket is reachable by the owning uid only; a foreign uid is refused
+      and logged once.
+      DONE (plan 09-03): `[wm_socket]` "The socket directory is 0700 and the
+      socket is 0600" and "A refused peer is closed before a protocol byte and
+      logged once per uid"; the unit half is `[config_socket]` "A peer with this
+      uid is admitted and any other uid is not" and "A descriptor the kernel
+      will not vouch for is not admitted". The credential check happens before a
+      single byte is read, which is what makes "refused" mean refused rather
+      than parsed and then rejected.
+- [x] An oversized or malformed message is refused and the window manager keeps
+      running.
+      DONE (plan 09-03): `[wm_socket]` "A line over the protocol bound is
+      refused and the connection closed", "A client that sends bytes and never a
+      newline is dropped at the bound", and "A client vanishing mid-request
+      costs only its own connection". The protocol half is
+      `[config_protocol]`, 09-02's frozen wire contract.
+- [x] A stale socket left by a crashed window manager is reclaimed.
+      DONE (plan 09-03): `[wm_socket]` "A socket left by a crashed predecessor
+      is reclaimed", with `[config_socket]` "An abandoned socket is stale and a
+      live one is not", "Nothing at the path is nothing to reclaim" and "A file
+      that is not a socket is never reclaimed" pinning the three ways the
+      reclaim must NOT fire.
+- [x] No per-window information crosses the socket.
+      DONE (plan 09-03, D-14): `[wm_socket]` "The status counts are real and no
+      window's identity is in the reply" and "The status assembly does not reach
+      any per-window identity" -- the second reads the assembly's own source, so
+      a future field that carried a title would fail the gate before anyone
+      thought to look at a capture.
+- [x] A socket path too long for the address structure is named rather than
+      silently truncated.
+      DONE (plan 09-03): `[wm_socket]` "A socket path too long for the address
+      structure is named, not truncated" and `[config_socket]` "A path too long
+      for the address structure is refused, not truncated".
+- [x] The window manager and `wm2-ctl` link no toolkit in any configuration.
+      DONE (plans 09-08, 09-09): `bash scripts/gates/install-components.sh`
+      stages the `wm` component and runs `ldd` over every executable it
+      installed, failing if GTK, GDK, GLib or GObject is named;
+      `bash scripts/gates/build-all.sh nogtk` builds the whole tree with
+      `-DBUILD_CONFIG_GUI=OFF` and accounts the suite test-for-test against the
+      GUI-enabled tree.
+- [ ] Nothing in the window manager loads a toolkit library dynamically.
+      **NOT GATED, and the distinction matters.** 09-08 checked it and it holds
+      --- `grep -rn 'dlopen\|dlsym\|dlvsym' src/ include/ apps/wm2-ctl/` returns
+      nothing, so there is no dynamic-loading call anywhere in the window
+      manager or `wm2-ctl` --- but that was a one-off command, not a gate.
+      `install-components.sh`'s `ldd` audit reads the LINK line and would not
+      see a `dlopen` at all, so the runtime half of the no-GTK claim rests on a
+      check nothing re-runs. A future `dlopen` would need a script. Remains
+      open.
+
 ## Remote Desktop And VPS Checklist
 
 - [x] Verify on the target baseline distro, especially Ubuntu 22.04+.
@@ -710,6 +841,16 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
       in both `evidence/xrdp/capabilities.txt` and
       `evidence/tigervnc/capabilities.txt`. The no-Shape path is covered
       automatically by `[wm_noshape]` rather than by finding a server without it.
+
+- [ ] The settings window runs over a real remote-desktop session and its
+      resident memory is recorded against the 512 MB budget.
+      **OPEN.** D-20 requires one measured pass per release, and 09-RESEARCH's
+      assumption log names the settings window's resident memory as *the single
+      most consequential unverified number in the document* -- the 30-60 MB
+      estimate it carries is an estimate, and the instruction beside it is that
+      no plan may skip the measurement on its strength. Closed by plan 09-09
+      Task 4 once the pass is taken; until then this row is what the release
+      does not know.
 
 ## Release Evidence Required
 
@@ -763,6 +904,14 @@ For each release or handoff, attach:
       the circular fullscreen gesture, grab release) plus the menu's exit and
       hidden-client rows — the honest gap this release ships with, and the
       v1.1 "Gesture and input coverage" backlog line exists for exactly this.
+- [x] The two gates added in Phase 9 captured at the release commit.
+      DONE (plans 09-08, 09-09): `bash scripts/gates/install-components.sh`
+      (both install components staged separately, each manifest exact, `ldd`
+      audit over the `wm` component) and `bash scripts/gates/doc-keys.sh` (every
+      accepted key documented and every documented key accepted, both
+      directions). Both are in the developers' command block of
+      `docs/RELEASE-NOTES.md`, and both have been shown to fail against a
+      deliberately introduced defect and then pass again.
 - [x] List of accepted deviations, each with owner and follow-up issue.
       DONE: D-8-TIGHTVNC and D-8-X2GO below, each with reason, owner and
       follow-up.
