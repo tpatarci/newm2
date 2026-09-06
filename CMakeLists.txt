@@ -812,9 +812,15 @@ if(BUILD_TESTS)
     # include/ConfigFileWriter.h nor src/ConfigFileWriter.cpp touches X11, Xft
     # or GTK, so this target links Catch2 alone and runs with no X server.
     #
+    # src/Config.cpp is compiled in because the round-trip cases close the loop
+    # through Config::applyFile() and Config::applyKeyValue(): the writer and
+    # the parser have to be proven inverses over the managed key set, and that
+    # needs both halves in one binary (the test_config "compile the source
+    # straight into the consumer" pattern above).
     add_executable(test_config_writer
         tests/test_config_writer.cpp
         src/ConfigFileWriter.cpp
+        src/Config.cpp
     )
     target_link_libraries(test_config_writer PRIVATE
         Catch2::Catch2WithMain

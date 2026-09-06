@@ -10,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "AppEntry.h"
+#include "Config.h"
 #include "ConfigFileWriter.h"
 
 #include <algorithm>
@@ -708,4 +709,201 @@ TEST_CASE("A file with no trailing newline keeps that shape when nothing lands a
 
     // The last line was not touched, so the file still ends without a newline.
     REQUIRE(readFile(path) == "frame-thickness=9\ntab-background = #C8CACC");
+}
+
+// =============================================================================
+// The writer and the parser are inverses (Task 3)
+//
+// Everything above proves the writer produces the bytes it meant to. That is
+// only half of what matters: a key the GUI can write and the window manager
+// never reads back is a setting that appears to work and does nothing, which
+// is exactly the dead-config defect plan 08-07 found in the focus booleans.
+// These cases close the loop through Config::applyFile().
+//
+// `rule-*` keys are deliberately absent from every table here, because they
+// are deliberately absent from configFileManagedKeys(). The rules editor is a
+// Deferred Idea in 09-CONTEXT.md; the writer leaving rule lines untouched is
+// what lets a later phase add it with no file-format work at all.
+// =============================================================================
+
+namespace {
+
+// A value for each managed key that is DISTINCT FROM ITS BUILT-IN DEFAULT.
+// Distinctness is the whole point: a value equal to the default would make
+// every assertion below pass whether the file was read or ignored.
+const std::vector<std::pair<std::string, std::string>>& distinctiveValues() {
+    static const std::vector<std::pair<std::string, std::string>> table = {
+        {"tab-foreground",            "#010203"},
+        {"tab-background",            "#040506"},
+        {"frame-background",          "#070809"},
+        {"button-background",         "#0A0B0C"},
+        {"borders",                   "#0D0E0F"},
+        {"menu-foreground",           "#101112"},
+        {"menu-background",           "#131415"},
+        {"menu-highlight",            "#161718"},
+        {"menu-borders",              "#191A1B"},
+        {"tab-font",                  "Distinctive Tab Face:bold:size=19"},
+        {"menu-font",                 "Distinctive Menu Face:size=21"},
+        {"click-to-focus",            "true"},   // default false
+        {"raise-on-focus",            "false"},  // default true
+        {"auto-raise",                "false"},  // default true
+        {"focus-stealing-prevention", "false"},  // default true
+        {"auto-raise-delay",          "1234"},   // default 400
+        {"pointer-stopped-delay",     "1235"},   // default 80
+        {"destroy-window-delay",      "1236"},   // default 400
+        {"frame-thickness",           "13"},     // default 7
+        {"new-window-command",        "distinctive-terminal"},
+        {"exec-using-shell",          "true"},   // default false
+    };
+    return table;
+}
+
+// The value of one managed key as it stands in a Config, rendered as the string
+// the file would carry. This is the ONLY place that maps a key name to a Config
+// member, so a key the GUI manages but this function cannot resolve is a
+// compile-time-visible gap rather than a silent one.
+std::string fieldOf(const Config& c, const std::string& key) {
+    if (key == "tab-foreground")            return c.tabForeground;
+    if (key == "tab-background")            return c.tabBackground;
+    if (key == "frame-background")          return c.frameBackground;
+    if (key == "button-background")         return c.buttonBackground;
+    if (key == "borders")                   return c.borders;
+    if (key == "menu-foreground")           return c.menuForeground;
+    if (key == "menu-background")           return c.menuBackground;
+    if (key == "menu-highlight")            return c.menuHighlight;
+    if (key == "menu-borders")              return c.menuBorders;
+    if (key == "tab-font")                  return c.tabFont;
+    if (key == "menu-font")                 return c.menuFont;
+    if (key == "click-to-focus")            return c.clickToFocus ? "true" : "false";
+    if (key == "raise-on-focus")            return c.raiseOnFocus ? "true" : "false";
+    if (key == "auto-raise")                return c.autoRaise ? "true" : "false";
+    if (key == "focus-stealing-prevention") return c.focusStealingPrevention ? "true" : "false";
+    if (key == "auto-raise-delay")          return std::to_string(c.autoRaiseDelay);
+    if (key == "pointer-stopped-delay")     return std::to_string(c.pointerStoppedDelay);
+    if (key == "destroy-window-delay")      return std::to_string(c.destroyWindowDelay);
+    if (key == "frame-thickness")           return std::to_string(c.frameThickness);
+    if (key == "new-window-command")        return c.newWindowCommand;
+    if (key == "exec-using-shell")          return c.execUsingShell ? "true" : "false";
+    return "<no such managed key>";
+}
+
+// Every managed field at once, so a case can assert that applying one key
+// changed that field AND left the other twenty alone.
+std::vector<std::string> snapshot(const Config& c) {
+    std::vector<std::string> out;
+    for (const std::string& k : configFileManagedKeys()) out.push_back(fieldOf(c, k));
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("The distinctive-value table covers exactly the managed key set", "[config_writer]") {
+    const std::vector<std::string>& keys = configFileManagedKeys();
+    REQUIRE(distinctiveValues().size() == keys.size());
+
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        INFO("position " << i);
+        REQUIRE(distinctiveValues()[i].first == keys[i]);
+    }
+
+    // Every table value really is distinct from the built-in default, or the
+    // round trip below would pass against a writer that produced nothing.
+    const Config defaults;
+    for (const auto& row : distinctiveValues()) {
+        INFO("key: " << row.first);
+        REQUIRE(fieldOf(defaults, row.first) != row.second);
+    }
+}
+
+TEST_CASE("Every managed key survives a write and a read back through Config::applyFile",
+          "[config_writer]") {
+    TempDir dir;
+    const std::string path = dir.file("config");
+
+    std::vector<ConfigEdit> edits;
+    for (const auto& row : distinctiveValues()) edits.push_back(set(row.first, row.second));
+
+    std::string error;
+    REQUIRE(configFileWrite(path, edits, {}, false, error) == ConfigWriteResult::Ok);
+    REQUIRE(error.empty());
+
+    Config loaded;
+    loaded.applyFile(path);
+
+    for (const auto& row : distinctiveValues()) {
+        INFO("key: " << row.first << " (wrote '" << row.second << "')");
+        REQUIRE(fieldOf(loaded, row.first) == row.second);
+    }
+}
+
+TEST_CASE("Menu entries survive a write and a read back through Config::applyFile",
+          "[config_writer]") {
+    TempDir dir;
+    const std::string path = dir.file("config");
+
+    const std::vector<AppEntry> entries = {
+        entry("Terminal", {"xterm", "-ls", "-sb"}, "System"),
+        entry("Editor", {"vim"}, "Custom"),
+    };
+
+    std::string error;
+    REQUIRE(configFileWrite(path, {}, entries, true, error) == ConfigWriteResult::Ok);
+
+    Config loaded;
+    loaded.applyFile(path);
+
+    REQUIRE(loaded.manualMenuEntries.size() == 2u);
+    CHECK(loaded.manualMenuEntries[0].name == "Terminal");
+    CHECK(loaded.manualMenuEntries[0].execArgv == std::vector<std::string>{"xterm", "-ls", "-sb"});
+    CHECK(loaded.manualMenuEntries[0].category == "System");
+    CHECK(loaded.manualMenuEntries[1].name == "Editor");
+    CHECK(loaded.manualMenuEntries[1].execArgv == std::vector<std::string>{"vim"});
+    CHECK(loaded.manualMenuEntries[1].category == "Custom");
+}
+
+// The drift guard. A managed key the parser ignores is a key the GUI can write
+// and the window manager will never read -- it would look like a working
+// control that does nothing at all. This case is what catches that.
+TEST_CASE("Every managed key reaches a Config field through Config::applyKeyValue",
+          "[config_writer]") {
+    const std::vector<std::string>& keys = configFileManagedKeys();
+
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        const std::string& key = keys[i];
+        const std::string& value = distinctiveValues()[i].second;
+        INFO("key: " << key << " = " << value);
+
+        Config before;
+        const std::vector<std::string> was = snapshot(before);
+
+        Config after;
+        after.applyKeyValue(key, value);
+        const std::vector<std::string> now = snapshot(after);
+
+        // The key's own field changed...
+        REQUIRE(now[i] != was[i]);
+        REQUIRE(now[i] == value);
+
+        // ...and nothing else did. A key that moved the wrong field would pass
+        // the assertion above on its own.
+        for (std::size_t j = 0; j < keys.size(); ++j) {
+            if (j == i) continue;
+            INFO("collateral change in: " << keys[j]);
+            REQUIRE(now[j] == was[j]);
+        }
+    }
+}
+
+// The mirror of the guard above, and the reason rule-* stays out of the managed
+// set: a rule key applied through the parser must NOT touch any managed field.
+TEST_CASE("A rule-* key touches no managed field", "[config_writer]") {
+    Config before;
+    const std::vector<std::string> was = snapshot(before);
+
+    Config after;
+    after.applyKeyValue("rule-match-class", "Firefox");
+    after.applyKeyValue("rule-action-desktop", "2");
+
+    REQUIRE(snapshot(after) == was);
+    REQUIRE(after.rules.size() == 1u);  // it did reach the rules, just not a setting
 }
