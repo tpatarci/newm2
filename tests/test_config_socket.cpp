@@ -938,23 +938,111 @@ TEST_CASE("A socket directory that is a symlink is refused, and its target is "
 }
 
 
-TEST_CASE("A directory owned by somebody else is refused",
+TEST_CASE("a socket directory that cannot be created is refused, and nothing "
+          "is left behind",
           "[config_socket][directory]")
 {
-    // The ownership half of the same check, driven where it can be driven
-    // without becoming another user: /tmp itself is a directory this process
-    // does not own and whose mode is not 0700, and pointing the resolver at a
-    // path whose FINAL component is one of those is enough to reach the
-    // refusal. (`/` is chosen over `/tmp` so the name the server would use is
-    // "/wm2-born-again", which does not exist and cannot be created -- the
-    // mkdir refusal and the ownership refusal are both correct outcomes and
-    // both are "no socket".)
+    // W-06 replaces a case that named the ownership check and never reached
+    // it: it pointed XDG_RUNTIME_DIR at "/", where an ordinary user's mkdir
+    // fails with EACCES long before the open/fstat/fchmod block, and where a
+    // run as root SUCCEEDED -- leaving a directory and a socket node at the
+    // filesystem root that nothing cleaned up, and failing the assertion for
+    // the wrong reason.
+    //
+    // This half is what an ordinary user can prove: the mkdir refusal, driven
+    // ENTIRELY INSIDE A SCRATCH DIRECTORY, so no value of euid can make it
+    // create anything anywhere else. The ownership half is the case below.
     RuntimeDirEnv guard;
-    RuntimeDirEnv::set("/");
+    TempDir home;
+    REQUIRE(home.valid());
 
-    ConfigSocketServer server;
-    CHECK_FALSE(server.listen(":notmine"));
-    CHECK_FALSE(server.isListening());
+    // A parent this process may not write to. As root every directory is
+    // writable, so the condition under test cannot be constructed and the case
+    // says so rather than passing vacuously.
+    const std::string locked = home.path() + "/locked";
+    REQUIRE(::mkdir(locked.c_str(), 0500) == 0);
+    RuntimeDirEnv::set(locked);
+
+    const std::string directory = configSocketDirectory();
+    REQUIRE(directory == locked + "/wm2-born-again");
+
+    if (::geteuid() == 0) {
+        ::rmdir(locked.c_str());
+        SKIP("running as root: an unwritable directory is still writable, so "
+             "the mkdir refusal cannot be constructed");
+    }
+
+    {
+        ConfigSocketServer server;
+        CHECK_FALSE(server.listen(":unwritable"));
+        CHECK_FALSE(server.isListening());
+    }
+
+    // The refusal is only worth anything if nothing happened on the way to it.
+    struct stat st;
+    CHECK(::lstat(directory.c_str(), &st) != 0);
+
+    ::rmdir(locked.c_str());
+}
+
+
+TEST_CASE("a socket directory owned by somebody else is refused",
+          "[config_socket][directory]")
+{
+    // The ownership refusal itself: mkdir returns EEXIST, the open with
+    // O_DIRECTORY|O_NOFOLLOW succeeds, and the FSTAT is what refuses -- which
+    // is the check CR-03 added and the one a case named after it has to reach.
+    //
+    // Reaching it needs a directory at exactly the name listen() will use,
+    // owned by somebody who is not this process. Only a process that can give
+    // a directory away can arrange that, so the case is SKIPPED rather than
+    // weakened when it cannot: a case that passes because an earlier, unrelated
+    // check refused first is a case that proves nothing, which is what W-06 is
+    // about.
+    //
+    // Everything happens inside a scratch directory, so no value of euid can
+    // make this create anything outside it.
+    RuntimeDirEnv guard;
+    TempDir home;
+    REQUIRE(home.valid());
+    RuntimeDirEnv::set(home.path());
+
+    const std::string directory = configSocketDirectory();
+    REQUIRE(directory == home.path() + "/wm2-born-again");
+
+    if (::geteuid() != 0) {
+        SKIP("this process cannot give a directory away, so the ownership "
+             "refusal cannot be reached without faking it");
+    }
+
+    REQUIRE(::mkdir(directory.c_str(), 0700) == 0);
+
+    // Somebody else. `nobody` is the conventional unprivileged uid and is not
+    // this process under any circumstances in which the branch above was taken.
+    const uid_t foreign = 65534;
+    if (::chown(directory.c_str(), foreign, static_cast<gid_t>(-1)) != 0) {
+        ::rmdir(directory.c_str());
+        SKIP("this kernel would not reassign the directory's owner, so the "
+             "ownership refusal cannot be reached");
+    }
+
+    {
+        ConfigSocketServer server;
+        CHECK_FALSE(server.listen(":notmine"));
+        CHECK_FALSE(server.isListening());
+    }
+
+    // Nothing was done to a directory that was refused: no mode correction and
+    // no socket node inside it.
+    struct stat st;
+    REQUIRE(::lstat(directory.c_str(), &st) == 0);
+    CHECK(st.st_uid == foreign);
+    CHECK((st.st_mode & 07777) == 0700);
+    struct stat sst;
+    CHECK(::lstat((directory + "/socket_notmine").c_str(), &sst) != 0);
+
+    ::unlink((directory + "/socket_notmine").c_str());
+    ::rmdir(directory.c_str());
 }
 
 
