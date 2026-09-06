@@ -84,10 +84,29 @@ cmake --build "$BUILD_DIR" --target wm2-born-again wm2-ctl --parallel
 # Whether the configuration GUI exists in THIS tree is read off the tree itself
 # rather than out of the cache: the binary's presence is the observable the
 # install rules key on, and it is the same thing a packager would look at.
+# IN-06: the tree's INTENT is read from the cache, so a compile error in a
+# GUI-ENABLED tree is not indistinguishable from a GUI-disabled tree. It used
+# to be: the build was silenced, GUI_BUILT went false, CONFIG_GUI_EXPECTED
+# became empty, and if a stale binary from an earlier build was still installed
+# the gate reported "config-gui: a GUI-disabled tree installed files for this
+# component" -- pointing the reader at the wrong problem entirely.
+GUI_EXPECTED=OFF
+if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
+    GUI_EXPECTED=$(sed -n 's/^CONFIG_GUI_RESOLVED:INTERNAL=//p' "$BUILD_DIR/CMakeCache.txt" | head -n 1)
+    [ -n "$GUI_EXPECTED" ] || GUI_EXPECTED=OFF
+fi
+
 GUI_BUILT=false
-if cmake --build "$BUILD_DIR" --target wm2-config --parallel >/dev/null 2>&1; then
+if [ "$GUI_EXPECTED" = "ON" ]; then
+    # LOUD on purpose. In a tree that resolved the GUI ON, a wm2-config that
+    # will not compile is a build failure, and `set -e` ends the run here
+    # rather than letting it be reported as "this tree has no GUI".
+    cmake --build "$BUILD_DIR" --target wm2-config --parallel
+    GUI_BUILT=true
+elif cmake --build "$BUILD_DIR" --target wm2-config --parallel >/dev/null 2>&1; then
     GUI_BUILT=true
 fi
+echo "  configuration GUI this tree intends: $GUI_EXPECTED"
 echo "  configuration GUI in this tree: $GUI_BUILT"
 
 # ---------------------------------------------------------------------------

@@ -52,7 +52,7 @@ const char* const kSectionComment = "# Added by wm2-config";
 // The longest value Config::applyFile() will read back (src/Config.cpp,
 // "Reject values > 256 chars"). Writing a longer one would put a line in the
 // file that the window manager silently drops.
-const std::size_t kMaxValueBytes = 256;
+const std::size_t kMaxValueBytes = kConfigFileMaxValueBytes;
 
 // A key/value line, split the way Config::applyFile() splits it.
 struct LineSplit {
@@ -541,7 +541,11 @@ ConfigWriteResult configFileWrite(const std::string& path,
     if (targetExists) {
         struct stat st {};
         if (::stat(path.c_str(), &st) == 0) {
-            (void)::fchmod(fd, st.st_mode & 07777);
+            // IN-07: 0777, not 07777. A configuration file should never
+            // carry setuid, setgid or the sticky bit; if one somehow does,
+            // copying it onto the replacement propagates it rather than
+            // dropping it.
+            (void)::fchmod(fd, st.st_mode & 0777);
         }
     }
 

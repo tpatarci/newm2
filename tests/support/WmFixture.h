@@ -988,7 +988,12 @@ inline bool residentKb(pid_t pid, long& out)
     const int n = std::fscanf(f, "%ld %ld", &total, &resident);
     std::fclose(f);
     if (n != 2) return false;
-    out = resident * (::sysconf(_SC_PAGESIZE) / 1024);
+    // IN-04: sysconf() answering -1 makes `-1 / 1024` zero, and every
+    // memory-budget assertion built on this reader then passes vacuously
+    // against a live process. A silently-zero reading is worse than a false.
+    const long page = ::sysconf(_SC_PAGESIZE);
+    if (page <= 0) return false;
+    out = resident * (page / 1024);
     return true;
 }
 

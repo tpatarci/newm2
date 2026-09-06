@@ -31,6 +31,7 @@
 
 #include "AppEntry.h"
 #include "Config.h"
+#include "ConfigFileWriter.h"
 #include "ConfigProtocol.h"
 
 #include <algorithm>
@@ -99,6 +100,18 @@ struct MenuEntryDraft {
             if (part->find(';') != std::string::npos) {
                 reasonOut = "A ';' cannot be used here -- it is what separates "
                             "entries when the list is sent to the window manager.";
+                return false;
+            }
+            // IN-05: the writer's per-field bound, asserted HERE as well as
+            // there. Without it a long command was accepted by the dialog,
+            // applied live, and then refused at Save by a message naming a
+            // limit the user never saw -- a late refusal for something the
+            // field it was typed in could have said at once.
+            if (part->size() > kConfigFileMaxValueBytes) {
+                reasonOut = "That is longer than " +
+                            std::to_string(kConfigFileMaxValueBytes) +
+                            " characters, which is the most the configuration "
+                            "file can carry in one field.";
                 return false;
             }
         }

@@ -62,6 +62,15 @@ struct ConfigEdit {
 // caller's errorOut. Nothing here throws and nothing calls exit(), matching the
 // project's `wm2: warning:` convention -- a config save that fails is a message
 // for the user, not a reason to end the process.
+// The longest value a single key may carry, in bytes.
+//
+// Exposed rather than kept file-local so the settings window's own dialogs can
+// refuse an over-long field WHERE IT IS TYPED instead of letting it be
+// accepted, applied live, and then refused at Save time by a message naming a
+// bound the user never saw (IN-05).
+inline constexpr std::size_t kConfigFileMaxValueBytes = 256;
+
+
 enum class ConfigWriteResult {
     Ok,
     InvalidEdit,      // an edit the writer refuses to perform -- see below

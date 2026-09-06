@@ -152,7 +152,10 @@ public:
         struct sockaddr_un addr;
         std::memset(&addr, 0, sizeof(addr));
         addr.sun_family = AF_UNIX;
-        if (path.size() + 1 > sizeof(addr.sun_path)) {
+        // IN-08: the predicate, not a second spelling of it.
+        // include/SocketServer.h explains at length why this test has exactly
+        // one home; an open-coded copy here is a copy that can drift from it.
+        if (!configSocketPathFits(path)) {
             warn("socket path is too long for a unix socket address: " + path);
             return kExitNoSocket;
         }

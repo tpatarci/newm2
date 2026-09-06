@@ -145,6 +145,13 @@ else()
     message(FATAL_ERROR "BUILD_CONFIG_GUI must be AUTO, ON or OFF; got '${BUILD_CONFIG_GUI}'")
 endif()
 
+# Recorded in the cache so a tool outside CMake can read the RESOLUTION rather
+# than re-deriving it from BUILD_CONFIG_GUI plus a pkg-config probe of its own
+# (scripts/gates/install-components.sh, IN-06). INTERNAL and written on every
+# configure, so it always describes THIS configure rather than a previous one.
+set(CONFIG_GUI_RESOLVED ${CONFIG_GUI_ENABLED} CACHE INTERNAL
+    "Whether this tree builds wm2-config, as resolved from BUILD_CONFIG_GUI")
+
 if(CONFIG_GUI_ENABLED)
     # The same "compile the source straight into the consumer" pattern wm2-ctl
     # and every test_config* target use; the project ships no library target.
