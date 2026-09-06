@@ -65,7 +65,7 @@
 ### Configuration GUI
 
 - [ ] **CGUI-01**: Separate GTK3 binary (wm2-config) for visual configuration editing
-- [ ] **CGUI-02**: Communicates with WM via Unix domain socket (JSON protocol)
+- [x] **CGUI-02**: Communicates with WM via Unix domain socket (JSON protocol)
 - [ ] **CGUI-03**: Edit fonts, colors, focus policy, frame thickness, menu entries
 - [ ] **CGUI-04**: Changes apply immediately (no restart required) where possible
 - [ ] **CGUI-05**: WM works without GTK installed (GUI is optional dependency)
@@ -191,7 +191,7 @@
 | RULES-01 | Phase 8.5 | Complete |
 | RULES-02 | Phase 8 | Complete |
 | CGUI-01 | Phase 9 | Pending |
-| CGUI-02 | Phase 9 | Pending |
+| CGUI-02 | Phase 9 | Complete |
 | CGUI-03 | Phase 9 | Pending |
 | CGUI-04 | Phase 9 | Pending |
 | CGUI-05 | Phase 9 | Pending |
