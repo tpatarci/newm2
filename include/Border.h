@@ -211,6 +211,11 @@ private:
 
     // Static resources shared across all Border instances
     static int m_tabWidth;
+    // The one column the rotated label's baseline sits on -- a property of
+    // the FONT, measured beside m_tabWidth when a face is loaded, never of
+    // the title. Left at -1 on the unrotated and no-font rungs, which do not
+    // read it (quick task 260906-ldw; see src/Border.cpp).
+    static int m_tabBaseline;
     static XftFont *m_tabFont;         // raw pointer, managed via static refcount
     static TabFontRung m_tabFontRung;
 

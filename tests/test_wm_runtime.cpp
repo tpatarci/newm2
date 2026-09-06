@@ -2846,8 +2846,23 @@ TEST_CASE("A long title on a short window is shortened to fit its tab, still leg
     //    up and left the stub tab would fail here -- which is exactly what the
     //    unfixed loop does, because it measures the wrong axis and concludes the
     //    label already fits after a single trim.
-    INFO("tab length " << shortObs.tabLength << " -> " << longObs.tabLength);
-    CHECK(longObs.tabLength > shortObs.tabLength * 2);
+    //
+    //    Measured against the ROOM, not as a ratio of the two tab lengths. The
+    //    tab window is m_tabHeight + 2 + m_tabWidth tall and m_tabHeight itself
+    //    carries another m_tabWidth, so a ratio of two lengths is really a ratio
+    //    of two constants plus two titles, and it moves whenever the tab
+    //    THICKNESS changes for reasons that have nothing to do with the title.
+    //    MEASURED in quick task 260906-ldw, which widened the strip to clear the
+    //    descenders: the tab grew perfectly well from 70 px to 115 px in a 129 px
+    //    frame -- 89% of the room -- and `longObs.tabLength > shortObs.tabLength
+    //    * 2` read 115 > 140 and called that a failure. Against the frame the
+    //    same two readings are 89% and 54%, which is the claim this case makes
+    //    and is stable across tab thicknesses.
+    INFO("tab length " << shortObs.tabLength << " -> " << longObs.tabLength
+         << " in a frame " << frameRect.h << " px tall");
+    CHECK(longObs.tabLength > shortObs.tabLength);
+    CHECK(longObs.tabLength * 10 >= frameRect.h * 8);
+    CHECK(shortObs.tabLength * 10 < frameRect.h * 8);   // the stub tab does not
 
     // 2. AND IT DID NOT OVERFLOW THE WINDOW. This is the whole point of the
     //    loop: the tab must be bounded by the frame it decorates. Getting (1)
@@ -2874,6 +2889,248 @@ TEST_CASE("A long title on a short window is shortened to fit its tab, still leg
     CHECK_FALSE(contains(errs, "RenderBadPicture"));
 }
 
+
+
+// ===========================================================================
+// [wm_tablabel] -- the label's clearance from the tab's two long edges
+//
+// Quick task 260906-ldw. The sideways tab reads bottom to top, so for the
+// 90-degree rotated face the BASELINE side of every glyph faces the frame and
+// the ascender side faces the outside of the window.
+//
+// MEASURED on this host, rotated face at the shipped pattern, size 12,
+// XftTextExtentsUtf8 (ink spans [origin.x - x, origin.x - x + width)):
+//
+//     sample             width      x   above baseline   below baseline
+//     "M"                   12     12               12                0
+//     "g"                   12      9                9                3
+//     "Mg"                  15     12               12                3
+//     "gjpqy settings"      16     13               13                3
+//     "MMMMM settings"      16     13               13                3
+//     "Hello"               14     14               14                0
+//     printable ASCII       18     14               14                4
+//
+// So `width` is the across-strip thickness, `x` is the distance from the draw
+// origin to the ASCENDER edge, and `width - x` is the descender depth on the
+// FRAME side. The tab was sized from "M" + 4 -- a sample with no descender at
+// all -- and drawn at `2 + width of the label itself`, so (a) every descender
+// ran into the frame line and (b) the baseline moved with the title.
+//
+// This case asserts the two clearances and the baseline's independence from the
+// title. It is a PIXEL case because the defect is invisible to geometry: the
+// tab window's rectangle is identical either way, only the ink inside it moves.
+// ===========================================================================
+
+namespace {
+
+// Clearances the quick task asks for, in tab columns.
+constexpr int kOuterClearance = 2;   // ascender side, away from the frame
+constexpr int kFrameClearance = 5;   // baseline side, against the frame line
+
+// A pair chosen so that the ONLY across-strip difference between them is the
+// descenders. What fixes the ascender column is the TALLEST glyph in the string,
+// and both of these top out on the dot of an "i" -- MEASURED at 13 px above the
+// baseline for each, against 3 px below for the first and 0 for the second. A
+// baseline that is a property of the FONT therefore puts their first ink on the
+// same column; a baseline computed from the label's own extents, as it was, puts
+// them 3 columns apart, because that is how much thicker the descender title is.
+//
+// "MMMMM settings" would NOT do as the second title, tempting as the symmetry
+// is: it also ends in "settings", so its across-strip extent is identical to the
+// first's and the old title-dependent baseline would land on the same column by
+// coincidence -- the case would go green against the defect it exists to catch.
+const char* const kDescenderTitle = "gjpqy settings";
+const char* const kNoDescenderTitle = "static routines";
+
+// How many pixels of a given colour each COLUMN across the tab strip carries.
+// Read from root, at screen coordinates, for the reason captureRoot() gives:
+// the tab is shaped and XGetImage outside a bounding shape is undefined.
+std::vector<long> inkColumnCounts(Display* d, const Rect& r, unsigned long ink)
+{
+    std::vector<long> cols;
+    if (r.w <= 0 || r.h <= 0) return cols;
+
+    const int x = std::max(0, r.x);
+    const int y = std::max(0, r.y);
+    const int w = std::min(r.w, kScreenW - x);
+    const int h = std::min(r.h, kScreenH - y);
+    if (w <= 0 || h <= 0) return cols;
+
+    XImage* img = XGetImage(d, DefaultRootWindow(d), x, y,
+                            static_cast<unsigned>(w), static_cast<unsigned>(h),
+                            AllPlanes, ZPixmap);
+    if (!img) return cols;
+
+    cols.assign(static_cast<std::size_t>(w), 0);
+    for (int iy = 0; iy < h; ++iy) {
+        for (int ix = 0; ix < w; ++ix) {
+            if (XGetPixel(img, ix, iy) == ink) ++cols[static_cast<std::size_t>(ix)];
+        }
+    }
+    XDestroyImage(img);
+    return cols;
+}
+
+struct TabInk {
+    int tabWidth  = -1;          // Border::m_tabWidth, derived from the client inset
+    int tabHeight = -1;          // Border::m_tabHeight, derived from the tab window
+    std::vector<long> columns;   // ink per column, index 0 == the OUTER edge
+    int  firstInk = -1;          // ascender edge of the drawn label
+    int  lastInk  = -1;          // baseline edge of the drawn label
+    long total    = 0;
+};
+
+// Retitle -- as the cases above do, and for the same reason: two windows differ
+// in stacking and in active state, and the active client is decorated
+// differently, so a two-window comparison of the BASELINE would be confounded by
+// something other than the title.
+TabInk observeTabInk(Display* d, Window frame, Window client, unsigned long ink,
+                     const char* title, int frameThickness)
+{
+    TabInk obs;
+
+    XStoreName(d, client, title);
+    XSync(d, False);
+    settleWm(d);
+
+    // Border::xIndent() == m_tabWidth + FRAME_WIDTH + 1, and the client sits at
+    // that offset inside its frame. Derived from live geometry rather than
+    // hardcoded: m_tabWidth is whatever the resolved face measures.
+    const Rect frameRect  = rectOf(d, frame);
+    const Rect clientRect = rectOf(d, client);
+    obs.tabWidth = (clientRect.x - frameRect.x) - frameThickness - 1;
+    if (obs.tabWidth <= 0) return obs;
+
+    const Window tab = findFrameChild(d, frame, client, false);
+    if (tab == None) return obs;
+
+    Rect local;
+    if (!localRect(d, tab, local)) return obs;
+    // Border::configure() makes the tab window m_tabHeight + 2 + m_tabWidth tall.
+    obs.tabHeight = local.h - 2 - obs.tabWidth;
+
+    Rect abs;
+    if (!serverRect(d, tab, abs)) return obs;
+
+    // Restrict to the label's own run down the straight column: below the square
+    // button that occupies the top of the tab, above the row where the shaped
+    // diagonal foot begins (Border::drawBevel() names that row m_tabHeight).
+    const int rowLo = obs.tabWidth + 2;
+    const int rowHi = obs.tabHeight - 1;
+    if (rowHi <= rowLo) return obs;
+
+    Rect strip;
+    strip.x = abs.x;
+    strip.y = abs.y + rowLo;
+    strip.w = obs.tabWidth;
+    strip.h = rowHi - rowLo;
+
+    obs.columns = inkColumnCounts(d, strip, ink);
+    for (std::size_t i = 0; i < obs.columns.size(); ++i) {
+        obs.total += obs.columns[i];
+        if (obs.columns[i] > 0) {
+            if (obs.firstInk < 0) obs.firstInk = static_cast<int>(i);
+            obs.lastInk = static_cast<int>(i);
+        }
+    }
+    return obs;
+}
+
+std::string describeColumns(const TabInk& obs)
+{
+    std::string s;
+    for (std::size_t i = 0; i < obs.columns.size(); ++i) {
+        s += std::to_string(i) + ":" + std::to_string(obs.columns[i]) + " ";
+    }
+    return s;
+}
+
+}  // namespace
+
+TEST_CASE("Descenders in the tab label stop short of the frame, and the baseline "
+          "does not move with the title",
+          "[wm_tablabel]")
+{
+    // Explicit colours so the ink test is ABSOLUTE: the count is of the pixel
+    // the server resolves the configured tab-foreground NAME to. Anti-aliased
+    // fringe pixels are blends and are deliberately NOT counted -- what is
+    // asserted is that no SOLID label pixel reaches either edge.
+    WmFixture fixture(cleanFixture({"--tab-background=blue",
+                                    "--tab-foreground=red"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const unsigned long ink = namedPixel(d, "red");
+    REQUIRE(ink != ~0UL);
+
+    Window client = None;
+    const Window frame = mapClientAndAwaitFrame(d, 40, 40, 240, kTallWindowH,
+                                                client, kDescenderTitle);
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    const TabInk desc =
+        observeTabInk(d, frame, client, ink, kDescenderTitle, kDefaultFrameThickness);
+    const TabInk plain =
+        observeTabInk(d, frame, client, ink, kNoDescenderTitle, kDefaultFrameThickness);
+
+    std::printf("[wm2 tabclear] tab width %d px, tab height %d px\n"
+                "[wm2 tabclear]   \"%s\"  ink %5ld px, columns %d..%d\n"
+                "[wm2 tabclear]   \"%s\"  ink %5ld px, columns %d..%d\n",
+                desc.tabWidth, desc.tabHeight,
+                kDescenderTitle, desc.total, desc.firstInk, desc.lastInk,
+                kNoDescenderTitle, plain.total, plain.firstInk, plain.lastInk);
+    std::fflush(stdout);
+
+    REQUIRE(desc.tabWidth > kOuterClearance + kFrameClearance);
+    REQUIRE(desc.tabHeight > 0);
+    REQUIRE(plain.tabWidth == desc.tabWidth);
+
+    // (a) POSITIVE CONTROL. Every clearance assertion below is satisfied
+    //     vacuously by a tab with no label on it at all, which is precisely the
+    //     failure mode plan 08-14 found last time something moved on this axis.
+    INFO("descender-title ink: " << desc.total << " px");
+    REQUIRE(desc.total > 0);
+    INFO("plain-title ink: " << plain.total << " px");
+    REQUIRE(plain.total > 0);
+
+    // (b) THE FRAME SIDE. The deepest descender must stop kFrameClearance
+    //     columns short of the frame edge. Before this change the tab was sized
+    //     from "M", which has no descender, and every descender ran to the tab's
+    //     clipping edge -- the operator measured it on the 09-06 screenshot.
+    INFO("columns (descender title): " << describeColumns(desc));
+    INFO("last ink column " << desc.lastInk << " of tab width " << desc.tabWidth);
+    CHECK(desc.lastInk <= desc.tabWidth - 1 - kFrameClearance);
+    INFO("columns (plain title): " << describeColumns(plain));
+    CHECK(plain.lastInk <= plain.tabWidth - 1 - kFrameClearance);
+
+    // (c) THE OUTER SIDE. The ascender tops must stay kOuterClearance columns
+    //     inside the tab's outer edge -- a "fix" that bought frame-side room by
+    //     sliding the whole label outwards would fail here.
+    INFO("first ink column " << desc.firstInk);
+    CHECK(desc.firstInk >= kOuterClearance);
+    INFO("first ink column (plain) " << plain.firstInk);
+    CHECK(plain.firstInk >= kOuterClearance);
+
+    // (d) THE BASELINE IS A PROPERTY OF THE FONT, NOT OF THE TITLE. Both titles
+    //     end in "settings", so the tallest ascender in each is the same glyph;
+    //     a baseline computed from the label's own extents -- as it was --
+    //     shifts the whole label whenever the title's thickness changes.
+    INFO("ascender column " << desc.firstInk << " vs " << plain.firstInk);
+    CHECK(plain.firstInk == desc.firstInk);
+
+    // (e) No protocol error. The tab width feeds shapeTab()'s rectangle list,
+    //     which 08-13 found silently rejected whole at some thicknesses -- logged
+    //     and invisible to every assertion about windows and geometry.
+    const std::string errs = fixture.wmStderr();
+    INFO("WM stderr:\n" << errs);
+    CHECK_FALSE(contains(errs, "BadMatch"));
+    CHECK_FALSE(contains(errs, "BadValue"));
+    CHECK_FALSE(contains(errs, "BadDrawable"));
+    CHECK_FALSE(contains(errs, "RenderBadPicture"));
+}
 
 // ===========================================================================
 // [wm_tablabel] -- the title the WM reads is the one the client advertises
@@ -4116,10 +4373,23 @@ TEST_CASE("The window button answers across the whole tab-top square while "
         return hidden;
     };
 
-    // The painted square is unchanged: the same 8x8 at the same inset. Read off
-    // the BOUNDING shape, because the window is deliberately larger than what it
-    // paints; an unshaped button reports its whole rectangle, so this reads
-    // correctly against either build.
+    // Everything below is expressed against the TAB WIDTH, measured live.
+    // Border::buttonDrawSize() is m_tabWidth - TAB_TOP_HEIGHT * 2 - 4 and
+    // buttonHitSize() is m_tabWidth itself, so every offset in this case is a
+    // function of a number that depends on whatever face fontconfig resolves.
+    // It used to be written out as the literals that number produced on this
+    // host (8, 12, 13, 15), which quietly turned a case about the BUTTON into a
+    // case about the tab font: quick task 260906-ldw widened the strip from
+    // 16 px to 25 px to clear the label's descenders and every one of those
+    // literals became wrong, none of them because anything about the button had
+    // changed. Derived from the client's inset in the frame, which is
+    // Border::xIndent() == m_tabWidth + FRAME_WIDTH + 1.
+    int tabWidth = 0;
+
+    // The painted square is unchanged: still buttonDrawSize() at the same inset.
+    // Read off the BOUNDING shape, because the window is deliberately larger
+    // than what it paints; an unshaped button reports its whole rectangle, so
+    // this reads correctly against either build.
     {
         Window win = createClient(d, 200, 200, 300, 200, "buttondraw");
         XMapWindow(d, win);
@@ -4127,6 +4397,10 @@ TEST_CASE("The window button answers across the whole tab-top square while "
         Window frame = awaitFrameFor(d, win);
         REQUIRE(frame != None);
         settleWm(d);
+
+        tabWidth = (rectOf(d, win).x - rectOf(d, frame).x) - kDefaultFrameThickness - 1;
+        INFO("measured tab width " << tabWidth);
+        REQUIRE(tabWidth > 8);
 
         Window button = findFrameChild(d, frame, win, true);
         REQUIRE(button != None);
@@ -4147,11 +4421,11 @@ TEST_CASE("The window button answers across the whole tab-top square while "
         XFree(rects);
 
         INFO("painted square at frame (" << drawnX << "," << drawnY << ") "
-             << drawnW << "x" << drawnH);
-        CHECK(drawnX == 4);
+             << drawnW << "x" << drawnH << ", tab width " << tabWidth);
+        CHECK(drawnX == 4);                  // buttonDrawInset()
         CHECK(drawnY == 4);
-        CHECK(drawnW == 8);
-        CHECK(drawnH == 8);
+        CHECK(drawnW == tabWidth - 8);       // buttonDrawSize()
+        CHECK(drawnH == tabWidth - 8);
 
         XDestroyWindow(d, win);
         XSync(d, False);
@@ -4163,9 +4437,12 @@ TEST_CASE("The window button answers across the whole tab-top square while "
     CHECK(hidesWhenPressedAt(6, 6));
 
     // The near-misses. Every one of these used to hit the tab or fall through.
+    // The hit square is buttonHitSize() == m_tabWidth on a side, so the far
+    // corner is at m_tabWidth - 1 and the band the painted square does not cover
+    // begins at m_tabWidth - 4.
     CHECK(hidesWhenPressedAt(1, 1));
-    CHECK(hidesWhenPressedAt(12, 12));
-    CHECK(hidesWhenPressedAt(15, 15));
+    CHECK(hidesWhenPressedAt(tabWidth - 4, tabWidth - 4));
+    CHECK(hidesWhenPressedAt(tabWidth - 1, tabWidth - 1));
     // The residual, pinned deliberately rather than left unsaid: a 1px sliver
     // down the notch's inner edge is not part of ANY window of this frame -- the
     // frame's own bounding shape excludes it, so a press there reaches the root
@@ -4173,12 +4450,12 @@ TEST_CASE("The window button answers across the whole tab-top square while "
     // pixels to the frame's shape could, and that would fill the visible gap the
     // notch is made of. Left alone on purpose. If a later change closes the gap,
     // this flips and should be updated, not deleted.
-    CHECK_FALSE(hidesWhenPressedAt(13, 13));
+    CHECK_FALSE(hidesWhenPressedAt(tabWidth - 3, tabWidth - 3));
 
     // ...and the widening stops at the tab's top square: below it the tab must
     // still be draggable, or this would trade a fiddly button for a window that
     // cannot be moved.
-    CHECK_FALSE(hidesWhenPressedAt(6, 30));
+    CHECK_FALSE(hidesWhenPressedAt(6, tabWidth + 14));
 
     REQUIRE(fixture.wmAlive());
     INFO("wm stderr:\n" << fixture.wmStderr());

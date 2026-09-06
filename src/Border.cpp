@@ -11,6 +11,7 @@
 // Static member definitions (degenerate initializations -- don't change)
 int FRAME_WIDTH = 7;  // Default, overwritten in constructor from config
 int Border::m_tabWidth = -1;
+int Border::m_tabBaseline = -1;
 XftFont *Border::m_tabFont = nullptr;
 Border::TabFontRung Border::m_tabFontRung = Border::TabFontRung::NoFont;
 bool Border::m_staticsInitialised = false;
@@ -165,6 +166,47 @@ Border::~Border()
 
 
 // ---------------------------------------------------------------------------
+// What the rotated tab strip is measured from (quick task 260906-ldw)
+//
+// m_tabWidth is the THICKNESS of the strip and m_tabBaseline is the one column
+// every label's baseline sits on. Both are properties of the FONT, computed
+// once when a face is loaded, never of the title -- a baseline derived from the
+// label's own extents slides sideways every time the title changes, which is
+// what it used to do.
+//
+// So the sample has to bound the across-strip glyph box of any title the WM may
+// be handed, and that is why it is the whole printable-ASCII repertoire rather
+// than a letter or two. MEASURED on this host, rotated face at the shipped
+// pattern, size 12, in pixels above and below the baseline:
+//
+//     "M"                 12 above,  0 below      (no descender at all)
+//     "Mg"                12 above,  3 below
+//     "gjpqy settings"    13 above,  3 below      (the dot of "i" reaches 13)
+//     "Hello"             14 above,  0 below      (the stem of "l" reaches 14)
+//     printable ASCII     14 above,  4 below      ("(" is both extremes)
+//
+// Sizing from "M" is what let every descender run into the frame's black line:
+// the strip was built with no room below the baseline whatsoever. Sizing from
+// "Mg" would have fixed the descenders and still put the "(" of a title like
+// "notes.txt (modified)" hard on the tab's outer edge. The repertoire bounds
+// both edges for every ASCII title, and costs one extents call per font load.
+// ---------------------------------------------------------------------------
+
+// Clear tab either side of the glyph box, in pixels. The frame-side figure is
+// the one the operator asked for after measuring the 09-06 screenshot: five
+// pixels of tab between the letter bottoms and the frame line. The outer figure
+// is the two pixels the label already had on the ascender side.
+static const int kTabOuterClearance = 2;
+static const int kTabFrameClearance = 5;
+
+static const char kTabSample[] =
+    "!\"#$%&'()*+,-./0123456789:;<=>?@"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`"
+    "abcdefghijklmnopqrstuvwxyz{|}~";
+static const int kTabSampleLen = static_cast<int>(sizeof kTabSample - 1);
+
+
+// ---------------------------------------------------------------------------
 // XDIS-04 / XDIS-05: the tab-font degradation ladder
 //
 // No rung here may terminate the process. Before this existed, a failure to
@@ -295,10 +337,20 @@ void Border::loadTabFont()
         // exactly why this read survived: it is wrong by one pixel and looks
         // right. Its sibling reads, measuring the whole LABEL on the same wrong
         // axis, were wrong by an order of magnitude.
-        const char* sample = "M";
+        //
+        // BASELINE (quick task 260906-ldw). XGlyphInfo places the ink at
+        // [origin.x - x, origin.x - x + width), so for this rotated face `x` is
+        // the distance from the draw origin to the ASCENDER edge and
+        // `width - x` is the descender depth -- MEASURED, not assumed: "M",
+        // which has no descender, comes back with x == width (12 and 12) while
+        // "g" comes back with x 9 against width 12. The ascender edge faces
+        // away from the frame and the descenders point at it, so the outer
+        // clearance is added on the `x` side and the frame clearance beyond the
+        // far edge. See the sample's own commentary above.
         XftTextExtentsUtf8(display(), m_tabFont,
-            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
-        m_tabWidth = extents.width + 4;
+            reinterpret_cast<const FcChar8*>(kTabSample), kTabSampleLen, &extents);
+        m_tabWidth    = extents.width + kTabOuterClearance + kTabFrameClearance;
+        m_tabBaseline = kTabOuterClearance + extents.x;
     } else {
         // Rung 3: an unrotated face has its advance on the other axis, so
         // measuring a glyph the rotated way would size the tab from the
@@ -597,8 +649,9 @@ bool Border::reloadTabFont(WindowManager *wm, const std::string &pattern)
     const char *sample = "M";
     if (tabFontRotated()) {
         XftTextExtentsUtf8(d, m_tabFont,
-            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
-        m_tabWidth = extents.width + 4;
+            reinterpret_cast<const FcChar8*>(kTabSample), kTabSampleLen, &extents);
+        m_tabWidth    = extents.width + kTabOuterClearance + kTabFrameClearance;
+        m_tabBaseline = kTabOuterClearance + extents.x;
     } else {
         XftTextExtentsUtf8(d, m_tabFont,
             reinterpret_cast<const FcChar8*>(sample), 1, &extents);
@@ -883,12 +936,6 @@ void Border::drawLabel(bool active)
         return;
     }
 
-    // Rotated fonts have zero ascent -- use extent-based measurement for x offset
-    XGlyphInfo extents;
-    XftTextExtentsUtf8(display(), m_tabFont,
-        reinterpret_cast<const FcChar8*>(m_label.c_str()),
-        static_cast<int>(m_label.size()), &extents);
-
     // Draw rotated label text (UTF-8 natively via XftDrawStringUtf8)
     //
     // AXIS (deferred item 11, fixed in plan 08-14). The x offset positions the
@@ -901,9 +948,18 @@ void Border::drawLabel(bool active)
     // axes are close enough that the label landed inside the tab by luck, which
     // is why only long titles were ever affected -- and why nobody caught it,
     // since a test window is usually called something short.
+    //
+    // BASELINE (quick task 260906-ldw). The x offset is now m_tabBaseline, a
+    // per-FONT column measured in loadTabFont(), and no longer `2 + the width of
+    // this label`. Two things were wrong with reading the label: the strip was
+    // sized from a sample with no descender, so every g, j, p, q, y and the foot
+    // of a t ran off the tab into the frame's black line; and the origin moved
+    // with the title, so two windows whose names differ only in their descenders
+    // drew their letters on different columns. Both are properties of the face,
+    // so both are settled once when the face is loaded.
     XftDrawStringUtf8(m_tabDraw.get(), &m_xftForeground,
                        m_tabFont,
-                       2 + extents.width, m_tabHeight - 1,
+                       m_tabBaseline, m_tabHeight - 1,
                        reinterpret_cast<const FcChar8*>(m_label.c_str()),
                        static_cast<int>(m_label.size()));
 }
