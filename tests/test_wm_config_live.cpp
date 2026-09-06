@@ -659,6 +659,46 @@ bool openRootMenu(Display* d, XTestDriver& driver, int x, int y,
     return painted;
 }
 
+// The category flyout, if one is open. Identified as a viewable child of root
+// that is larger than 1x1, is not the outer menu, and does NOT contain the
+// press point -- WindowManager::menu() places the submenu to the SIDE, which is
+// what distinguishes the two without either being named.
+Window findOpenSubmenu(Display* d, Window outerMenu, int pressX, int pressY)
+{
+    for (Window child : childrenOf(d, DefaultRootWindow(d))) {
+        if (child == outerMenu) continue;
+        Rect r;
+        if (!serverRect(d, child, r)) continue;
+        if (r.w <= 1 || r.h <= 1) continue;
+        if (!isViewable(d, child)) continue;
+        if (pressX >= r.x && pressX < r.x + r.w &&
+            pressY >= r.y && pressY < r.y + r.h) continue;
+        return child;
+    }
+    return None;
+}
+
+// Walk the pointer down the open outer menu until a category row opens its
+// flyout. Swept rather than computed: the row index of any given category
+// depends on the entry height of the configured menu font and on how many
+// categories the host's application scan produced, neither of which this file
+// can know -- and a case that guessed would silently stop opening a submenu at
+// all the day either changed.
+Window openAnySubmenu(Display* d, XTestDriver& driver, Window outerMenu,
+                      const Rect& menuRect)
+{
+    for (int y = menuRect.y + 12; y < menuRect.y + menuRect.h - 6; y += 6) {
+        driver.moveTo(menuRect.x + menuRect.w / 2, y);
+        Window sub = None;
+        WmFixture::pollUntil([&] {
+            sub = findOpenSubmenu(d, outerMenu, kMenuPressX, kMenuPressY);
+            return sub != None;
+        }, 400);
+        if (sub != None) return sub;
+    }
+    return None;
+}
+
 // Release over the first menu row ("New"). WindowManager::menu() computes
 // sel = (y - 11) / entryHeight from menu-relative coordinates, so a few pixels
 // into the first row selects entry 0 whatever the font's entry height is.
@@ -2599,7 +2639,16 @@ TEST_CASE("a menu held open across a menu-entry change is not disturbed",
     // next opening instead, and this case is what says so from outside: the
     // open menu keeps its geometry, the window manager keeps answering, and the
     // change appears the next time the menu is opened.
-    const std::string home = makeConfigHome("frame-thickness=7\n");
+    // The change made mid-loop REMOVES a category rather than adding one, and
+    // that direction is chosen deliberately. menu() reads the category count
+    // into a local before it enters its loop and indexes m_appCategories with
+    // it on every repaint, so a list that GREW underneath it is merely stale
+    // while a list that SHRANK is an out-of-bounds read. Testing the dangerous
+    // direction is the point of testing at all.
+    const std::string home = makeConfigHome(
+        "menu-entry-name=OpenAcrossTheChange\n"
+        "menu-entry-command=/bin/true\n"
+        "menu-entry-category=ZzzAnExtremelyLongCategoryLabelIndeed\n");
     WmFixture fixture(fixtureWithConfigHome(home));
     x11::DisplayPtr dp = fixture.openDisplay();
     REQUIRE(dp != nullptr);
@@ -2613,18 +2662,44 @@ TEST_CASE("a menu held open across a menu-entry change is not disturbed",
     Rect openRect;
     REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, openRect, bg));
 
+    // A CATEGORY FLYOUT IS OPENED FIRST, and that is what gives this case its
+    // teeth. The modal loop keeps a pointer INTO m_appCategories -- the entry
+    // vector the flyout is drawn from -- for exactly as long as one is open, so
+    // it is only with a flyout up that rebuilding the list underneath the loop
+    // is a use-after-free rather than merely untidy. Without this the case
+    // stays green with the deferral removed, which was MEASURED before it was
+    // added.
+    const Window submenu = openAnySubmenu(d, driver, menu, openRect);
+    Rect submenuBefore;
+    const bool haveSubmenu = submenu != None && serverRect(d, submenu, submenuBefore);
+    INFO("submenu: " << submenu << " " << (haveSubmenu ? describe(submenuBefore) : "none"));
+
     // The menu is UP and the button is still held. The socket answers anyway --
     // 09-03's shared descriptor set is what makes that true even inside a
     // modal grab.
-    CtlResult r = ctl(fixture, {"set", "menu-entries",
-        "menu-entry-name=AddedWhileTheMenuWasOpen;"
-        "menu-entry-command=/bin/true;"
-        "menu-entry-category=ZzzAnExtremelyLongCategoryLabelIndeed"});
+    CtlResult r = ctl(fixture, {"set", "menu-entries", ""});
     settleTick();
     settleTick();
 
+    // MOVE INSIDE THE FLYOUT AFTER THE CHANGE. A dangling pointer is only a
+    // fault when it is followed, and the modal loop follows this one when it
+    // repaints a row -- which a selection change is what causes. Without this
+    // motion the list can be swapped underneath the loop and nothing ever
+    // reads it again, so the case would pass on a window manager that had just
+    // freed the vector it is drawing from. MEASURED: without it, removing the
+    // deferral left this case green.
+    if (haveSubmenu) {
+        driver.moveTo(submenuBefore.x + submenuBefore.w / 2, submenuBefore.y + 14);
+        settleTick();
+        driver.moveTo(submenuBefore.x + submenuBefore.w / 2, submenuBefore.y + 34);
+        settleTick();
+        settleTick();
+    }
+
     Rect stillOpen;
     const bool measured = serverRect(d, menu, stillOpen);
+    Rect submenuAfter{};
+    const bool submenuMeasured = haveSubmenu && serverRect(d, submenu, submenuAfter);
     closeRootMenu(d, driver);
 
     Window menu2 = None;
@@ -2642,9 +2717,16 @@ TEST_CASE("a menu held open across a menu-entry change is not disturbed",
     // The open menu was not resized, remeasured or redrawn under the loop.
     CHECK(measured);
     CHECK(stillOpen == openRect);
-    // ...and the next one picked the change up.
+    // The flyout the loop was drawing from is where the danger is, so it is
+    // asserted separately from the outer menu rather than folded into it.
+    CHECK(haveSubmenu);
+    CHECK(submenuMeasured);
+    CHECK(submenuAfter == submenuBefore);
+    // ...and the next one picked the change up: one fewer category row, and
+    // the widest label gone with it.
     CHECK(reopened);
-    CHECK(afterRect.w > openRect.w);
+    CHECK(afterRect.h < openRect.h);
+    CHECK(afterRect.w < openRect.w);
 
     // Still responsive: it frames a window afterwards.
     Window late = None;
