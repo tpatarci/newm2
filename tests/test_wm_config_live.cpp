@@ -724,6 +724,138 @@ TEST_CASE("the largest frame thickness with several windows open leaves the "
 
 
 // -----------------------------------------------------------------------------
+// reload: the two configurations the window manager holds (DISC-07)
+// -----------------------------------------------------------------------------
+
+TEST_CASE("reload re-reads the file and applies it to windows already open",
+          "[wm_config_live]")
+{
+    const std::string home = makeConfigHome("frame-thickness=7\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d, 200, 150, 300, 220, client, "live-reload");
+    REQUIRE(frame != None);
+    const Rect before = rectOf(d, frame);
+
+    // The file changes UNDER a running window manager, which is exactly the
+    // situation a user is in after editing it by hand.
+    writeConfigFile(home, "frame-thickness=23\n");
+    CtlResult r = ctl(fixture, {"reload"});
+
+    const Rect after = awaitFrameChange(d, frame, before);
+    const std::string stderrText = fixture.wmStderr();
+
+    INFO("wm stderr:\n" << stderrText);
+    INFO(r.describe());
+    INFO("frame before " << describe(before) << " after " << describe(after));
+
+    CHECK(r.exitCode == 0);
+    CHECK_FALSE(after == before);
+    CHECK(ctlGet(fixture, "frame-thickness") == "23");
+}
+
+TEST_CASE("a reload discards a set, because a set writes no file",
+          "[wm_config_live]")
+{
+    const std::string home = makeConfigHome("frame-thickness=13\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+
+    CtlResult set = ctl(fixture, {"set", "frame-thickness", "31"});
+    const std::string afterSet = ctlGet(fixture, "frame-thickness");
+    CtlResult reload = ctl(fixture, {"reload"});
+    const std::string afterReload = ctlGet(fixture, "frame-thickness");
+    const std::string fileText = readWholeFile(configFileIn(home));
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO("set: " << set.describe());
+    INFO("reload: " << reload.describe());
+    INFO("config file now:\n" << fileText);
+
+    CHECK(set.exitCode == 0);
+    CHECK(afterSet == "31");
+    CHECK(reload.exitCode == 0);
+
+    // D-01: `set` changes the running desktop and nothing else. The file still
+    // says what it said, and the reload therefore puts the window manager back
+    // on it.
+    CHECK(afterReload == "13");
+    CHECK(fileText.find("frame-thickness=13") != std::string::npos);
+    CHECK(fileText.find("31") == std::string::npos);
+}
+
+TEST_CASE("a command-line override still wins after a reload",
+          "[wm_config_live]")
+{
+    // The file and the command line disagree, and the command line is the top
+    // layer. A reload that merged the file onto current state instead of
+    // re-running the whole layered load would let the file win here -- silently
+    // undoing a flag the user started the window manager with.
+    const std::string home = makeConfigHome("frame-thickness=9\n");
+    WmFixtureOptions options = fixtureWithConfigHome(home);
+    options.wmArgs.push_back("--frame-thickness=29");
+    WmFixture fixture(options);
+
+    const std::string beforeReload = ctlGet(fixture, "frame-thickness");
+    writeConfigFile(home, "frame-thickness=11\n");
+    CtlResult r = ctl(fixture, {"reload"});
+    const std::string afterReload = ctlGet(fixture, "frame-thickness");
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO(r.describe());
+    INFO("before reload: " << beforeReload << ", after: " << afterReload);
+
+    CHECK(beforeReload == "29");
+    CHECK(r.exitCode == 0);
+    CHECK(afterReload == "29");
+}
+
+TEST_CASE("a reload that cannot read the user file changes nothing and names it",
+          "[wm_config_live]")
+{
+    if (::geteuid() == 0) {
+        // root can read a mode-000 file, so the condition under test cannot be
+        // created. Skipped by construction rather than asserted falsely.
+        WARN("running as root: the unreadable-file case cannot be constructed");
+        return;
+    }
+
+    const std::string home = makeConfigHome("frame-thickness=15\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+
+    const std::string before = ctlGet(fixture, "frame-thickness");
+
+    const std::string path = configFileIn(home);
+    writeConfigFile(home, "frame-thickness=41\n");
+    REQUIRE(::chmod(path.c_str(), 0000) == 0);
+
+    CtlResult r = ctl(fixture, {"reload"});
+    const std::string after = ctlGet(fixture, "frame-thickness");
+
+    // Restored immediately, so a failure later in this case cannot leave an
+    // unreadable file behind for the fixture's teardown to trip over.
+    ::chmod(path.c_str(), 0600);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO(r.describe());
+    INFO("before " << before << ", after " << after);
+
+    CHECK(before == "15");
+    CHECK(r.exitCode == 1);
+    CHECK(r.err.find(path) != std::string::npos);
+    // The window manager kept running on the configuration it already had --
+    // it did not fall back to defaults and did not half-apply the new file.
+    CHECK(after == "15");
+}
+
+
+// -----------------------------------------------------------------------------
 // Discovery, and the boundary the tool inherits
 // -----------------------------------------------------------------------------
 
