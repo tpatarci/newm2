@@ -20,6 +20,23 @@
 // enforcement of T-7-01 (no unknown field code may reach execvp()).
 namespace DesktopEntry {
 
+// Is `bin` an executable this user can run? A value containing a '/' is tested
+// as a path; anything else is looked up in each $PATH element in turn. An empty
+// value, and an unset or empty $PATH, are both false.
+//
+// TWO CALLERS, ONE ANSWER. The .desktop `TryExec` filter uses it to decide
+// whether an entry's program is installed (D-05), and WindowManager's startup
+// probe uses it to decide whether to put D-11's Configure entry on the root
+// menu. It was file-local until plan 09-09 and is declared here rather than
+// copied, because a second implementation of "is this program installed" is a
+// second answer that disagrees with the first the moment either is edited.
+//
+// The lookup reads $PATH at the moment it is called. That is what makes D-11's
+// once-at-startup probe the deliberate behaviour it is described as: putting
+// the settings window on PATH after the window manager started changes nothing
+// until it restarts, because nothing calls this again.
+bool findOnPath(const std::string& bin);
+
 // Tokenize a .desktop Exec= value into a fixed argv, respecting Desktop
 // Entry Spec quoting (a "..."-delimited run is one token) and stripping all
 // recognized field codes. Returns std::nullopt if quoting is unbalanced, an

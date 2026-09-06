@@ -3,6 +3,8 @@
 #include "AppCache.h"  // mergeEntries -- the one merge the startup path and the live path share
 #include "Border.h"   // FRAME_WIDTH -- the live frame thickness applyConfig() writes
 #include "TimestampWait.h"
+#include "DesktopEntry.h"  // findOnPath -- D-11's startup probe for the settings window
+#include "RootMenuModel.h" // kRootMenuConfigureBinary -- the name that probe asks about
 #include <string>
 #include <cstring>
 #include <cstdio>
@@ -136,6 +138,16 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     // is running: the same merge has to be re-runnable, from the same two
     // inputs, and both of them therefore have to be things this object holds.
     rebuildAppCategoriesFromConfig();
+
+    // D-11: does this host have a settings window? Asked ONCE, here, and never
+    // again -- see the member's declaration for why that is the decision and
+    // not a shortcut. Pure $PATH arithmetic, no X11 and no GTK; the window
+    // manager links neither the toolkit nor anything that would pull it in, and
+    // this line must never become the reason it does.
+    m_configGuiOnPath = DesktopEntry::findOnPath(kRootMenuConfigureBinary);
+    std::fprintf(stderr, "  Settings window on PATH: %s.\n",
+                 m_configGuiOnPath ? "yes, Configure is on the root menu"
+                                   : "no, no Configure entry");
 
     // Open display via RAII
     m_display.reset(XOpenDisplay(nullptr));

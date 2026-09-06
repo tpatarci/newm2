@@ -467,6 +467,20 @@ private:
     Window m_wmCheckWindow;
 
     static const char* const m_menuCreateLabel;
+
+    // D-11: was a `wm2-config` binary on PATH when this window manager started?
+    //
+    // COMPUTED ONCE, IN THE CONSTRUCTOR, AND NEVER AGAIN, which is the decision
+    // rather than a shortcut. Installing the settings window into a running
+    // session does not make the entry appear until the window manager is
+    // restarted, and re-probing on every menu open would mean a $PATH lookup --
+    // one access(2) per directory -- inside the interaction the user is
+    // currently holding the pointer button down for.
+    //
+    // The window manager gains no GTK dependency from this and must not: the
+    // whole mechanism is a PATH lookup and an exec of a name, and the settings
+    // window remains a separately packaged component (D-19).
+    bool m_configGuiOnPath = false;
     // menu() owns the WHOLE root-menu interaction, submenu included: one grab,
     // one event loop, the submenu a state of that loop. openCategorySubmenu()
     // is deliberately gone rather than merely unused -- it was a second nested

@@ -48,26 +48,6 @@ std::vector<std::string> split(const std::string& s, char delim) {
     return result;
 }
 
-// Helper: is `bin` executable, either directly (if it contains a '/') or
-// found on $PATH.
-bool findOnPath(const std::string& bin) {
-    if (bin.empty()) return false;
-
-    if (bin.find('/') != std::string::npos) {
-        return access(bin.c_str(), X_OK) == 0;
-    }
-
-    const char* pathEnv = std::getenv("PATH");
-    if (!pathEnv || pathEnv[0] == '\0') return false;
-
-    for (const auto& dir : split(pathEnv, ':')) {
-        if (dir.empty()) continue;
-        std::string candidate = dir + "/" + bin;
-        if (access(candidate.c_str(), X_OK) == 0) return true;
-    }
-    return false;
-}
-
 // Helper: basename of a path with a given extension stripped, if present.
 std::string basenameNoExt(const std::string& path, const std::string& ext) {
     auto slash = path.find_last_of('/');
@@ -103,6 +83,31 @@ std::string xdgDataHome() {
 } // namespace
 
 namespace DesktopEntry {
+
+// Declared in include/DesktopEntry.h. It lived in the anonymous namespace above
+// until plan 09-09, which is to say it had internal linkage and was reachable
+// from exactly one translation unit. There are two callers now -- the TryExec
+// filter below, and the window manager's startup probe for the settings window
+// (D-11) -- and they must agree, because "is this program installed" answered
+// twice is answered twice differently the first time one copy is edited.
+bool findOnPath(const std::string& bin) {
+    if (bin.empty()) return false;
+
+    if (bin.find('/') != std::string::npos) {
+        return access(bin.c_str(), X_OK) == 0;
+    }
+
+    const char* pathEnv = std::getenv("PATH");
+    if (!pathEnv || pathEnv[0] == '\0') return false;
+
+    for (const auto& dir : split(pathEnv, ':')) {
+        if (dir.empty()) continue;
+        std::string candidate = dir + "/" + bin;
+        if (access(candidate.c_str(), X_OK) == 0) return true;
+    }
+    return false;
+}
+
 
 std::vector<std::string> xdgDataDirs() {
     const char* dirs = std::getenv("XDG_DATA_DIRS");
@@ -295,7 +300,7 @@ std::optional<AppEntry> parseFile(const std::string& path) {
         }
     }
 
-    if (!tryExec.empty() && !findOnPath(tryExec)) {
+    if (!tryExec.empty() && !DesktopEntry::findOnPath(tryExec)) {
         return std::nullopt;
     }
 
