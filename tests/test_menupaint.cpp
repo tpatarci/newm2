@@ -14,7 +14,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "MenuPaint.h"
+#include "RootMenuModel.h"
 #include "support/PixelVerdict.h"
+
+#include <string>
 
 
 TEST_CASE("verdict-target-vocabulary is reachable without a display", "[menupaint]")
@@ -134,4 +137,140 @@ TEST_CASE("foreign-expose-is-named", "[menupaint]")
     // mapping that answers Foreign to everything.
     CHECK(menuPaintTargetFor(kMenu, kMenu, kSubmenu, -1)   == MenuPaintTarget::Outer);
     CHECK(menuPaintTargetFor(kSubmenu, kMenu, kSubmenu, 0) == MenuPaintTarget::Submenu);
+}
+
+
+// ---------------------------------------------------------------------------
+// The root menu's top-level INDEX MODEL (plan 09-09, D-11)
+//
+// These cases exist because the runtime cases cannot ask the question directly.
+// The menu paints its labels with Xft, so the server keeps pixels and not
+// strings: [wm_config_runtime] can prove that a row APPEARED, by measuring the
+// popup one row taller, and that selecting the last row execs a binary of the
+// right name -- but "the exit row is still at the index it was at" is a claim
+// about arithmetic, and asserting it through a screen capture would mean
+// pressing in the screen corner, which warps the pointer and opens a submenu
+// nobody asked for.
+//
+// So the arithmetic moved into include/RootMenuModel.h, src/Buttons.cpp reads
+// it, and these cases pin it. They open no display, spawn nothing and read no
+// clock, exactly like the rest of this binary -- which is what makes a result
+// here evidence rather than a sample.
+// ---------------------------------------------------------------------------
+
+
+TEST_CASE("the Configure row sits at the end of the top level, before Exit",
+          "[menupaint]")
+{
+    RootMenuLayout layout;
+    layout.hiddenClients   = 2;
+    layout.categories      = 3;
+    layout.hasConfigureGui = true;
+    layout.allowExit       = true;
+
+    //  0        New
+    //  1, 2     the two hidden clients
+    //  3, 4, 5  the three categories
+    //  6        Configure...
+    //  7        [Exit wm2]
+    REQUIRE(layout.count() == 8);
+    CHECK(layout.configureIndex() == 6);
+    CHECK(layout.exitIndex() == 7);
+
+    CHECK(layout.slotAt(0) == RootMenuSlot::Create);
+    CHECK(layout.slotAt(1) == RootMenuSlot::HiddenClient);
+    CHECK(layout.slotAt(2) == RootMenuSlot::HiddenClient);
+    CHECK(layout.slotAt(3) == RootMenuSlot::Category);
+    CHECK(layout.slotAt(5) == RootMenuSlot::Category);
+    CHECK(layout.slotAt(6) == RootMenuSlot::ConfigureGui);
+    CHECK(layout.slotAt(7) == RootMenuSlot::Exit);
+
+    // Positions within their own group, which is what the label lambda and the
+    // selection dispatch index the two vectors with.
+    CHECK(layout.hiddenClientAt(1) == 0);
+    CHECK(layout.hiddenClientAt(2) == 1);
+    CHECK(layout.categoryAt(3) == 0);
+    CHECK(layout.categoryAt(5) == 2);
+}
+
+
+TEST_CASE("without the settings window on PATH every other row keeps the index "
+          "it had, the exit row included", "[menupaint]")
+{
+    RootMenuLayout without;
+    without.hiddenClients = 2;
+    without.categories    = 3;
+    without.allowExit     = true;
+
+    RootMenuLayout with = without;
+    with.hasConfigureGui = true;
+
+    // The whole promise of D-11's "otherwise no entry": one more row, and
+    // nothing before it moved.
+    CHECK(without.count() == 7);
+    CHECK(with.count() == without.count() + 1);
+    CHECK(without.configureIndex() == -1);
+
+    for (int i = 0; i < without.count() - 1; ++i) {
+        INFO("row " << i);
+        CHECK(with.slotAt(i) == without.slotAt(i));
+    }
+
+    // The exit row is the one that DOES move, because it is defined as the
+    // last row and the new entry goes in front of it. Both spellings of its
+    // position are asserted, so a future change that appended Configure AFTER
+    // Exit would fail here rather than in a screenshot.
+    CHECK(without.exitIndex() == 6);
+    CHECK(with.exitIndex() == 7);
+    CHECK(with.slotAt(with.exitIndex()) == RootMenuSlot::Exit);
+    CHECK(with.configureIndex() < with.exitIndex());
+}
+
+
+TEST_CASE("with no exit slot the Configure row is simply the last row",
+          "[menupaint]")
+{
+    // The ordinary press: not in the screen's bottom-right corner, so menu()
+    // offers no exit row at all. This is the layout every [wm_config_runtime]
+    // case measures, which is why that suite can release on the last row and
+    // expect the settings window.
+    RootMenuLayout layout;
+    layout.hiddenClients   = 0;
+    layout.categories      = 2;
+    layout.hasConfigureGui = true;
+
+    REQUIRE(layout.count() == 4);
+    CHECK(layout.exitIndex() == -1);
+    CHECK(layout.configureIndex() == layout.count() - 1);
+    CHECK(layout.slotAt(layout.count() - 1) == RootMenuSlot::ConfigureGui);
+}
+
+
+TEST_CASE("an empty menu is one row, and every index outside it names nothing",
+          "[menupaint]")
+{
+    RootMenuLayout layout;   // no hidden clients, no categories, no GUI, no exit
+
+    REQUIRE(layout.count() == 1);
+    CHECK(layout.slotAt(0) == RootMenuSlot::Create);
+    CHECK(layout.slotAt(-1) == RootMenuSlot::OutOfRange);
+    CHECK(layout.slotAt(1) == RootMenuSlot::OutOfRange);
+
+    // rowAt() answers -1 for "the pointer is on no row", and the dispatch
+    // switch is handed that value on every menu dismissed without a selection.
+    CHECK(layout.slotAt(-1) == RootMenuSlot::OutOfRange);
+}
+
+
+TEST_CASE("the label the Configure row draws and the binary it launches are "
+          "one decision", "[menupaint]")
+{
+    // Two call sites in src/Manager.cpp and src/Buttons.cpp read these: the
+    // startup probe asks whether the binary is on PATH, and the selection
+    // dispatch execs it. A second spelling of either would make the entry
+    // appear and then launch nothing, which no runtime case could distinguish
+    // from a host where the program is broken.
+    CHECK(std::string(kRootMenuConfigureLabel) == "Configure...");
+    CHECK(std::string(kRootMenuConfigureBinary) == "wm2-config");
+    CHECK(std::string(kRootMenuExitLabel) == "[Exit wm2]");
 }
