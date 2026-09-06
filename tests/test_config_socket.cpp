@@ -26,8 +26,10 @@
 
 #include "SocketServer.h"
 
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -791,4 +793,88 @@ TEST_CASE("An ordinary directory is still accepted and its mode corrected",
     CHECK((st.st_mode & 07777) == 0700);
 
     ::rmdir(directory.c_str());
+}
+
+
+// -----------------------------------------------------------------------------
+// Descriptor exhaustion does not turn the event loop into a spin (WR-06)
+// -----------------------------------------------------------------------------
+
+TEST_CASE("a listener that cannot accept is dropped from the readable set",
+          "[config_socket][accept]")
+{
+    RuntimeDirEnv guard;
+    TempDir home;
+    REQUIRE(home.valid());
+    ServerHome server_home(home);
+
+    ConfigSocketServer server;
+    REQUIRE(server.listen(":emfile"));
+
+    ReentrantHandler handler(server);
+    const ConfigSocketServer::Handler fn =
+        [&handler](const ConfigSocketRequest& r) { return handler(r); };
+
+    // The connection is made BEFORE the descriptors are exhausted, so it is
+    // waiting on the backlog with nothing left to accept it with -- which is
+    // precisely the EMFILE case.
+    ClientEnd client(server.path());
+    REQUIRE(client.open());
+
+    // Exhaust this process's descriptors. The soft limit is lowered for the
+    // duration rather than a million dup()s being made: the hard limit is
+    // untouched, the original soft limit is restored below whatever happens,
+    // and no case that runs after this one sees a different environment.
+    struct rlimit original;
+    REQUIRE(::getrlimit(RLIMIT_NOFILE, &original) == 0);
+
+    struct rlimit lowered = original;
+    lowered.rlim_cur = 64;
+    REQUIRE(::setrlimit(RLIMIT_NOFILE, &lowered) == 0);
+
+    std::vector<int> hogs;
+    for (;;) {
+        const int fd = ::dup(0);
+        if (fd < 0) break;
+        hogs.push_back(fd);
+    }
+
+    // The pass that meets EMFILE, and the set the NEXT pass would poll. Both
+    // are captured while the descriptors are still gone; the assertions run
+    // after they are given back, because a failing CHECK wants to write.
+    std::vector<struct pollfd> before;
+    server.appendPollFds(before);
+    ::poll(before.data(), before.size(), 50);
+    server.service(before, 0, fn);
+
+    std::vector<struct pollfd> after;
+    server.appendPollFds(after);
+
+    const std::size_t clientsAfterEmfile = server.clientCount();
+    const int hint = server.timeoutHintMs();
+
+    for (int fd : hogs) ::close(fd);
+    hogs.clear();
+    REQUIRE(::setrlimit(RLIMIT_NOFILE, &original) == 0);
+
+    REQUIRE(before.size() >= 1);
+    REQUIRE(after.size() >= 1);
+
+    // Nothing was accepted, and the listener is still listening: running out of
+    // descriptors is not a reason to tear the socket down.
+    CHECK(clientsAfterEmfile == 0);
+    CHECK(server.isListening());
+
+    // THE POINT. The listener was asked about readability before the failure
+    // and is not asked again while the stall is in force -- otherwise
+    // poll() returns immediately, for ever, and the window manager spins.
+    CHECK((before[0].events & POLLIN) != 0);
+    CHECK((after[0].events & POLLIN) == 0);
+
+    // And the stall is bounded and self-healing: the caller is told when to
+    // come back, rather than being left to sleep through the recovery.
+    CHECK(hint >= 0);
+    CHECK(hint <= kConfigSocketAcceptStallMs);
+
+    server.close();
 }

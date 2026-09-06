@@ -197,6 +197,12 @@ inline constexpr int kConfigSocketHelloDeadlineMs = 10000;
 // connection is worth losing, not a reason to grow memory on its behalf.
 inline constexpr std::size_t kConfigSocketMaxPending = 65536;
 
+// How long the listener is left out of the readable set after accept() failed
+// with EMFILE or ENFILE, in milliseconds. Long enough that the loop is not
+// spinning, short enough that a connection waiting on the backlog is picked up
+// as soon as a descriptor is free (WR-06).
+inline constexpr int kConfigSocketAcceptStallMs = 1000;
+
 
 // One complete frame handed to the dispatcher, with the only piece of
 // per-connection state the protocol policy needs.
@@ -313,6 +319,26 @@ private:
 
     std::vector<Connection> m_clients;
     std::vector<uid_t>      m_warnedUids;
+
+    // --- Descriptor exhaustion (WR-06) --------------------------------------
+    //
+    // steady-clock milliseconds until which the LISTENER is not polled for
+    // readability, or 0. accept() failing with EMFILE/ENFILE leaves the
+    // connection pending; poll() is level-triggered, so the listener is
+    // readable again immediately and nextEvent()/modalWait() spin at full CPU
+    // for as long as the process is out of descriptors. On a 512 MB VPS
+    // running a VNC server that is the difference between a degraded desktop
+    // and an unusable one.
+    //
+    // A DEADLINE rather than a flag cleared by the next reap: reap() runs on
+    // every servicing pass whether or not anything was reaped, so a flag would
+    // be cleared before it did anything, and a flag cleared only by a close
+    // would leave the listener permanently deaf if the descriptors were
+    // exhausted by something other than this server. The deadline is bounded,
+    // self-healing, and reported through timeoutHintMs() so the caller's poll
+    // wakes up to retry rather than sleeping through the recovery.
+    long long m_acceptStalledUntilMs = 0;
+    bool      m_acceptStallReported  = false;
 
     // --- Re-entrancy (CR-01) ------------------------------------------------
     //

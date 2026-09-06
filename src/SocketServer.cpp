@@ -355,7 +355,12 @@ void ConfigSocketServer::appendPollFds(std::vector<struct pollfd>& out) const
 
     struct pollfd p;
     p.fd      = m_listenFd;
-    p.events  = POLLIN;
+    // POLLIN is dropped while the accept stall is in force (WR-06). The
+    // listener is still in the set -- its failure bits are delivered whether
+    // or not .events asked for them, and the positional contract the two poll
+    // sites share must not change -- but a readable listener this process has
+    // no descriptor to accept with is a busy loop, not work.
+    p.events  = (m_acceptStalledUntilMs > nowMs()) ? 0 : static_cast<short>(POLLIN);
     p.revents = 0;
     out.push_back(p);
 
@@ -382,6 +387,13 @@ int ConfigSocketServer::timeoutHintMs() const
     for (const Connection& c : m_clients) {
         if (c.helloSeen || c.closing) continue;
         if (earliest < 0 || c.deadlineMs < earliest) earliest = c.deadlineMs;
+    }
+    // The accept stall is the second thing that fires on the passage of time
+    // alone (WR-06): a poll that blocked past it would leave the pending
+    // connection unaccepted until something else happened to wake the loop.
+    if (m_acceptStalledUntilMs > nowMs() &&
+        (earliest < 0 || m_acceptStalledUntilMs < earliest)) {
+        earliest = m_acceptStalledUntilMs;
     }
     if (earliest < 0) return -1;
 
@@ -457,7 +469,39 @@ void ConfigSocketServer::acceptPending()
 {
     for (;;) {
         const int fd = ::accept(m_listenFd, nullptr, nullptr);
-        if (fd < 0) break;   // EAGAIN on a non-blocking listener: nothing left
+        if (fd < 0) {
+            // EVERY accept() ERROR USED TO MEAN "NOTHING LEFT" (WR-06), which
+            // is true of exactly one of them.
+            if (errno == EINTR || errno == ECONNABORTED) {
+                // A connection that went away between the poll and the accept.
+                // The NEXT pending one is still pending, so this is not the end
+                // of the batch.
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;  // the real "nothing left"
+            if (errno == EMFILE || errno == ENFILE) {
+                // The connection stays pending and poll() is level-triggered,
+                // so without this the listener is readable again immediately
+                // and the window manager spins at full CPU for as long as the
+                // process is out of descriptors.
+                if (!m_acceptStallReported) {
+                    m_acceptStallReported = true;
+                    std::fprintf(stderr,
+                                 "wm2: warning: out of descriptors accepting a "
+                                 "configuration socket connection (%s); the "
+                                 "listener will be retried\n",
+                                 std::strerror(errno));
+                    std::fflush(stderr);
+                }
+                m_acceptStalledUntilMs = nowMs() + kConfigSocketAcceptStallMs;
+                break;
+            }
+            break;
+        }
+
+        // A descriptor was obtained, so whatever the shortage was, it is over.
+        m_acceptStalledUntilMs = 0;
+        m_acceptStallReported  = false;
 
         if (!setNonBlockingCloexec(fd)) {
             ::close(fd);
