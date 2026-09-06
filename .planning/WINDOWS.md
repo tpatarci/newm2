@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 20
+open_count: 21
 waived_count: 8
 fixed_count: 9
-total_count: 37
-last_updated: 2026-09-06T19:06:03.889Z
+total_count: 38
+last_updated: 2026-09-06T20:05:07.666Z
 ---
 
 # Broken Windows Ledger
@@ -52,6 +52,7 @@ last_updated: 2026-09-06T19:06:03.889Z
 | 35 | 09 | deviation |  |  | Pre-existing, found by the review-fix pass's asan gate: the [wm2_config_smoke] wm2-config RSS budget shipped with the debug constant alone (160 MB, measured 101 MB), so the asan tree failed it on the instrumentation -- 172 MB, stable over three runs. Confirmed pre-existing by rebuilding the settings window from the pre-review sources (c4abfc6) in the same asan tree: 171.9-172.5 MB, the same figure. Given a per-tree constant in the shape tests/test_wm_resource.cpp already established (272 MB asan, ~1.6x the measurement, the same headroom the debug figure carries). | open |  | 2026-09-06T17:59:53.329Z |  |
 | 36 | 09 | unrun-verify |  |  | W-05 review-fix residual: the window manager now excludes the reload requester from D-08's broadcast, so each client gets exactly one line per reload of its own (asserted by [config_socket][reentrancy] 'the client that asked for a reload is not also broadcast to'). The RESIDUAL is untested and untestable from this fixture: a foreign notice can still land on a connection between that client SENDING its reload and its reply arriving, and no type-only classifier can tell it from the reply -- the version-1 contract is frozen and carries no correlator. Reaching it needs a second client's reload to be serviced in the window between our send and our service, which nothing outside the window manager can schedule. | open |  | 2026-09-06T19:03:57.766Z |  |
 | 37 | 09 | unrun-verify |  |  | W-06 review-fix residual: the CR-03 ownership arm (fstat's st_uid != geteuid) is now driven by a case that REACHES it -- [config_socket][directory] 'a socket directory owned by somebody else is refused' -- but that case can only run as a process able to give a directory away, so it SKIPS on this host (non-root; also skips under 'unshare -Ur', where chown to an unmapped uid returns EINVAL). It never passes vacuously: both the euid gate and the chown failure are SKIPs, not silent successes. The reachable half (the mkdir refusal) is a separate case scoped entirely inside a scratch TempDir, so no value of euid can make either case create anything at the filesystem root. | open |  | 2026-09-06T19:06:03.889Z |  |
+| 38 | 09 | deviation | src/Manager.cpp | 2049 | Review fix WR-13 narrowed plan 09-04's must-have T7 after its SUMMARY was written: a set of tab-font, menu-font or frame-thickness arriving while a modal grab is held is now REFUSED with a reason rather than applied; documented in docs/RELEASE-NOTES.md but the plan's truth 'applied without waiting for the grab to end' no longer holds for those three keys | open |  | 2026-09-06T20:05:07.666Z |  |
 
 ````json
 [
@@ -497,6 +498,18 @@ last_updated: 2026-09-06T19:06:03.889Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-06T19:06:03.889Z",
+    "resolved_at": null
+  },
+  {
+    "id": 38,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "src/Manager.cpp",
+    "line": 2049,
+    "description": "Review fix WR-13 narrowed plan 09-04's must-have T7 after its SUMMARY was written: a set of tab-font, menu-font or frame-thickness arriving while a modal grab is held is now REFUSED with a reason rather than applied; documented in docs/RELEASE-NOTES.md but the plan's truth 'applied without waiting for the grab to end' no longer holds for those three keys",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T20:05:07.666Z",
     "resolved_at": null
   }
 ]
