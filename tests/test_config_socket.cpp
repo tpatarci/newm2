@@ -868,6 +868,100 @@ TEST_CASE("the client that asked for a reload is not also broadcast to",
 }
 
 // -----------------------------------------------------------------------------
+// The size limit is per FRAME, not per bufferful (the P2 from the 09 review)
+// -----------------------------------------------------------------------------
+//
+// A unix stream carries bytes, not messages: where a write lands in a read is
+// decided by the kernel and by how fast the two ends run, and nothing a client
+// does can control it. So a client that sends two legal frames can have the
+// first arrive split across two reads and the second arrive in the same read as
+// the first one's remainder -- at which point the aggregate buffer is larger
+// than any single legal frame while every frame in it is well inside the bound.
+//
+// Refusing that connection is refusing a correct client for a fact about
+// packetisation. The bound belongs to the frame, and to the incomplete tail
+// that could still become one; not to whatever happens to be in hand.
+
+TEST_CASE("a legal frame split across two reads is served, and so is the frame "
+          "that arrives with its remainder",
+          "[config_socket][framing]")
+{
+    RuntimeDirEnv guard;
+    TempDir home;
+    REQUIRE(home.valid());
+    ServerHome server_home(home);
+
+    ConfigSocketServer server;
+    REQUIRE(server.listen(":framing"));
+
+    ReentrantHandler handler(server);
+    const ConfigSocketServer::Handler fn =
+        [&handler](const ConfigSocketRequest& r) { return handler(r); };
+
+    ClientEnd c(server.path());
+    REQUIRE(c.open());
+    pump(server, fn);
+    REQUIRE(server.clientCount() == 1);
+
+    REQUIRE(c.send(helloLine()));
+    pump(server, fn);
+    std::string from;
+    c.drain(from);
+    REQUIRE(countLines(from, "{\"type\":\"hello-ack\",\"program\":\"wm2-born-again\","
+                            "\"protocol\":1}") == 1);
+    from.clear();
+
+    // The reply this handler gives a `get`, spelled through the ENCODER so the
+    // expectation cannot drift from what the server actually writes.
+    auto valueReply = [](const std::string& key) {
+        ConfigMessage m;
+        m.type  = ConfigMessageType::Value;
+        m.key   = key;
+        m.value = "answered";
+        std::string line = configProtocolEncode(m);
+        if (!line.empty() && line.back() == '\n') line.pop_back();
+        return line;
+    };
+
+    // TWO LEGAL FRAMES whose SUM is not. Each is comfortably inside
+    // kConfigProtocolMaxLine; together they are larger than it, which is the
+    // whole of the arrangement.
+    const std::string bigKey(2900, 'k');
+    const std::string tailKey(1200, 's');
+    const std::string first  = getLine(bigKey);
+    const std::string second = getLine(tailKey);
+    REQUIRE(first.size()  <= kConfigProtocolMaxLine);
+    REQUIRE(second.size() <= kConfigProtocolMaxLine);
+    REQUIRE(first.size() + second.size() > kConfigProtocolMaxLine);
+
+    // The split is the packetisation the client cannot control, written out
+    // explicitly: half a frame, then the other half with a whole frame behind
+    // it.
+    const std::size_t split = first.size() / 2;
+    REQUIRE(c.send(first.substr(0, split)));
+    pump(server, fn);                       // a partial frame, nothing to serve
+    c.drain(from);
+    REQUIRE(from.empty());
+
+    REQUIRE(c.send(first.substr(split) + second));
+    for (int i = 0; i < 4; ++i) { pump(server, fn); c.drain(from); }
+
+    INFO("first frame " << first.size() << " bytes, second " << second.size()
+         << ", bound " << kConfigProtocolMaxLine);
+    INFO("received " << from.size() << " bytes: " << from.substr(0, 200));
+
+    // BOTH replies, and no refusal: the connection was serving a client that
+    // never sent anything the contract forbids.
+    CHECK(countLines(from, valueReply(bigKey)) == 1);
+    CHECK(countLines(from, valueReply(tailKey)) == 1);
+    CHECK(from.find("message too long") == std::string::npos);
+    CHECK(server.clientCount() == 1);
+
+    server.close();
+}
+
+
+// -----------------------------------------------------------------------------
 // The socket DIRECTORY is not followed through a symlink (CR-03)
 // -----------------------------------------------------------------------------
 //

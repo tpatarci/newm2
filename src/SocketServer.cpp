@@ -645,14 +645,19 @@ void ConfigSocketServer::readConnection(std::size_t index, const Handler& handle
             return;
         }
 
-        // The bound is enforced HERE, at the transport, and not only in the
-        // decoder: the decoder never sees a frame this refuses (T-9-14).
-        if (c.in.size() + static_cast<std::size_t>(n) > kConfigProtocolMaxLine) {
-            // Everything up to the bound is already more than any legal frame.
-            deliver(c, errorLine("message too long"), true);
-            c.in.clear();
-            return;
-        }
+        // APPENDED FIRST, AND BOUNDED PER FRAME BELOW -- never on what happens
+        // to be in hand. A unix stream carries bytes, not messages: a client
+        // that sent two legal frames can have the first arrive split across two
+        // reads and the second arrive in the same read as the first one's
+        // remainder, and refusing that aggregate refuses a correct client for a
+        // fact about packetisation it cannot control.
+        //
+        // The buffer stays bounded all the same, and by arithmetic rather than
+        // by hope: the loop below either extracts every complete frame or
+        // refuses an incomplete tail that has reached kConfigProtocolMaxLine,
+        // so what survives a servicing pass is always shorter than the bound.
+        // One recv() adds at most sizeof(buf), which is that same bound. The
+        // buffer therefore never exceeds twice it.
         c.in.append(buf, static_cast<std::size_t>(n));
     }
 
@@ -674,6 +679,12 @@ void ConfigSocketServer::readConnection(std::size_t index, const Handler& handle
                 // No frame yet. A buffer that has reached the bound without a
                 // newline never will have one, so it is refused now rather than
                 // held (the no-newline-forever case).
+                //
+                // AT the bound rather than past it, deliberately: the newline
+                // that would end this frame counts towards the length, so a
+                // tail already kConfigProtocolMaxLine long can only ever become
+                // a frame one byte too long. Refusing it here is also what
+                // keeps the buffer bounded across reads.
                 if (c.in.size() >= kConfigProtocolMaxLine) {
                     deliver(c, errorLine("message too long"), true);
                     c.in.clear();
@@ -684,6 +695,18 @@ void ConfigSocketServer::readConnection(std::size_t index, const Handler& handle
             line      = c.in.substr(0, nl + 1);
             helloSeen = c.helloSeen;
             c.in.erase(0, nl + 1);
+
+            // THE BOUND, on the frame the framing just produced. Enforced HERE,
+            // at the transport, and not only in the decoder: the decoder never
+            // sees a frame this refuses (T-9-14). The length INCLUDES the
+            // terminating newline, which is how kConfigProtocolMaxLine is
+            // defined and what configProtocolDecode() compares against, so the
+            // two ends cannot disagree about which frames are legal.
+            if (line.size() > kConfigProtocolMaxLine) {
+                deliver(c, errorLine("message too long"), true);
+                c.in.clear();
+                return;
+            }
         }
 
         ConfigSocketRequest req;
