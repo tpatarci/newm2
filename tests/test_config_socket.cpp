@@ -1256,6 +1256,92 @@ TEST_CASE("a listener that cannot accept is dropped from the readable set",
 
 
 // -----------------------------------------------------------------------------
+// A failed listener is shut down rather than polled for ever (codex pass 3, P2)
+// -----------------------------------------------------------------------------
+//
+// socketServerDecide(revents, Listener) has always answered CloseClient for
+// POLLERR, POLLHUP and POLLNVAL -- its own comment says the server reads that
+// as "shut the whole thing down" -- but service() acted on Accept alone and
+// dropped every other verdict on the floor. Those bits are level-triggered and
+// appendPollFds() keeps offering the descriptor, so both poll sites in
+// src/Events.cpp returned immediately, for ever, on a socket that could never
+// serve anybody again: a window manager pinning a core on the 512 MB VPS this
+// project is built for.
+//
+// The observable is not "a warning was printed". It is that the server STOPS
+// OFFERING the descriptor, which is the only thing that ends the spin.
+
+TEST_CASE("a listener that poll() reports as failed shuts the server down",
+          "[config_socket][listener]")
+{
+    // The contract the transport was ignoring, restated where the case that
+    // depends on it can be read next to it.
+    CHECK(socketServerDecide(POLLNVAL, SocketRole::Listener) ==
+          SocketAction::CloseClient);
+    CHECK(socketServerDecide(POLLERR, SocketRole::Listener) ==
+          SocketAction::CloseClient);
+    CHECK(socketServerDecide(POLLHUP, SocketRole::Listener) ==
+          SocketAction::CloseClient);
+
+    RuntimeDirEnv guard;
+    TempDir home;
+    REQUIRE(home.valid());
+    ServerHome server_home(home);
+
+    ConfigSocketServer server;
+    REQUIRE(server.listen(":deadlistener"));
+    const std::string path = server.path();
+
+    ReentrantHandler handler(server);
+    const ConfigSocketServer::Handler fn =
+        [&handler](const ConfigSocketRequest& r) { return handler(r); };
+
+    // A live connection, accepted through the ordinary path, so the shutdown
+    // is observed with something to lose rather than on an empty server.
+    ClientEnd client(path);
+    REQUIRE(client.open());
+    {
+        std::vector<struct pollfd> fds;
+        server.appendPollFds(fds);
+        ::poll(fds.data(), fds.size(), 200);
+        server.service(fds, 0, fn);
+    }
+    REQUIRE(server.clientCount() == 1);
+
+    // The failure, injected the way poll() would deliver it. POLLNVAL is the
+    // one that cannot be produced by any legitimate peer behaviour -- it means
+    // the descriptor itself is not a descriptor any more -- so it is the bit
+    // that says "listener, not connection" without ambiguity.
+    std::vector<struct pollfd> failed;
+    server.appendPollFds(failed);
+    REQUIRE(failed.size() >= 1);
+    REQUIRE(failed[0].fd >= 0);
+    failed[0].revents = POLLNVAL;
+
+    server.service(failed, 0, fn);
+
+    // THE POINT, in the order the spin depends on: the server is no longer
+    // listening, so src/Events.cpp's serviceConfigSocket() stops calling in at
+    // all; and it appends nothing to the next poll set, so poll() goes back to
+    // blocking instead of returning immediately on a dead descriptor.
+    CHECK_FALSE(server.isListening());
+
+    std::vector<struct pollfd> after;
+    server.appendPollFds(after);
+    CHECK(after.empty());
+
+    // The connections went with it -- a listener that cannot accept is a server
+    // that cannot be reconnected to, so holding its descriptors serves nobody.
+    CHECK(server.clientCount() == 0);
+
+    // And the filesystem node is gone, which is what makes the NEXT window
+    // manager on this display find nothing to reclaim.
+    struct stat st;
+    CHECK(::lstat(path.c_str(), &st) != 0);
+}
+
+
+// -----------------------------------------------------------------------------
 // The refusal log cannot be flooded (WR-07, T-9-19)
 // -----------------------------------------------------------------------------
 

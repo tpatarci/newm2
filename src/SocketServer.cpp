@@ -531,9 +531,42 @@ void ConfigSocketServer::service(const std::vector<struct pollfd>& fds,
 
         reap();
 
-        if (socketServerDecide(fds[firstIndex].revents, SocketRole::Listener) ==
-            SocketAction::Accept) {
+        // THE LISTENER, AS A SWITCH RATHER THAN AS ONE `if` (codex pass 3).
+        //
+        // This was `if (... == Accept) acceptPending();` and nothing else, so
+        // the CloseClient verdict the decision function has always returned for
+        // POLLERR, POLLHUP and POLLNVAL on a listener was computed and then
+        // discarded. Those bits are level-triggered and appendPollFds() keeps
+        // offering the descriptor, so both poll sites in src/Events.cpp came
+        // back immediately, for ever, on a socket that could never serve
+        // anybody again -- a window manager pinning a core on the 512 MB VPS
+        // this project's constraints name. Named arms, no default: a fifth
+        // action is a compile error here rather than another dropped verdict.
+        switch (socketServerDecide(fds[firstIndex].revents, SocketRole::Listener)) {
+        case SocketAction::Accept:
             acceptPending();
+            break;
+        case SocketAction::CloseClient: {
+            // Said ONCE, because close() is what stops this branch from being
+            // reached again: isListening() goes false, and the window manager's
+            // serviceConfigSocket() does not call in at all after that.
+            std::fprintf(stderr,
+                         "wm2: warning: the configuration socket's listening "
+                         "descriptor failed; the socket is shut down for the "
+                         "rest of this session\n");
+            std::fflush(stderr);
+            // Closes every connection, closes the listener and unlinks the
+            // path, so the next window manager on this display finds nothing to
+            // reclaim.
+            close();
+            break;
+        }
+        case SocketAction::ReadClient:
+            // Unreachable for the listener role; named rather than left to a
+            // default arm, exactly as Accept is in the connection loop above.
+            break;
+        case SocketAction::Idle:
+            break;
         }
     } else {
         reap();

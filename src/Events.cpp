@@ -239,6 +239,19 @@ void WindowManager::serviceConfigSocket(const std::vector<struct pollfd>& fds)
                            [this](const ConfigSocketRequest &request) {
                                return handleConfigRequest(request);
                            });
+
+    // A listener whose descriptor failed is shut down inside service() (codex
+    // pass 3, P2), and the guard above means this is the only place that can
+    // observe the transition: from the next call on, service() is not reached
+    // at all. The published path has to go with it for the reason
+    // unpublishConfigSocketPath() states -- a property naming a socket that is
+    // gone sends discovery clients to nothing.
+    //
+    // Read as a TRANSITION rather than exposed as a return value or a callback:
+    // the server already answers the question honestly, and the smallest hook
+    // that works is the one that adds no API for the window manager to keep in
+    // step with.
+    if (!m_socketServer.isListening()) unpublishConfigSocketPath();
 }
 
 
