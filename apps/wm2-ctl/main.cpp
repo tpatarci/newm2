@@ -434,10 +434,23 @@ int main(int argc, char** argv)
         return kExitNoSocket;
     }
 
+    // UNSOLICITED NOTICES ARE SKIPPED, NOT MISREAD AS REFUSALS (WR-12). This
+    // invocation completed the handshake, so it is in the window manager's
+    // broadcast set: a reload triggered by anything else -- another
+    // `wm2-ctl reload`, a settings window pressing "Re-read files" -- puts a
+    // `reloaded` on this connection ahead of the reply this invocation is
+    // waiting for. reportReply() reads anything that is not `expected` as a
+    // refusal and exits 1, which the exit-code contract at the top of this
+    // file defines as "the window manager refused the request". A shell script
+    // branching on that code took the wrong branch after a request that had
+    // SUCCEEDED.
     ConfigMessage reply;
-    if (!conn.receive(reply)) {
-        warn("no reply from the window manager");
-        return kExitNoSocket;
+    for (;;) {
+        if (!conn.receive(reply)) {
+            warn("no reply from the window manager");
+            return kExitNoSocket;
+        }
+        if (!configProtocolIsUnsolicitedNotice(reply.type, expected)) break;
     }
 
     return reportReply(reply, expected);

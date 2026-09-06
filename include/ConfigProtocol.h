@@ -204,6 +204,26 @@ enum class ConfigDecodeResult {
 };
 
 
+// Is this arriving message an UNSOLICITED NOTICE rather than the reply the
+// request asked for?
+//
+// D-08 reuses `reloaded` as both the reply to a client's own `reload` and a
+// broadcast to every hello-completed connection, which is what let this phase
+// avoid a twelfth message type. A client waiting for some other reply
+// therefore has to be able to tell the two apart, and the only thing that
+// distinguishes them is what the client asked for.
+//
+// NOT PART OF THE WIRE GRAMMAR. This adds no type, changes no member and
+// touches neither the encoder nor the decoder; it is a classification over the
+// eleven types the version-1 contract froze, spelled once so wm2-ctl and
+// wm2-config cannot disagree about it (WR-12, CR-02).
+inline bool configProtocolIsUnsolicitedNotice(ConfigMessageType arrived,
+                                              ConfigMessageType expected) {
+    return arrived == ConfigMessageType::Reloaded &&
+           expected != ConfigMessageType::Reloaded;
+}
+
+
 // The wire spelling of a message type. Returns "" for Unknown, which is not a
 // wire spelling.
 inline const char* configMessageTypeName(ConfigMessageType type) {

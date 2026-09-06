@@ -317,7 +317,15 @@ void ProtocolClient::dispatch(const ConfigMessage& message)
         // Not an answer to anything this client asked for. A `reloaded` here is
         // D-08's notice; anything else is a line the window manager had no
         // business sending, and is ignored rather than mistaken for a reply.
-        if (message.type == ConfigMessageType::Reloaded && m_onNotice) m_onNotice();
+        // The classification is the one wm2-ctl uses, from the same place, so
+        // the two clients cannot come to disagree about it (WR-12).
+        const ConfigMessageType expected =
+            m_pending.empty() ? ConfigMessageType::Unknown
+                              : m_pending.front().expected;
+        if (configProtocolIsUnsolicitedNotice(message.type, expected) &&
+            m_onNotice) {
+            m_onNotice();
+        }
         return;
     }
 

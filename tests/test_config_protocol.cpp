@@ -498,3 +498,46 @@ TEST_CASE("A failed decode does not leave stale members from a previous decode",
     REQUIRE(reused.value.empty());
     REQUIRE(reused.fields.empty());
 }
+
+
+// -----------------------------------------------------------------------------
+// Telling D-08's broadcast from the reply a request asked for (WR-12, CR-02)
+// -----------------------------------------------------------------------------
+
+TEST_CASE("a reloaded that no request asked for is an unsolicited notice",
+          "[config_protocol][notice]")
+{
+    // Every client that completes the handshake is in the window manager's
+    // broadcast set, so a reload triggered by anything else puts a `reloaded`
+    // on the connection ahead of whatever reply is outstanding. Reading it as
+    // that reply is how `wm2-ctl set` exits 1 -- "the window manager refused
+    // the request" -- after a set that succeeded.
+    for (ConfigMessageType expected : { ConfigMessageType::Ack,
+                                        ConfigMessageType::Value,
+                                        ConfigMessageType::StatusReply,
+                                        ConfigMessageType::HelloAck }) {
+        CHECK(configProtocolIsUnsolicitedNotice(ConfigMessageType::Reloaded,
+                                                expected));
+    }
+
+    // The reply to a reload THIS client asked for is not a notice. Sharing one
+    // type between the two is what let the contract stay at eleven, and what
+    // the request is is the only thing that tells them apart.
+    CHECK_FALSE(configProtocolIsUnsolicitedNotice(ConfigMessageType::Reloaded,
+                                                  ConfigMessageType::Reloaded));
+
+    // And nothing else is ever a notice -- an `error` in particular, which is
+    // how a refusal comes back and must always reach the request that caused
+    // it.
+    for (ConfigMessageType arrived : { ConfigMessageType::Ack,
+                                       ConfigMessageType::Value,
+                                       ConfigMessageType::Error,
+                                       ConfigMessageType::StatusReply,
+                                       ConfigMessageType::HelloAck,
+                                       ConfigMessageType::Unknown }) {
+        CHECK_FALSE(configProtocolIsUnsolicitedNotice(arrived,
+                                                      ConfigMessageType::Ack));
+        CHECK_FALSE(configProtocolIsUnsolicitedNotice(arrived,
+                                                      ConfigMessageType::Reloaded));
+    }
+}
