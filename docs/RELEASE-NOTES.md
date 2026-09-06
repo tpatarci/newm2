@@ -561,7 +561,9 @@ configuration over SSH before starting a session.
 **A save edits your file rather than rewriting it.** Keys you did not touch keep
 their place, their spelling and the comments around them. Resetting a setting
 *removes* its key from your file rather than writing the built-in default into
-it, so whatever the system-wide file said shows through again.
+it, so whatever the system-wide file said shows through again — including a
+system-wide file that changed since you opened the window, which the settings
+window re-reads whenever the window manager does.
 
 **A save it cannot do safely, it refuses rather than guesses.** Four cases, each
 reported in the window rather than left to be discovered later:
@@ -667,6 +669,13 @@ looking at, at the moment you set it, with no window closing and no restart:
 | `auto-raise-delay`, `pointer-stopped-delay`, `destroy-window-delay` | the next interaction that waits on them |
 | `new-window-command`, `exec-using-shell` | what the menu's **New** entry runs next time you choose it |
 | the manual root-menu entries | what the next root menu you open contains; a menu that is already open is left alone and picks the change up the next time |
+
+**A window that is fullscreen at the time keeps up too.** A fullscreen window has
+no frame on the screen to change — its decoration is taken away for as long as it
+is fullscreen — so a colour or a `frame-thickness` set while it is fullscreen has
+nothing to act on at that moment. The change is not lost: the window comes back
+out of fullscreen wearing whatever the settings are *then*, not the ones it went
+in with.
 
 A value the running window manager cannot use — a colour the X server will not
 parse, a font pattern with no usable face — is **refused**, and everything keeps
