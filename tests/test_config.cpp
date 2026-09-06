@@ -1063,3 +1063,61 @@ TEST_CASE("menu-entry-category with no preceding menu-entry-name is a no-op", "[
 
     REQUIRE(cfg.manualMenuEntries.empty());
 }
+
+// =============================================================================
+// Font settings (plan 09-01): tab-font
+//
+// CONF-02's outstanding "fonts" box. Before this plan `grep -ci font
+// src/Config.cpp` was 0: the tab font was a string literal inside
+// Border::loadTabFont() and the menu font a string literal inside
+// WindowManager::initialiseScreen(). Neither could be changed without editing
+// the source and recompiling.
+//
+// The default is asserted as a LITERAL rather than against a named constant,
+// deliberately. The whole promise of this plan to an existing user is that
+// nothing changes for them, and that promise is only kept if the default is
+// character-for-character the string the binary hardcoded. A comparison against
+// whatever the header happens to hold would keep passing after a silent drift.
+//
+// D-8.5-01: the spelling `tab-font` is permanent. Chosen over `font-tab`
+// because every existing key in this file is <subject>-<attribute>
+// (tab-foreground, menu-highlight, frame-background).
+// =============================================================================
+
+TEST_CASE("tab-font defaults to the pattern Border::loadTabFont hardcoded", "[config]") {
+    Config cfg;
+    REQUIRE(cfg.tabFont == "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12");
+}
+
+TEST_CASE("applyKeyValue sets tab-font verbatim", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("tab-font", "Monospace:size=20");
+    REQUIRE(cfg.tabFont == "Monospace:size=20");
+}
+
+// A fontconfig pattern is spaces, commas and colons by nature (DISC-05a: the
+// value grammar is a pattern handed to XftFontOpenName unchanged). If applyFile
+// mangled any of those the setting would be silently unusable for every
+// multi-word family name, which is most of them.
+TEST_CASE("A tab-font value with spaces, commas and colons survives applyFile intact",
+          "[config]") {
+    const std::string pattern = "Noto Sans Mono,DejaVu Sans Mono:bold:size=14";
+    std::string path = writeTempConfig("tab-font = " + pattern + "\n");
+
+    Config cfg;
+    cfg.applyFile(path);
+
+    REQUIRE(cfg.tabFont == pattern);
+
+    removeTempFile(path);
+}
+
+TEST_CASE("CLI --tab-font sets string value", "[config][cli]") {
+    Config cfg;
+    char arg0[] = "wm2";
+    char arg1[] = "--tab-font=Monospace:size=20";
+    char* argv[] = {arg0, arg1, nullptr};
+
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.tabFont == "Monospace:size=20");
+}

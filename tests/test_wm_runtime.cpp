@@ -1305,6 +1305,114 @@ TEST_CASE("Frame thickness changes the measured frame geometry in both direction
     CHECK(thick.horizontal - shipped.horizontal == 20 - kDefaultFrameThickness);
 }
 
+TEST_CASE("tab-font changes the thickness of the tab a real frame is built with",
+          "[wm_config_runtime]")
+{
+    // Two frame sub-window readings, both parent-relative geometry taken from
+    // the server, and both an exact function of Border::m_tabWidth -- which is
+    // derived from whatever face Border::loadTabFont() actually resolved:
+    //
+    //   button square   buttonDrawSize() == m_tabWidth - TAB_TOP_HEIGHT * 2 - 4
+    //   client inset    xIndent()        == m_tabWidth + FRAME_WIDTH + 1
+    //
+    // Frame thickness is left at the shipped default in both runs, so FRAME_WIDTH
+    // cancels out of the difference and the two readings must move together by
+    // exactly the same amount. That internal agreement is what makes this a
+    // measurement of the TAB rather than of the frame around it.
+    //
+    // Nothing here asks Xft or fontconfig anything, on purpose. A case that asked
+    // the font library what it would load for a pattern would pass just as
+    // happily with the configured value dropped on the floor before it ever
+    // reached loadTabFont() -- which is precisely the class of dead-config defect
+    // this whole tag group exists to catch.
+    struct Measured { int buttonSize = 0; int horizontal = 0; };
+
+    auto measure = [](const std::vector<std::string>& args) {
+        WmFixture fixture(cleanFixture(args));
+        x11::DisplayPtr dp = fixture.openDisplay();
+        REQUIRE(dp != nullptr);
+        Display* d = dp.get();
+        parkPointer(d);
+
+        Window win = None;
+        Window frame = mapClientAndAwaitFrame(d, 200, 150, 300, 220, win, "tabfont");
+        REQUIRE(frame != None);
+        settleWm(d);
+
+        Window button = findFrameChild(d, frame, win, true);
+        REQUIRE(button != None);
+
+        Rect buttonRect{};
+        REQUIRE(localRect(d, button, buttonRect));
+
+        const Rect frameRect  = rectOf(d, frame);
+        const Rect clientRect = rectOf(d, win);
+
+        // Bound BEFORE the assertions that may fail, so a failure reports the
+        // window manager's own account of the run rather than an empty string
+        // (the guard-ordering defect recorded in 08.5-06).
+        const std::string stderrText = fixture.wmStderr();
+
+        INFO("button " << describe(buttonRect) << " frame " << describe(frameRect)
+             << " client " << describe(clientRect));
+        INFO("wm stderr:\n" << stderrText);
+        CHECK(joined(xProtocolErrorsExceptBadWindow(stderrText)).empty());
+
+        Measured m;
+        m.buttonSize = buttonRect.w;
+        m.horizontal = clientRect.x - frameRect.x;
+        return m;
+    };
+
+    // The shipped pattern is size 12 (include/Config.h). Size 32 of the SAME
+    // family chain is used rather than a different family: it is resolvable
+    // wherever the default is resolvable, so this case cannot fail for the
+    // uninteresting reason that a test host lacks some particular font.
+    const Measured shipped = measure({});
+    const Measured large   =
+        measure({"--tab-font=Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=32"});
+
+    INFO("shipped button=" << shipped.buttonSize << " inset=" << shipped.horizontal);
+    INFO("large   button=" << large.buttonSize   << " inset=" << large.horizontal);
+
+    // The claim the setting makes: a larger face builds a thicker tab.
+    CHECK(large.buttonSize > shipped.buttonSize);
+    CHECK(large.horizontal > shipped.horizontal);
+
+    // ...and both independent readings moved by the same amount, so what changed
+    // is the tab's thickness and nothing else about the frame.
+    CHECK(large.buttonSize - shipped.buttonSize ==
+          large.horizontal - shipped.horizontal);
+}
+
+TEST_CASE("An unresolvable tab-font still leaves the window manager framing windows",
+          "[wm_config_runtime]")
+{
+    // T-9-01. Border::loadTabFont()'s four-rung ladder may not terminate the
+    // process (XDIS-04/XDIS-05), and `tab-font` is the first user-supplied string
+    // ever to reach its top rung. fontconfig substitutes rather than fails for an
+    // unknown family, so the expected outcome is a substituted face rather than a
+    // walk down the ladder -- but the property that matters is that the window
+    // manager is still alive and still framing, and that is asserted rather than
+    // assumed.
+    WmFixture fixture(cleanFixture(
+        {"--tab-font=NoSuchFontFamilyAnywhere12345:bold:size=12"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window win = None;
+    Window frame = mapClientAndAwaitFrame(d, 200, 150, 300, 220, win, "nonsense-font");
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+
+    CHECK(fixture.wmAlive());
+    REQUIRE(frame != None);
+    CHECK(joined(xProtocolErrorsExceptBadWindow(stderrText)).empty());
+}
+
 TEST_CASE("Tab foreground and background colours reach the rendered tab",
           "[wm_config_runtime]")
 {
