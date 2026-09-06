@@ -1121,3 +1121,68 @@ TEST_CASE("CLI --tab-font sets string value", "[config][cli]") {
     cfg.applyCliArgs(2, argv);
     REQUIRE(cfg.tabFont == "Monospace:size=20");
 }
+
+// =============================================================================
+// Font settings (plan 09-01): menu-font
+//
+// The sibling of tab-font above, and the same reasoning applies to all of it:
+// the default is the literal WindowManager::initialiseScreen() spelled inline,
+// asserted as a literal so a silent drift fails here; the spelling `menu-font`
+// is permanent under D-8.5-01; the value is a fontconfig pattern taken verbatim.
+//
+// Note the ONE difference from tab-font: this default carries no `:bold`. The
+// menu was never drawn bold and this plan does not change how anything looks.
+// =============================================================================
+
+TEST_CASE("menu-font defaults to the pattern the menu font load hardcoded", "[config]") {
+    Config cfg;
+    REQUIRE(cfg.menuFont == "Ubuntu,Noto Sans,DejaVu Sans,Sans:size=12");
+}
+
+TEST_CASE("applyKeyValue sets menu-font verbatim", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("menu-font", "Monospace:size=20");
+    REQUIRE(cfg.menuFont == "Monospace:size=20");
+}
+
+TEST_CASE("A menu-font value with spaces, commas and colons survives applyFile intact",
+          "[config]") {
+    const std::string pattern = "Noto Sans Mono,DejaVu Sans Mono:size=14";
+    std::string path = writeTempConfig("menu-font = " + pattern + "\n");
+
+    Config cfg;
+    cfg.applyFile(path);
+
+    REQUIRE(cfg.menuFont == pattern);
+
+    removeTempFile(path);
+}
+
+TEST_CASE("CLI --menu-font sets string value", "[config][cli]") {
+    Config cfg;
+    char arg0[] = "wm2";
+    char arg1[] = "--menu-font=Monospace:size=20";
+    char* argv[] = {arg0, arg1, nullptr};
+
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.menuFont == "Monospace:size=20");
+}
+
+// The two font keys are independent of one another. Setting one must not move
+// the other -- a single shared member behind two key names would pass every
+// case above and fail this one.
+TEST_CASE("tab-font and menu-font are independent settings", "[config]") {
+    Config cfg;
+    const std::string tabDefault = cfg.tabFont;
+    const std::string menuDefault = cfg.menuFont;
+
+    REQUIRE(tabDefault != menuDefault);
+
+    cfg.applyKeyValue("tab-font", "Monospace:size=20");
+    REQUIRE(cfg.tabFont == "Monospace:size=20");
+    REQUIRE(cfg.menuFont == menuDefault);
+
+    cfg.applyKeyValue("menu-font", "Serif:size=9");
+    REQUIRE(cfg.menuFont == "Serif:size=9");
+    REQUIRE(cfg.tabFont == "Monospace:size=20");
+}

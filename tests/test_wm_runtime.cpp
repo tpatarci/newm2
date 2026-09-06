@@ -1601,6 +1601,85 @@ TEST_CASE("Menu background colour reaches the menu opened by a real root click",
     CHECK(countOf(shipped, configuredWanted) == 0);
 }
 
+TEST_CASE("menu-font changes the height of the root menu a real click opens",
+          "[wm_config_runtime]")
+{
+    // WindowManager::menu() computes entryHeight = ascent + descent + 4 and
+    // outerH = entryHeight * n + 13. Nothing clamps that height -- only the
+    // menu's POSITION is pushed back on screen -- so with the same entry count
+    // in both runs the mapped menu's height is a strictly monotonic function of
+    // the face m_menuFont resolved to.
+    //
+    // The height is read from the server, off the menu window the WM actually
+    // mapped. Both runs use cleanFixture with no client mapped and identical
+    // environment, so n is identical and the only free variable is the font.
+    auto measure = [](const std::vector<std::string>& args) {
+        WmFixture fixture(cleanFixture(args));
+        x11::DisplayPtr dp = fixture.openDisplay();
+        REQUIRE(dp != nullptr);
+        Display* d = dp.get();
+        parkPointer(d);
+
+        XTestDriver driver(fixture.display());
+        driver.moveTo(kParkX, kParkY);
+
+        Window menu = None;
+        Rect menuRect{};
+        const bool opened =
+            openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect);
+
+        // Bound before the assertion that may fail (08.5-06 guard ordering).
+        const std::string stderrText = fixture.wmStderr();
+
+        INFO("menu rect " << describe(menuRect));
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE(opened);
+
+        dismissMenu(d, driver);
+        CHECK(joined(xProtocolErrorsExceptBadWindow(stderrText)).empty());
+
+        return menuRect.h;
+    };
+
+    // Size 32 of the shipped family chain, for the same reason the tab-font case
+    // uses it: resolvable wherever the default is, so the case cannot fail
+    // because a host lacks some particular family.
+    const int shipped = measure({});
+    const int large   =
+        measure({"--menu-font=Ubuntu,Noto Sans,DejaVu Sans,Sans:size=32"});
+
+    INFO("shipped menu height=" << shipped << " large menu height=" << large);
+    CHECK(shipped > 0);
+    CHECK(large > shipped);
+}
+
+TEST_CASE("An unresolvable menu-font still lets the window manager start",
+          "[wm_config_runtime]")
+{
+    // T-9-02. The menu font load keeps its generic-sans second rung and its
+    // fatal() on total failure: the menu measures every row against this font,
+    // so there is no "carry on without it" the way there is for the tab. This
+    // plan does not change that contract, and this case is what says so -- only
+    // a host with no sans font AT ALL reaches the fatal, which is exactly the
+    // condition that already ended startup before `menu-font` existed.
+    WmFixture fixture(cleanFixture(
+        {"--menu-font=NoSuchFontFamilyAnywhere12345:size=12"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window win = None;
+    Window frame = mapClientAndAwaitFrame(d, 200, 150, 300, 220, win, "nonsense-menu-font");
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+
+    CHECK(fixture.wmAlive());
+    REQUIRE(frame != None);
+    CHECK(joined(xProtocolErrorsExceptBadWindow(stderrText)).empty());
+}
+
 TEST_CASE("destroy-window-delay decides whether a tab-button press hides or deletes",
           "[wm_config_runtime]")
 {
