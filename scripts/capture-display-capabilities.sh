@@ -139,7 +139,13 @@ DPYINFO=$(DISPLAY="$DISPLAY_NAME" xdpyinfo 2>&1)
     echo "  label:        $LABEL"
     echo "  display:      $DISPLAY_NAME"
     echo "  timestamp:    $(date -u +'%Y-%m-%dT%H:%M:%SZ') (UTC)"
-    echo "  host:         $(uname -n)"
+    # NO HOSTNAME. This output is COMMITTED to a public repository, and
+    # `uname -n` on a workstation is that machine's name -- a host identifier,
+    # which is a standing prohibition here since 08.5 and is restated in plan
+    # 09-09's own prohibitions. It emitted one until that plan's evidence
+    # capture found it. The kernel and distro lines stay: they are what makes a
+    # capture attributable to a PLATFORM, which is the question this block
+    # exists to answer, and neither names the machine.
     echo "  kernel:       $(uname -sr)"
     if [ -r /etc/os-release ]; then
         # shellcheck disable=SC1091

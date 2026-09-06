@@ -481,6 +481,93 @@ sentence in a document:
   of wall clock over a thirty-second window. Measured: **zero CPU ticks**. The
   event loop blocks; it does not poll.
 
+### The settings window costs a fifth of a 512 MB machine while it is open
+
+This is the number this release most wants you to see, because it is larger than
+the project expected and it was measured rather than estimated.
+
+Measured on a real TigerVNC 1.12.0 session, 1280x1024x24, release build, with
+the settings window open and each of its three pages visited:
+
+| Process | Resident |
+|---|---|
+| `wm2-config`, the first one opened in a session | **98.5 MB** |
+| `wm2-config`, a second one opened in the same session | 49.6 MB |
+| `wm2-born-again`, running alongside it | 12.0 MB |
+
+**What that means on the target machine.** A 512 MB droplet running the window
+manager, a VNC server and the settings window is spending roughly a fifth of its
+memory on the settings window for as long as it is open. That is affordable —
+you open it, you change something, you close it — and it would not be affordable
+as a resident part of the desktop. It is not: nothing starts it for you, and
+closing it gives the memory back.
+
+The cost is GTK's, not this project's. `wm2-config` is a few thousand lines over
+a toolkit that maps a large amount of shared library, theme, icon and font
+machinery into every process that links it, and the split above is a property of
+that machinery rather than of anything in this repository.
+
+**Two figures rather than one, and the difference is not explained.** The first
+settings window opened on a freshly started X server holds about twice what
+every later one on the same server holds. That split reproduces on Xvfb and on
+TigerVNC alike, on three runs of each. It is *not* the per-user fontconfig cache
+(a fresh home directory on every run still shows the low figure from the second
+launch onward) and it is *not* the cost of being the first client on the server
+(an `xclock` connected first changes nothing). What it actually is was not
+determined, and is written down here as an open question rather than guessed at.
+The higher figure is the one quoted above and the one the automated budget is set
+against, because a real session opens the settings window once.
+
+**If this matters to you, do not install the settings window.** That is what the
+two-package split is for: the `wm` package has no GTK dependency at all, and
+`wm2-ctl` changes every setting the window does, over the same socket, from a
+shell. The measured figure for that route is the window manager's own 12 MB and
+nothing else.
+
+**Both figures are enforced.** The window manager's 24 MB budget and the
+settings window's 160 MB budget are ctest cases, not sentences — the second reads
+the same `/proc` field through the same reader, so the two numbers above are
+comparable rather than merely adjacent. The remote-desktop session that produced
+the release figures is recorded, server version and commit included, under
+`.planning/phases/09-config-gui-ipc/evidence/remote-desktop/`.
+
+---
+
+## The settings window
+
+`wm2-config` is a small GTK 3 window with three pages that edits the same
+configuration this document describes — the colours and fonts, the focus and
+timing behaviour, and your own root-menu entries. It is an **optional, separately
+packaged** program: the window manager neither requires it nor links anything it
+uses.
+
+**It changes the desktop as you type, and writes only when you say so.** When a
+window manager is running it connects to the same socket `wm2-ctl` uses, so a
+colour or a font applies to the windows already on your screen immediately. Save
+is what writes the configuration file. Revert puts the form back to the values on
+disk, and closing with something unsaved asks rather than assuming.
+
+**With no window manager to talk to it still works**, in file-only mode, and says
+so in a banner across the top: *"Not connected to a running wm2-born-again;
+changes take effect at next start"*. That is the case where you are fixing a
+configuration over SSH before starting a session.
+
+**A save edits your file rather than rewriting it.** Keys you did not touch keep
+their place, their spelling and the comments around them. Resetting a setting
+*removes* its key from your file rather than writing the built-in default into
+it, so whatever the system-wide file said shows through again.
+
+**How to open it.** When `wm2-config` is installed and on the window manager's
+`PATH` at the moment the window manager starts, the root menu carries a
+`Configure...` entry at the bottom of its top level. Install it afterwards and
+the entry appears the next time the window manager starts — the check is made
+once, deliberately, rather than on every menu you open. It also installs an
+application entry, so it appears under **Settings** in the root menu's list of
+discovered applications, and it can of course be run from a shell.
+
+Its resident memory is worth knowing before you install it; see
+[Resource use](#resource-use) above.
+
 ---
 
 ## Changing settings while it runs

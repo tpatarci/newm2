@@ -842,15 +842,52 @@ DISPLAY=:2 build/debug/wm2-born-again --exec-using-shell --new-window-command="x
       `evidence/tigervnc/capabilities.txt`. The no-Shape path is covered
       automatically by `[wm_noshape]` rather than by finding a server without it.
 
-- [ ] The settings window runs over a real remote-desktop session and its
+- [x] The settings window runs over a real remote-desktop session and its
       resident memory is recorded against the 512 MB budget.
-      **OPEN.** D-20 requires one measured pass per release, and 09-RESEARCH's
-      assumption log names the settings window's resident memory as *the single
-      most consequential unverified number in the document* -- the 30-60 MB
-      estimate it carries is an estimate, and the instruction beside it is that
-      no plan may skip the measurement on its strength. Closed by plan 09-09
-      Task 4 once the pass is taken; until then this row is what the release
-      does not know.
+      DONE (plan 09-09): measured, not estimated, on a real TigerVNC 1.12.0
+      session at 1280x1024x24, loopback only, release build, with the window
+      open and each of its three pages visited and screenshotted --
+      **`wm2-config` 98.5 MB**, a second instance on the same session 49.6 MB,
+      `wm2-born-again` beside it 12.0 MB, `Xvnc` itself recorded in the same
+      transcript. Evidence, server version and commit:
+      `09-config-gui-ipc/evidence/remote-desktop/README.md`. The regression
+      detector is `[wm2_config_smoke]` "wm2-config's resident memory is measured
+      against a stated budget", 160 MB, which reads the same `/proc` field
+      through the same reader as `[wm_resource_budget]` so the two figures are
+      comparable rather than merely adjacent.
+      **The research's 30-60 MB estimate was low**, and the consequence is
+      stated plainly in the release notes rather than absorbed: the settings
+      window costs roughly a fifth of a 512 MB machine for as long as it is
+      open. See the row below for what would have to change if that stopped
+      being acceptable.
+- [ ] The settings window's footprint is reduced, or the desktop is usable
+      without it.
+      **OPEN, and it is a decision rather than a defect.** 98.5 MB is GTK's
+      cost, not this project's; `wm2-config` is a few thousand lines over a
+      toolkit that maps a large amount of shared machinery into every process
+      linking it. Three things would change the number, in increasing order of
+      cost: ship the settings window only as the separate `config-gui` package
+      and tell a memory-constrained user not to install it (**already true** --
+      the `wm` package has no GTK dependency and `wm2-ctl` reaches every setting
+      over the same socket); find and remove whatever makes the FIRST settings
+      window on a session hold twice what later ones hold, which is currently an
+      undiagnosed 49 MB; or write the settings window against a lighter toolkit,
+      which is a v1.1-or-later project and not a tweak. Nothing here is a
+      release blocker, because opening the window is a deliberate act with an
+      obvious way to undo it. Remains open so the figure is not quietly
+      forgotten.
+- [ ] The undiagnosed split between the first and later settings windows on one
+      X server is explained.
+      **NOT DIAGNOSED.** The first `wm2-config` on a freshly started X server
+      holds about 99 MB and every later one about 50 MB, reproducibly, on Xvfb
+      and on TigerVNC alike, three runs of each. Two candidate explanations were
+      tested and both are ruled out: it is not the per-user fontconfig cache (a
+      fresh `HOME` on every run still shows the low figure from the second
+      launch onward) and it is not the cost of being the first client on the
+      server (an `xclock` connected first changes nothing). Recorded as an open
+      question rather than guessed at in the release notes. Whoever next has a
+      reason to reduce the footprint should start here: it is the largest single
+      unexplained term in the figure.
 
 ## Release Evidence Required
 
