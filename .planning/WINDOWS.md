@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 0
+open_count: 1
 waived_count: 8
 fixed_count: 6
-total_count: 14
-last_updated: 2026-09-05T11:24:41.540Z
+total_count: 15
+last_updated: 2026-09-06T00:38:35.082Z
 ---
 
 # Broken Windows Ledger
@@ -29,6 +29,7 @@ last_updated: 2026-09-05T11:24:41.540Z
 | 12 | 08.5 | deviation | include/Manager.h | 215 | m_currentTime is declared int rather than Time (unsigned long), so server timestamps are truncated and may go negative. Interleaving: the session runs past the point where the server's 32-bit millisecond clock exceeds INT_MAX, or the server starts near wraparound; a ButtonPress carrying that timestamp is assigned to m_currentTime and truncates to a negative int; the value is then passed back as the time argument of XSetInputFocus or XGrabPointer, where the server reads it as a time far in the past and rejects the request as out of date, so focus or the grab silently does not take. Destination: 08.5-12, alongside the timestamp() path in src/Manager.cpp. | fixed |  | 2026-08-31T23:21:06.341Z | 2026-09-05T11:12:13.551Z |
 | 13 | 08.5 | deviation | tests/test_wm_runtime.cpp | 1508 | The exec-using-shell case failed in the FULL debug suite at 08.5-13's round base (e835737): REQUIRE(openRootMenu(...)) returned false after 25.70 s, so the whole 20 s stage budget was SPENT -- the opposite signature to the menu-colour flake 08.5-13 attributed, where the budget was never spent at all. Passed alone on two consecutive re-runs. This call site uses raw openRootMenu() rather than openRootMenuVerified(), so it has no retry around deferred item 17 (the WM's own menu window comes back BadWindow for XMoveResizeWindow/XMapRaised/XUnmapWindow and no menu ever appears). Not addressed by 08.5-13, which fixed the fallback rather than the never-opens case. Destination: whichever round takes deferred item 17. | fixed |  | 2026-09-01T07:36:41.533Z | 2026-09-05T11:24:40.251Z |
 | 14 | 08.5 | deviation | .planning/phases/08.5-v1.0-closeout/08.5-13-PLAN.md |  | 08.5-13 Task 3's FOREIGN-DISPATCHED gate cannot distinguish naming the Foreign verdict from acting on it. Verified both ways at run time: it printed FOREIGN-DISPATCHED against the Task 1 tree as well, where the foreign Expose was still being DISCARDED, because its sed range stops at the first break; and both the discarding and the dispatching arms mention Foreign before that point. The plan already labels it a wiring check and rests the behavioural claim on the acceptance criterion and on foreign-expose-is-named, so no check was weakened -- recorded so a later reader does not mistake it for a behavioural gate. A behavioural gate would need to assert eventExposure is reached from the Foreign arm. | waived | A wiring gate in a frozen plan document that cannot distinguish naming the Foreign verdict from acting on it, recorded so a later reader does not mistake it for a behavioural gate; the behavioural claim rests on the acceptance criterion and on foreign-expose-is-named. The plan file is ADD-ONLY and is not edited. | 2026-09-01T07:36:48.440Z | 2026-09-05T11:24:41.540Z |
+| 15 | 09 | deviation | docs/RELEASE-NOTES.md |  | 09-01 Task 3 acceptance asked for one contiguous git-diff hunk, which its own two-paragraph action clause cannot produce; verified the stated intent (no line outside the Appearance section changed) instead | open |  | 2026-09-06T00:38:35.082Z |  |
 
 ````json
 [
@@ -199,6 +200,18 @@ last_updated: 2026-09-05T11:24:41.540Z
     "reason": "A wiring gate in a frozen plan document that cannot distinguish naming the Foreign verdict from acting on it, recorded so a later reader does not mistake it for a behavioural gate; the behavioural claim rests on the acceptance criterion and on foreign-expose-is-named. The plan file is ADD-ONLY and is not edited.",
     "recorded_at": "2026-09-01T07:36:48.440Z",
     "resolved_at": "2026-09-05T11:24:41.540Z"
+  },
+  {
+    "id": 15,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "docs/RELEASE-NOTES.md",
+    "line": null,
+    "description": "09-01 Task 3 acceptance asked for one contiguous git-diff hunk, which its own two-paragraph action clause cannot produce; verified the stated intent (no line outside the Appearance section changed) instead",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T00:38:35.082Z",
+    "resolved_at": null
   }
 ]
 ````

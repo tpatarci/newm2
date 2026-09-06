@@ -4,15 +4,15 @@ milestone: v1.0
 current_phase: 09
 current_phase_name: Config GUI + IPC
 status: executing
-stopped_at: Phase 9 context gathered
-last_updated: "2026-09-06T00:17:42.166Z"
+stopped_at: Completed 09-01-PLAN.md
+last_updated: "2026-09-06T00:38:23.820Z"
 last_activity: 2026-09-06
-state_head: 468d84420d66bea56938558901d5d59ac8a7576b
+state_head: c71b275bb2df4c5893c5bfe5f467f0e05076cb60
 progress:
   total_phases: 10
   completed_phases: 4
   total_plans: 58
-  completed_plans: 48
+  completed_plans: 49
 milestone_name: milestone
 ---
 
@@ -28,6 +28,9 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 09 (Config GUI + IPC) — EXECUTING
+Plan: 2 of 9
+Status: Ready to execute
+Progress: [████████░░] 81% (7/9 phases complete)
 
 **Position as of 2026-09-05 (evening).** On 2026-09-05 the operator instructed the
 delegated project lead to finish everything planned without stopping for
@@ -98,7 +101,7 @@ decision.
    execute. Operator reminder on file: they want a visual refresh of the WM's
    look once all planned work is done (screenshots in chat, they approve).
 
-### History (superseded 2026-09-05)
+## History (superseded 2026-09-05)
 
 The RE-PLAN hold on 08.5-05/07/08 described in this history section was lifted
 2026-09-05 by 08.5-12 Task 5 Decision A — 08.5-07 superseded, 08.5-08 and
@@ -294,8 +297,6 @@ Last activity: 2026-09-06
 Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).
 Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
 
-Progress: [████████░░] 81% (7/9 phases complete)
-
 ## Performance Metrics
 
 **Velocity:**
@@ -357,6 +358,7 @@ Progress: [████████░░] 81% (7/9 phases complete)
 | Phase 08.5 P09 | 1h 17m | 3 tasks | 51 files |
 | Phase 08.5 P10 | 1h 15m | 2 tasks | 291 files |
 | Phase 08.5-v1.0-closeout P13 | 65min | 4 tasks | 13 files |
+| Phase 09 P01 | 24 min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -461,6 +463,11 @@ Recent decisions affecting current work:
 - [Phase 08.5]: 08.5-10: the arm floor is FOUR per arm, the derived minimum at which the pre-registered exact test can reach p<0.05 (1/C(8,4)=0.0143 clears; 1/C(6,3)=0.050 fails). An earlier draft set it at six on a false claim that six was that minimum -- a floor of six would have routed a clearing 5-vs-5 table (p~0.004) to NOT-ATTRIBUTED and ended the attribution effort under a terminal rule on a reading that had already answered the question. Recorded as a correction, not silently changed.
 - [Phase 08.5]: 08.5-13: the menu flake is attributed to findOpenMenu()'s silent first-viewable-child fallback, which satisfied its own pollUntil on the first iteration and spent none of the 20s budget; the fallback is deleted and no timing constant changed
 - [Phase 08.5]: 08.5-13: menu paint completion is now a POSITIVE criterion (dominant == expected AND share >= 0.55 named constant, not settable from the environment), replacing the distinct-value count that accepted bleed-through, wrong colour and half-painted rectangles
+- [Phase 09]: 09-01: font config keys are `tab-font` and `menu-font` (DISC-05), permanent under D-8.5-01 — Every existing key in Config.cpp is <subject>-<attribute> (tab-foreground, menu-highlight), so these sort and read with their siblings. No deprecated aliases will exist.
+- [Phase 09]: 09-01: font values are fontconfig patterns taken verbatim; there is no separate size key (DISC-05a) — The pattern already carries the size. A separate size key would be a second way to say the same thing, and the two could disagree.
+- [Phase 09]: 09-01: only the PREFERRED rung of the tab-font ladder is configurable; rungs 2 and 4 keep their literals — A fallback the user can also break is not a fallback. One bad value would otherwise take out the preferred face and every net under it, which is the outcome XDIS-04 exists to prevent. Rung 3 does read the value because rung 3 IS the preferred pattern, unrotated.
+- [Phase 09]: 09-01: the menu font keeps its fatal() on total failure; the tab font still cannot terminate the process — The menu measures every row against its font, so there is no carry-on-without-it the way there is for an unlabelled tab. Only a host with no sans font at all reaches the exit, which is the condition that already ended startup before menu-font existed (T-9-02).
+- [Phase 09]: 09-01: a font change takes effect at next start; RELEASE-NOTES.md says so and plan 09-05 must delete that sentence — It is the only setting in the release that does not apply immediately. The plan's own prohibition required the exception to be named in the release notes rather than left for a user to discover.
 
 ### Pending Todos
 
@@ -507,6 +514,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-05T23:17:10.742Z
-Stopped at: Phase 9 context gathered
-Resume file: .planning/phases/09-config-gui-ipc/09-CONTEXT.md
+Last session: 2026-09-06T00:38:23.384Z
+Stopped at: Completed 09-01-PLAN.md
+Resume file: None
