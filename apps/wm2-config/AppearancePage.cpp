@@ -195,6 +195,20 @@ AppearancePage::AppearancePage(FormState& form, CommitHandler onCommit,
     addFontRow(grid, line++, "menu-font", "Root menu font");
     addThicknessRow(grid, line++, "frame-thickness", "Frame thickness");
 
+    // D-13's per-page half, built from the same per-setting reset each row's
+    // arrow performs: one meaning of reset, one code path.
+    GtkWidget* resetAll = gtk_button_new_with_label("Reset this page");
+    gtk_widget_set_halign(resetAll, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(resetAll, 18);
+    gtk_widget_set_tooltip_text(resetAll,
+                                "Put every setting on this page back to the "
+                                "default. Saving then removes them from your "
+                                "configuration file rather than writing the "
+                                "defaults into it.");
+    g_signal_connect(resetAll, "clicked",
+                     G_CALLBACK(&AppearancePage::onResetAllClicked), this);
+    gtk_grid_attach(GTK_GRID(grid), resetAll, 0, line++, 2, 1);
+
     refreshFromForm();
 }
 
@@ -216,9 +230,11 @@ void AppearancePage::addColourRow(GtkWidget* grid, int line,
     row->key = key;
     row->kind = Kind::Colour;
     row->owner = this;
+    row->labelText = label;
 
     GtkWidget* name = gtk_label_new(label.c_str());
     gtk_widget_set_halign(name, GTK_ALIGN_START);
+    row->label = name;
 
     row->chooser = gtk_color_button_new();
     gtk_color_chooser_set_use_alpha(GTK_COLOR_CHOOSER(row->chooser), FALSE);
@@ -247,6 +263,7 @@ void AppearancePage::addColourRow(GtkWidget* grid, int line,
                      G_CALLBACK(&AppearancePage::onColourSet), row);
 
     m_rows.push_back(row);
+    m_keys.push_back(row->key);
 }
 
 
@@ -301,9 +318,11 @@ void AppearancePage::addFontRow(GtkWidget* grid, int line,
     row->key = key;
     row->kind = Kind::Font;
     row->owner = this;
+    row->labelText = label;
 
     GtkWidget* name = gtk_label_new(label.c_str());
     gtk_widget_set_halign(name, GTK_ALIGN_START);
+    row->label = name;
 
     row->chooser = gtk_font_button_new();
     gtk_font_chooser_set_level(GTK_FONT_CHOOSER(row->chooser),
@@ -331,6 +350,7 @@ void AppearancePage::addFontRow(GtkWidget* grid, int line,
                      G_CALLBACK(&AppearancePage::onFontSet), row);
 
     m_rows.push_back(row);
+    m_keys.push_back(row->key);
 }
 
 
@@ -342,9 +362,11 @@ void AppearancePage::addThicknessRow(GtkWidget* grid, int line,
     row->key = key;
     row->kind = Kind::Thickness;
     row->owner = this;
+    row->labelText = label;
 
     GtkWidget* name = gtk_label_new(label.c_str());
     gtk_widget_set_halign(name, GTK_ALIGN_START);
+    row->label = name;
 
     // The range is the PARSER'S range, read from the same key table the window
     // manager validates against, so the control cannot ask for a value the
@@ -380,6 +402,7 @@ void AppearancePage::addThicknessRow(GtkWidget* grid, int line,
                      G_CALLBACK(&AppearancePage::onScaleReleased), row);
 
     m_rows.push_back(row);
+    m_keys.push_back(row->key);
 }
 
 
@@ -448,7 +471,41 @@ void AppearancePage::renderRow(Row& row)
         gtk_widget_set_tooltip_text(row.chooser, origin.c_str());
     }
 
+    markRow(row, field->staleUnderEdit);
+
     m_updating = false;
+}
+
+
+void AppearancePage::markRow(Row& row, bool stale)
+{
+    if (!row.label || !GTK_IS_LABEL(row.label)) return;
+
+    if (stale) {
+        char* markup = g_markup_printf_escaped("<i>%s</i>", row.labelText.c_str());
+        gtk_label_set_markup(GTK_LABEL(row.label), markup);
+        g_free(markup);
+        gtk_widget_set_tooltip_text(
+            row.label,
+            "The configuration changed elsewhere while you were editing this. "
+            "Your unsaved value is still here: Save keeps it, Revert takes "
+            "what the file says.");
+        return;
+    }
+    gtk_label_set_text(GTK_LABEL(row.label), row.labelText.c_str());
+    gtk_widget_set_tooltip_text(row.label, nullptr);
+}
+
+
+void AppearancePage::resetAll()
+{
+    const std::vector<std::string> moved = m_form.requestResetAll(m_keys);
+    refreshFromForm();
+    // Every setting that moved reaches the desktop at once, exactly as a single
+    // reset does; the REMOVAL of the lines happens at the next Save (D-13).
+    for (const std::string& key : moved) {
+        if (m_onCommit) m_onCommit(key, m_form.value(key));
+    }
 }
 
 
@@ -617,4 +674,10 @@ void AppearancePage::onResetClicked(GtkButton*, gpointer userData)
     Row* row = static_cast<Row*>(userData);
     if (!row || !row->owner || row->owner->m_updating) return;
     row->owner->reset(*row);
+}
+
+
+void AppearancePage::onResetAllClicked(GtkButton*, gpointer userData)
+{
+    static_cast<AppearancePage*>(userData)->resetAll();
 }

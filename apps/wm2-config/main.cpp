@@ -101,6 +101,11 @@ private:
         gtk_window_set_default_size(GTK_WINDOW(m_window), 660, 690);
         g_signal_connect(m_window, "realize",
                          G_CALLBACK(&ConfigWindow::onRealize), this);
+        // D-07. Wired to the DELETE EVENT rather than to a button, so the
+        // title-bar close, the window manager's own close path and any other
+        // route all go through the same prompt.
+        g_signal_connect(m_window, "delete-event",
+                         G_CALLBACK(&ConfigWindow::onDeleteEvent), this);
 
         GtkWidget* column = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
         gtk_container_add(GTK_CONTAINER(m_window), column);
@@ -117,6 +122,20 @@ private:
         gtk_widget_set_margin_start(m_banner, 12);
         gtk_widget_set_margin_end(m_banner, 12);
         gtk_box_pack_start(GTK_BOX(column), m_banner, FALSE, FALSE, 0);
+
+        // D-08's one-line notice, in the SAME status region as the banner.
+        // A settings window with a notice at the top and another at the bottom
+        // makes a user check two places for one answer, so this shares the
+        // header rather than growing a second region beside it. Hidden until
+        // there is something to say.
+        m_notice = gtk_label_new("");
+        gtk_widget_set_halign(m_notice, GTK_ALIGN_START);
+        gtk_label_set_line_wrap(GTK_LABEL(m_notice), TRUE);
+        gtk_widget_set_margin_bottom(m_notice, 8);
+        gtk_widget_set_margin_start(m_notice, 12);
+        gtk_widget_set_margin_end(m_notice, 12);
+        gtk_widget_set_no_show_all(m_notice, TRUE);
+        gtk_box_pack_start(GTK_BOX(column), m_notice, FALSE, FALSE, 0);
 
         GtkWidget* separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
         gtk_box_pack_start(GTK_BOX(column), separator, FALSE, FALSE, 0);
@@ -313,7 +332,9 @@ private:
         // marked; only untouched fields follow.
         m_layers = configLayersFromDisk();
         readEffectiveValuesFromWindowManager();
-        status("The window manager re-read its configuration files.");
+        notice("The window manager re-read its configuration files. Anything "
+               "you changed here and have not saved is still here, and is "
+               "marked where it now differs from the file.");
     }
 
     void applyLive(const std::string& key, const std::string& value)
@@ -370,14 +391,10 @@ private:
         // Both halves of D-05: the form goes back to the last saved state, and
         // when there is a desktop listening it is put back too, so the file and
         // the screen agree again rather than diverging silently.
-        const std::vector<std::string> divergent = m_form.divergentKeys();
-        m_form.revert();
-        refreshPages();
-        for (const std::string& key : divergent) {
-            applyLive(key, m_form.value(key));
-        }
-        status(divergent.empty() ? "There was nothing to revert."
-                                 : "Reverted to the last saved settings.");
+        const bool hadChanges = !m_form.divergentKeys().empty();
+        discard();
+        status(hadChanges ? "Reverted to the last saved settings."
+                          : "There was nothing to revert.");
     }
 
     void reloadWindowManager()
@@ -439,6 +456,88 @@ private:
         if (m_status) gtk_label_set_text(GTK_LABEL(m_status), message.c_str());
     }
 
+    // D-08's one line, in the banner's own region. Cleared by passing "".
+    void notice(const std::string& message)
+    {
+        if (!m_notice) return;
+        if (message.empty()) {
+            gtk_label_set_text(GTK_LABEL(m_notice), "");
+            gtk_widget_hide(m_notice);
+            return;
+        }
+        char* markup = g_markup_printf_escaped("<i>%s</i>", message.c_str());
+        gtk_label_set_markup(GTK_LABEL(m_notice), markup);
+        g_free(markup);
+        gtk_widget_show(m_notice);
+    }
+
+    // --- D-07: closing with unsaved changes -------------------------------
+    //
+    // Three responses, and the third one is the whole decision. Save writes and
+    // closes. Cancel returns to the window with nothing changed. DISCARD puts
+    // the form back to the last saved state AND SENDS THOSE VALUES BACK to the
+    // running window manager -- without which closing this window can leave a
+    // desktop that matches no file at all, which is the state a user cannot
+    // reason about the next time they open anything.
+    //
+    // Returns true when the window may close.
+    bool confirmClose()
+    {
+        if (!m_form.dirty()) return true;
+
+        GtkWidget* dialog = gtk_message_dialog_new(
+            GTK_WINDOW(m_window),
+            static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL |
+                                        GTK_DIALOG_DESTROY_WITH_PARENT),
+            GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE,
+            "Save your changes before closing?");
+
+        // What Discard actually does is stated here rather than left to the
+        // word "discard", because the consequence a user needs to know is what
+        // happens to the DESKTOP, not what happens to the form.
+        gtk_message_dialog_format_secondary_text(
+            GTK_MESSAGE_DIALOG(dialog),
+            "%s",
+            m_client.connected()
+                ? "Discard also puts the running desktop back to what your "
+                  "configuration file says, so the two match afterwards."
+                : "There is no running window manager to put back, so Discard "
+                  "simply forgets these changes.");
+
+        gtk_dialog_add_button(GTK_DIALOG(dialog), "_Cancel", GTK_RESPONSE_CANCEL);
+        gtk_dialog_add_button(GTK_DIALOG(dialog), "_Discard", GTK_RESPONSE_REJECT);
+        gtk_dialog_add_button(GTK_DIALOG(dialog), "_Save", GTK_RESPONSE_ACCEPT);
+        gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+
+        const gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+
+        if (response == GTK_RESPONSE_ACCEPT) {
+            save();
+            // A save that failed leaves the form dirty and its reason in the
+            // status line; closing over it would throw the changes away after
+            // the user asked for the opposite.
+            return !m_form.dirty();
+        }
+        if (response == GTK_RESPONSE_REJECT) {
+            discard();
+            return true;
+        }
+        return false;   // Cancel, and anything else the toolkit may answer
+    }
+
+    // Put the form back AND return the desktop to it. One function with the
+    // Revert button, because they are one operation (D-05 and D-07).
+    void discard()
+    {
+        const std::vector<std::pair<std::string, std::string>> restores =
+            revertAndCollectRestores(m_form);
+        refreshPages();
+        for (const auto& kv : restores) {
+            applyLive(kv.first, kv.second);
+        }
+    }
+
     // The connection state, on this window, as a property.
     //
     // The project's own idiom -- the window manager publishes its socket path
@@ -467,6 +566,14 @@ private:
         static_cast<ConfigWindow*>(userData)->publishState();
     }
 
+    static gboolean onDeleteEvent(GtkWidget*, GdkEvent*, gpointer userData)
+    {
+        // TRUE STOPS the close; FALSE lets it through. Inverted from what the
+        // question reads like, so it is spelled out rather than returned bare.
+        const bool mayClose = static_cast<ConfigWindow*>(userData)->confirmClose();
+        return mayClose ? GDK_EVENT_PROPAGATE : GDK_EVENT_STOP;
+    }
+
     static void onSaveClicked(GtkButton*, gpointer userData)
     {
         static_cast<ConfigWindow*>(userData)->save();
@@ -491,6 +598,7 @@ private:
 
     GtkWidget* m_window = nullptr;
     GtkWidget* m_banner = nullptr;
+    GtkWidget* m_notice = nullptr;
     GtkWidget* m_notebook = nullptr;
     GtkWidget* m_status = nullptr;
     GtkWidget* m_save = nullptr;

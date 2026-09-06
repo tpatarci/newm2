@@ -47,6 +47,11 @@ public:
     // open window (D-08).
     void refreshFromForm();
 
+    // D-13's per-page half: every setting on this page marked for removal from
+    // the user file, through the SAME per-setting reset the arrow beside each
+    // control performs.
+    void resetAll();
+
 private:
     // What kind of control a key gets, and therefore how its value is read
     // back out of the toolkit's vocabulary and into the config file's.
@@ -58,6 +63,8 @@ private:
         GtkWidget*  chooser = nullptr;   // the native chooser
         GtkWidget*  raw = nullptr;       // the config-file spelling, editable
         GtkWidget*  reset = nullptr;
+        GtkWidget*  label = nullptr;     // marked when a reload moved the file
+        std::string labelText;
         AppearancePage* owner = nullptr; // for the static callbacks
     };
 
@@ -70,6 +77,9 @@ private:
     GtkWidget* addRawField(Row* row);
     GtkWidget* addResetButton(Row* row);
     void renderRow(Row& row);
+    // D-08: the file moved underneath an edit this user has not saved. Marked
+    // rather than replaced, which is the whole of that decision.
+    void markRow(Row& row, bool stale);
     void commit(Row& row, const std::string& value);
     void reset(Row& row);
     Row* rowFor(GtkWidget* widget);
@@ -82,6 +92,7 @@ private:
     static gboolean onRawFocusOut(GtkWidget* entry, GdkEvent* event,
                                   gpointer userData);
     static void onResetClicked(GtkButton* button, gpointer userData);
+    static void onResetAllClicked(GtkButton* button, gpointer userData);
 
     void commitRawField(GtkWidget* entry);
 
@@ -90,6 +101,7 @@ private:
     StatusHandler m_onStatus;
     GtkWidget*    m_root = nullptr;
     std::vector<Row*> m_rows;
+    std::vector<std::string> m_keys;
 
     // True while the page is writing values INTO its own widgets. Every
     // handler returns early when it is set, because a programmatic

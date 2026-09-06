@@ -452,6 +452,25 @@ std::vector<std::string> keysDeclaredIn(const std::string& source)
     return out;
 }
 
+// Source with every `//` comment removed, for a guard that is about what the
+// code does rather than about what its author wrote next to it.
+std::string withoutLineComments(const std::string& source)
+{
+    std::string out;
+    std::size_t line = 0;
+    while (line < source.size()) {
+        const std::size_t eol = source.find('\n', line);
+        const std::size_t stop = (eol == std::string::npos) ? source.size() : eol;
+        const std::string text = source.substr(line, stop - line);
+        const std::size_t comment = text.find("//");
+        out += (comment == std::string::npos) ? text : text.substr(0, comment);
+        out += "\n";
+        if (eol == std::string::npos) break;
+        line = eol + 1;
+    }
+    return out;
+}
+
 bool contains(const std::vector<std::string>& haystack, const std::string& needle)
 {
     return std::find(haystack.begin(), haystack.end(), needle) != haystack.end();
@@ -2299,8 +2318,13 @@ TEST_CASE("a reload notice arriving with an entry dialog open leaves the dialog'
     REQUIRE(at != std::string::npos);
     const std::size_t end = page.find("\n}\n", at);
     REQUIRE(end != std::string::npos);
-    const std::string body = page.substr(at, end - at);
-    INFO("refreshFromForm:\n" << body);
+    // COMMENTS STRIPPED FIRST. The guard is about what the code touches, and
+    // the function's own comment explains that it touches no dialog -- which,
+    // left in, is a mention of the very token the guard forbids. The project
+    // already learned this once (CMakeLists.txt, D-33): a comment quoting the
+    // token a grep-shaped guard forbids defeats the guard.
+    const std::string body = withoutLineComments(page.substr(at, end - at));
+    INFO("refreshFromForm, comments stripped:\n" << body);
     CHECK(body.find("dialog") == std::string::npos);
     CHECK(body.find("Dialog") == std::string::npos);
     CHECK(body.find("Draft") == std::string::npos);

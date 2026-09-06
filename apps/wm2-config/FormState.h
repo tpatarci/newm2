@@ -45,6 +45,7 @@
 #include "ConfigFileWriter.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 
@@ -67,6 +68,17 @@ struct FormField {
     std::string  sourceDetail;      // the file's path, when the source is a file
     bool         dirty = false;
     bool         resetRequested = false;
+
+    // D-08: the effective value MOVED underneath an edit this user has not
+    // saved, and the two now disagree. Distinct from `dirty`, which is merely
+    // "a save would write something" and is true of every ordinary edit: this
+    // one says something happened ELSEWHERE that the user should look at, so
+    // the control is marked and the window says so in one line.
+    //
+    // Cleared the moment the user touches the control again -- they have now
+    // seen it and decided -- and by a revert or a save, after which there is no
+    // longer an edit to mark.
+    bool         staleUnderEdit = false;
 };
 
 
@@ -180,6 +192,10 @@ public:
     // opened passes through byte for byte.
     bool menuEntriesChanged() const { return m_menuDirty; }
 
+    // D-08's mark, for the Menu page's one "setting": the entry list moved
+    // underneath rows the user has changed and not saved.
+    bool menuEntriesStaleUnderEdit() const { return m_menuStaleUnderEdit; }
+
     // Replace the effective list -- what a connected window manager reports,
     // or what a reload notice brought (D-08). An UNTOUCHED list follows the new
     // one; a list the user has edited keeps the edit and stays dirty, exactly
@@ -205,6 +221,7 @@ private:
     std::vector<AppEntry> m_menuCurrent;     // what the page is showing
     bool m_menuDirty = false;
     bool m_menuResetRequested = false;
+    bool m_menuStaleUnderEdit = false;
 };
 
 
@@ -214,6 +231,21 @@ private:
 // and a rendered comparison would be the weaker of the two.
 bool menuEntriesEqual(const std::vector<AppEntry>& a,
                       const std::vector<AppEntry>& b);
+
+
+// D-07's Discard, and D-05's Revert, in one function because they are one
+// operation: put the form back to the last saved state, and hand back every
+// key whose value MOVED so the caller can send it to the running window
+// manager. Without that send-back, closing the settings window can leave a
+// desktop matching no file at all -- the state a user cannot reason about
+// later, and the whole reason D-07 names three responses rather than two.
+//
+// The list is collected BEFORE the revert and read AFTER it, so each pair
+// carries the value the desktop must go back to rather than the one it is
+// leaving. A caller with no connection simply sends nothing; the form is put
+// back either way.
+std::vector<std::pair<std::string, std::string>>
+revertAndCollectRestores(FormState& form);
 
 
 // The effective value of one key in `config`, spelled the way the config file

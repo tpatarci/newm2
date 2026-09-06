@@ -131,9 +131,20 @@ BehaviourPage::BehaviourPage(FormState& form, CommitHandler onCommit,
                   "above are interpreted by the shell rather than passed on as "
                   "text. Leave it off unless you need a pipeline.");
 
-    // D-13's per-page half -- "Reset all" -- is added to all three pages
-    // together in the same change that gives FormState the one code path they
-    // share (plan 09-07 task 3), rather than three times here.
+    // D-13's per-page half, built from the SAME per-setting reset the arrow
+    // beside each control performs -- one meaning of reset, one code path,
+    // and a page that gains a control gets it covered without touching this.
+    GtkWidget* resetAll = gtk_button_new_with_label("Reset this page");
+    gtk_widget_set_halign(resetAll, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(resetAll, 18);
+    gtk_widget_set_tooltip_text(resetAll,
+                                "Put every setting on this page back to the "
+                                "default. Saving then removes them from your "
+                                "configuration file rather than writing the "
+                                "defaults into it.");
+    g_signal_connect(resetAll, "clicked",
+                     G_CALLBACK(&BehaviourPage::onResetAllClicked), this);
+    gtk_grid_attach(GTK_GRID(grid), resetAll, 0, line++, 2, 1);
 
     refreshFromForm();
 }
@@ -180,6 +191,8 @@ void BehaviourPage::addBooleanRow(GtkWidget* grid, int line,
     // the tick IS that spelling. A text box beside it saying `false` would be a
     // second control for one bit, and the two could disagree on screen.
     row->control = gtk_check_button_new_with_label(label.c_str());
+    // The check button's own label widget, kept so a reload can mark it (D-08).
+    row->label = gtk_bin_get_child(GTK_BIN(row->control));
     gtk_widget_set_halign(row->control, GTK_ALIGN_START);
     gtk_widget_set_tooltip_text(row->control,
                                 behaviourTooltipFor(key, extra).c_str());
@@ -324,7 +337,42 @@ void BehaviourPage::renderRow(Row& row)
         break;
     }
 
+    markRow(row, field->staleUnderEdit);
+
     m_updating = false;
+}
+
+
+void BehaviourPage::markRow(Row& row, bool stale)
+{
+    if (!row.label || !GTK_IS_LABEL(row.label)) return;
+
+    if (stale) {
+        char* markup = g_markup_printf_escaped("<i>%s</i>", row.labelText.c_str());
+        gtk_label_set_markup(GTK_LABEL(row.label), markup);
+        g_free(markup);
+        gtk_widget_set_tooltip_text(
+            row.label,
+            "The configuration changed elsewhere while you were editing this. "
+            "Your unsaved value is still here: Save keeps it, Revert takes "
+            "what the file says.");
+        return;
+    }
+    gtk_label_set_text(GTK_LABEL(row.label), row.labelText.c_str());
+    gtk_widget_set_tooltip_text(row.label, nullptr);
+}
+
+
+void BehaviourPage::resetAll()
+{
+    std::vector<std::string> keys = m_keys;
+    const std::vector<std::string> moved = m_form.requestResetAll(keys);
+    refreshFromForm();
+    // Every setting that moved reaches the desktop at once, exactly as a
+    // single reset does; the REMOVAL of the lines happens at the next Save.
+    for (const std::string& key : moved) {
+        if (m_onCommit) m_onCommit(key, m_form.value(key));
+    }
 }
 
 
@@ -401,4 +449,10 @@ void BehaviourPage::onResetClicked(GtkButton*, gpointer userData)
     Row* row = static_cast<Row*>(userData);
     if (!row || !row->owner || row->owner->m_updating) return;
     row->owner->reset(*row);
+}
+
+
+void BehaviourPage::onResetAllClicked(GtkButton*, gpointer userData)
+{
+    static_cast<BehaviourPage*>(userData)->resetAll();
 }

@@ -63,6 +63,11 @@ public:
     // window (D-08).
     void refreshFromForm();
 
+    // D-13's per-page half: every setting on this page marked for removal from
+    // the user file, through the SAME per-setting reset the arrow beside each
+    // control performs.
+    void resetAll();
+
     // The keys this page owns, in the order it presents them. What "Reset all
     // on this page" means (D-13).
     const std::vector<std::string>& keys() const { return m_keys; }
@@ -90,6 +95,9 @@ private:
                        const std::string& label, const std::string& extra);
     GtkWidget* addResetButton(Row* row);
     void renderRow(Row& row);
+    // D-08: the file moved underneath an edit this user has not saved. Marked
+    // rather than replaced, which is the whole of that decision.
+    void markRow(Row& row, bool stale);
     void commit(Row& row, const std::string& value);
     void reset(Row& row);
 
@@ -99,6 +107,7 @@ private:
     static gboolean onEntryFocusOut(GtkWidget* entry, GdkEvent* event,
                                     gpointer userData);
     static void onResetClicked(GtkButton* button, gpointer userData);
+    static void onResetAllClicked(GtkButton* button, gpointer userData);
 
     FormState&    m_form;
     CommitHandler m_onCommit;

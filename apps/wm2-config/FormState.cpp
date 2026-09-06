@@ -124,7 +124,18 @@ void FormState::adoptEffective(const std::string& key, const std::string& value,
     // (D-08). Discarding somebody's unsaved typing because a reload happened
     // elsewhere would be a worse surprise than a value that is briefly stale,
     // and the window marks the difference rather than hiding it.
-    if (!field->dirty) field->current = value;
+    if (!field->dirty) {
+        field->current = value;
+        field->staleUnderEdit = false;
+        return;
+    }
+
+    // The mark is the DISAGREEMENT, not the edit. A reload that happens to
+    // bring exactly what the user typed is not something they need told about,
+    // and marking it would make the mark mean "edited" -- which `dirty`
+    // already means, and which every control on the page would then wear after
+    // any reload at all.
+    field->staleUnderEdit = (field->current != value);
 }
 
 
@@ -185,6 +196,9 @@ bool FormState::setValue(const std::string& key, const std::string& value)
 
     f->resetRequested = false;
     f->current = value;
+    // The user has now looked at the control and decided, so a mark left over
+    // from a reload is old news.
+    f->staleUnderEdit = false;
     // Dirty means "a save would write something". Typing a value back to what
     // is already in force is therefore not dirty, even though the form did
     // change and the caller does want to hear about it -- which is why the
@@ -201,6 +215,7 @@ bool FormState::requestReset(const std::string& key)
 
     f->resetRequested = true;
     f->dirty = true;
+    f->staleUnderEdit = false;
     // What removal will ACTUALLY produce -- the layer below the user file --
     // rather than the built-in default, which on a host with a system-wide
     // configuration would be a value the user is never going to see (D-13).
@@ -245,6 +260,7 @@ void FormState::markSaved()
         m_menuCurrent = m_menuEffective;
         m_menuDirty = false;
         m_menuResetRequested = false;
+        m_menuStaleUnderEdit = false;
     }
 
     for (FormField& f : m_fields) {
@@ -263,6 +279,7 @@ void FormState::markSaved()
         }
         f.dirty = false;
         f.resetRequested = false;
+        f.staleUnderEdit = false;
     }
 }
 
@@ -273,10 +290,30 @@ void FormState::revert()
         f.current = f.effective;
         f.dirty = false;
         f.resetRequested = false;
+        f.staleUnderEdit = false;
     }
     m_menuCurrent = m_menuEffective;
     m_menuDirty = false;
     m_menuResetRequested = false;
+    m_menuStaleUnderEdit = false;
+}
+
+
+std::vector<std::pair<std::string, std::string>>
+revertAndCollectRestores(FormState& form)
+{
+    // Collected BEFORE the revert -- these are the keys that moved -- and read
+    // AFTER it, so each pair carries the value the desktop must go back to
+    // rather than the one it is leaving (D-07, D-05).
+    const std::vector<std::string> divergent = form.divergentKeys();
+    form.revert();
+
+    std::vector<std::pair<std::string, std::string>> restores;
+    restores.reserve(divergent.size());
+    for (const std::string& key : divergent) {
+        restores.emplace_back(key, form.value(key));
+    }
+    return restores;
 }
 
 
@@ -320,6 +357,7 @@ bool FormState::setMenuEntries(const std::vector<AppEntry>& entries)
     if (!cancelsReset && menuEntriesEqual(m_menuCurrent, entries)) return false;
 
     m_menuResetRequested = false;
+    m_menuStaleUnderEdit = false;
     m_menuCurrent = entries;
     m_menuDirty = !menuEntriesEqual(m_menuCurrent, m_menuEffective);
     return true;
@@ -332,7 +370,12 @@ void FormState::adoptEffectiveMenuEntries(const std::vector<AppEntry>& entries)
     // D-08's prohibition, in the one line that keeps it: a list the user has
     // been editing is NOT replaced by what arrived. The window marks the
     // difference instead.
-    if (!m_menuDirty) m_menuCurrent = entries;
+    if (!m_menuDirty) {
+        m_menuCurrent = entries;
+        m_menuStaleUnderEdit = false;
+        return;
+    }
+    m_menuStaleUnderEdit = !menuEntriesEqual(m_menuCurrent, entries);
 }
 
 
@@ -340,6 +383,7 @@ void FormState::requestMenuReset()
 {
     m_menuResetRequested = true;
     m_menuDirty = true;
+    m_menuStaleUnderEdit = false;
     // What removal will ACTUALLY produce: the entries the layers below the user
     // file define, which on a host with a system-wide configuration is not the
     // empty list.
