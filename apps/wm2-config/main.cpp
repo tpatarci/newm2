@@ -40,6 +40,7 @@
 // so a reader of the window's source is not sent hunting for it.
 
 #include "AppearancePage.h"
+#include "BehaviourPage.h"
 #include "ConnectionState.h"
 #include "FormState.h"
 #include "ProtocolClient.h"
@@ -133,13 +134,19 @@ private:
                                  m_appearance->widget(),
                                  gtk_label_new("Appearance"));
 
-        // D-09's other two pages exist as empty pages so the window's shape is
-        // fixed now and plan 09-07 fills them in. An empty page a user can see
-        // is more honest than a window that changes shape between releases.
+        m_behaviour.reset(new BehaviourPage(
+            m_form,
+            [this](const std::string& key, const std::string& value) {
+                applyLive(key, value);
+            },
+            [this](const std::string& message) { status(message); }));
         gtk_notebook_append_page(GTK_NOTEBOOK(m_notebook),
-                                 placeholder("Focus policy, delays and the "
-                                             "new-window command arrive here."),
+                                 m_behaviour->widget(),
                                  gtk_label_new("Behaviour"));
+
+        // D-09's last page is still an empty page so the window's shape is
+        // fixed and the next change fills it in. An empty page a user can see
+        // is more honest than a window that changes shape between releases.
         gtk_notebook_append_page(GTK_NOTEBOOK(m_notebook),
                                  placeholder("Your own root-menu entries "
                                              "arrive here."),
@@ -271,7 +278,7 @@ private:
                 if (field->effective == reply.value) return;
                 m_form.adoptEffective(k, reply.value, ValueSource::WindowManager,
                                       std::string());
-                m_appearance->refreshFromForm();
+                refreshPages();
             });
         }
     }
@@ -322,7 +329,7 @@ private:
 
         m_form.markSaved();
         m_layers = configLayersFromDisk();
-        m_appearance->refreshFromForm();
+        refreshPages();
         status("Saved to " + m_layers.userFilePath);
     }
 
@@ -333,7 +340,7 @@ private:
         // the screen agree again rather than diverging silently.
         const std::vector<std::string> divergent = m_form.divergentKeys();
         m_form.revert();
-        m_appearance->refreshFromForm();
+        refreshPages();
         for (const std::string& key : divergent) {
             applyLive(key, m_form.value(key));
         }
@@ -379,6 +386,15 @@ private:
         }
 
         publishState();
+    }
+
+    // Every page, from the one model. Called wherever the model moved
+    // underneath the window: after a save, after a revert, and when the window
+    // manager reports a value this window did not set (D-08).
+    void refreshPages()
+    {
+        if (m_appearance) m_appearance->refreshFromForm();
+        if (m_behaviour)  m_behaviour->refreshFromForm();
     }
 
     void status(const std::string& message)
@@ -445,6 +461,7 @@ private:
     GtkWidget* m_reload = nullptr;
 
     std::unique_ptr<AppearancePage> m_appearance;
+    std::unique_ptr<BehaviourPage>  m_behaviour;
 };
 
 

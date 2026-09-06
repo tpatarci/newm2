@@ -154,6 +154,7 @@ if(CONFIG_GUI_ENABLED)
     add_executable(wm2-config
         apps/wm2-config/main.cpp
         apps/wm2-config/AppearancePage.cpp
+        apps/wm2-config/BehaviourPage.cpp
         apps/wm2-config/FormState.cpp
         apps/wm2-config/ProtocolClient.cpp
         src/Config.cpp
