@@ -37,6 +37,7 @@
 
 #include "../apps/wm2-config/ConnectionState.h"
 #include "../apps/wm2-config/FormState.h"
+#include "../apps/wm2-config/MenuModel.h"
 #include "../apps/wm2-config/ProtocolClient.h"
 
 #include "Config.h"
@@ -628,6 +629,112 @@ void waitPastFocusDelays()
 // Where the pointer is parked so it is over neither a client nor the menu.
 constexpr int kParkX = 5;
 constexpr int kParkY = 5;
+
+
+// ---------------------------------------------------------------------------
+// The root menu, opened with a real button press
+// ---------------------------------------------------------------------------
+//
+// WindowManager::menu() runs a NESTED event loop with its own pointer grab, so
+// while the menu is up the window manager is not in loop() and cannot be
+// pumped. Everything observed here is read straight from the server while the
+// press is still held.
+//
+// The painted-pixel stage test_wm_config_live.cpp adds is deliberately NOT
+// ported: what a menu-entry case here needs is that the popup grew by the row
+// the entry brought with it, which is geometry. Colour is that suite's
+// question.
+
+std::vector<Window> childrenOf(Display* d, Window w)
+{
+    Window wroot = None, parent = None, *children = nullptr;
+    unsigned int n = 0;
+    std::vector<Window> out;
+    if (!XQueryTree(d, w, &wroot, &parent, &children, &n)) return out;
+    if (children) { out.assign(children, children + n); XFree(children); }
+    return out;
+}
+
+// Identified by the press point it is anchored on, never by "the first viewable
+// child of root" -- 08.5-13 removed exactly that fallback after it silently
+// sampled a client frame.
+Window findOpenMenu(Display* d, int pressX, int pressY)
+{
+    for (Window child : childrenOf(d, DefaultRootWindow(d))) {
+        Rect r;
+        if (!serverRect(d, child, r)) continue;
+        if (r.w <= 1 || r.h <= 1) continue;
+        if (!isViewable(d, child)) continue;
+        if (pressX >= r.x && pressX < r.x + r.w &&
+            pressY >= r.y && pressY < r.y + r.h) return child;
+    }
+    return None;
+}
+
+// Chosen so WindowManager::menu() does not need to clamp the menu to a screen
+// edge: a clamp warps the pointer, the warp is a MotionNotify, and a
+// MotionNotify over a category row opens a submenu nobody asked for.
+constexpr int kMenuPressX = 300;
+constexpr int kMenuPressY = 5;
+
+bool openRootMenuGeometry(Display* d, XTestDriver& driver, Rect& rectOut)
+{
+    driver.moveTo(kMenuPressX, kMenuPressY);
+    driver.press(Button1);
+
+    Window menu = None;
+    if (!WmFixture::pollUntil([&] {
+            menu = findOpenMenu(d, kMenuPressX, kMenuPressY);
+            return menu != None;
+        }, 20000)) {
+        return false;
+    }
+    return WmFixture::pollUntil([&] {
+        return serverRect(d, menu, rectOut) && rectOut.w > 1 && rectOut.h > 1;
+    }, 20000);
+}
+
+// Close a menu the press above left open, by releasing outside every row.
+void closeRootMenu(Display* d, XTestDriver& driver)
+{
+    driver.moveTo(kParkX, kParkY);
+    driver.release(Button1);
+    XSync(d, False);
+    settleWm(d);
+}
+
+
+// The manual menu entries the window manager currently holds, and the
+// categories it says its root menu shows.
+std::vector<AppEntry> wmMenuEntries(ProtocolClient& client)
+{
+    std::vector<AppEntry> out;
+    std::string ignored;
+    parseMenuEntriesValue(wmValue(client, kMenuEntriesKey), out, ignored);
+    return out;
+}
+
+// Send the whole list, wholesale, exactly as the page's Add / Edit / Remove do.
+std::string commitMenuEntries(ProtocolClient& client,
+                              const std::vector<AppEntry>& entries)
+{
+    Config rendered;
+    rendered.manualMenuEntries = entries;
+    const std::string value = configMenuEntriesValue(rendered);
+
+    bool acked = false;
+    std::string refusal;
+    if (!client.sendSet(kMenuEntriesKey, value, [&](const ConfigMessage& reply) {
+            if (reply.type == ConfigMessageType::Ack) acked = true;
+            if (reply.type == ConfigMessageType::Error) refusal = reply.reason;
+        })) {
+        return "the client refused to send";
+    }
+    if (!client.pumpUntil([&]() { return acked || !refusal.empty(); }, 15000)) {
+        return "the window manager did not answer";
+    }
+    return refusal;
+}
 
 
 // ---------------------------------------------------------------------------
@@ -1616,4 +1723,350 @@ TEST_CASE("a delay outside the parser's range is refused, so the control's clamp
 
         CHECK(wmValue(client, key) == before);
     }
+}
+
+
+// =============================================================================
+// The Menu page (D-12, T-9-40, T-9-44, plan 09-07)
+// =============================================================================
+
+TEST_CASE("the Menu page tokenises a command exactly as the configuration parser does",
+          "[wm2_config_smoke]")
+{
+    // Not "the same way": THE SAME FUNCTION. The parser's menu-entry-command
+    // arm and the dialog both call configTokeniseCommand(), so a user who
+    // types a command into the window and a user who writes the same line into
+    // the file cannot end up running two different argument vectors.
+    const std::string typed = "/usr/bin/vim   -p    notes.txt";
+
+    const std::string tree = makeTree("tokenise");
+    const std::string userFile = tree + "/user/wm2-born-again/config";
+    writeFile(userFile,
+              "menu-entry-name=Editor\n"
+              "menu-entry-command=" + typed + "\n"
+              "menu-entry-category=Custom\n");
+
+    Config parsed;
+    parsed.applyFile(userFile);
+    REQUIRE(parsed.manualMenuEntries.size() == 1);
+
+    CHECK(configTokeniseCommand(typed) == parsed.manualMenuEntries[0].execArgv);
+    CHECK(configTokeniseCommand(typed) ==
+          std::vector<std::string>({"/usr/bin/vim", "-p", "notes.txt"}));
+}
+
+TEST_CASE("a shell metacharacter in a command is one literal argument, and the dialog shows it as one",
+          "[wm2_config_smoke]")
+{
+    // T-9-40. The guarantee is that a manual entry is never shell-evaluated;
+    // the honest version of that guarantee is showing the user what their
+    // command actually became, so a semicolon they typed is visibly ONE
+    // argument rather than the start of a second command.
+    MenuEntryDraft draft;
+    draft.name = "Risky";
+    draft.command = "/bin/echo hello;rm -rf /tmp/nothing";
+
+    const std::vector<std::string> argv = draft.argv();
+    REQUIRE(argv.size() == 4);
+    CHECK(argv[1] == "hello;rm");
+
+    const std::string shown = draft.argvDisplay();
+    INFO("argument display: " << shown);
+    CHECK(shown == "[/bin/echo] [hello;rm] [-rf] [/tmp/nothing]");
+
+    // And the entry the dialog would produce carries exactly those tokens, so
+    // what is displayed and what is stored are the same list.
+    CHECK(draft.toEntry().execArgv == argv);
+    CHECK(draft.toEntry().source == AppEntry::Source::Manual);
+}
+
+TEST_CASE("a draft with no name or no command is refused with a reason",
+          "[wm2_config_smoke]")
+{
+    std::string reason;
+    MenuEntryDraft empty;
+    CHECK_FALSE(empty.complete(reason));
+    CHECK_FALSE(reason.empty());
+
+    MenuEntryDraft named;
+    named.name = "Editor";
+    reason.clear();
+    CHECK_FALSE(named.complete(reason));
+    CHECK_FALSE(reason.empty());
+
+    MenuEntryDraft whole;
+    whole.name = "Editor";
+    whole.command = "/usr/bin/vim";
+    CHECK(whole.complete(reason));
+
+    // D-07 of phase 7: a row with no category is a Custom row, applied at
+    // creation time rather than left empty for the menu to guess at.
+    CHECK(whole.toEntry().category == "Custom");
+}
+
+TEST_CASE("the file-only category list is the file's own categories plus the Custom default",
+          "[wm2_config_smoke]")
+{
+    // With no window manager to ask there is no second source of truth to
+    // invent one from, so the dropdown offers what the file already contains
+    // and says why it is offering only that.
+    std::vector<AppEntry> entries;
+    AppEntry a; a.name = "Editor";  a.category = "Development"; entries.push_back(a);
+    AppEntry b; b.name = "Mail";    b.category = "Internet";    entries.push_back(b);
+    AppEntry c; c.name = "Another"; c.category = "Development"; entries.push_back(c);
+
+    const std::vector<std::string> offered = menuCategoriesFrom(entries);
+    CHECK(offered == std::vector<std::string>({"Development", "Internet", "Custom"}));
+
+    // Custom is present even when nothing in the file uses it, and it is last
+    // -- the same place the root menu puts it.
+    CHECK(menuCategoriesFrom({}) == std::vector<std::string>({"Custom"}));
+
+    CHECK_FALSE(std::string(kMenuCategoryFileOnlyReason).empty());
+}
+
+TEST_CASE("a menu-entry list too long for one protocol line is refused before it is sent, and the refusal names the limit",
+          "[wm2_config_smoke]")
+{
+    // T-9-44. The whole list travels as ONE value, so a long enough list makes
+    // a line the window manager will reject with an opaque framing error. The
+    // page refuses it first and says what the limit is, because "your entry
+    // list is too long" is a sentence a user can act on and "malformed
+    // message" is not.
+    std::vector<AppEntry> entries;
+    for (int i = 0; i < 60; ++i) {
+        AppEntry e;
+        e.name = "Entry" + std::to_string(i);
+        e.execArgv = {"/usr/local/libexec/a-command-with-a-fairly-long-path-" +
+                      std::to_string(i)};
+        e.category = "AReasonablyLongCategoryName";
+        e.source = AppEntry::Source::Manual;
+        entries.push_back(e);
+    }
+
+    Config rendered;
+    rendered.manualMenuEntries = entries;
+    const std::string tooLong = configMenuEntriesValue(rendered);
+
+    std::string reason;
+    REQUIRE_FALSE(menuEntriesValueFits(tooLong, reason));
+    INFO("refusal: " << reason);
+    CHECK(reason.find(std::to_string(kConfigProtocolMaxLine)) != std::string::npos);
+
+    // ...and an ordinary list is not refused, or the guard would be a wall.
+    Config small;
+    AppEntry one; one.name = "Editor"; one.execArgv = {"/usr/bin/vim"};
+    small.manualMenuEntries.push_back(one);
+    std::string ok;
+    CHECK(menuEntriesValueFits(configMenuEntriesValue(small), ok));
+    CHECK(ok.empty());
+}
+
+TEST_CASE("the Menu page's rows survive a save and come back as the same list",
+          "[wm2_config_smoke]")
+{
+    // D-12: rows map one to one onto the three-key groups, in the order the
+    // accumulator requires. The proof is a round trip through the real writer
+    // and the real parser rather than a comparison against a spelling.
+    const std::string tree = makeTree("menusave");
+    const std::string userFile = tree + "/user/wm2-born-again/config";
+    writeFile(userFile, "# a comment the writer must preserve\nborders=#00FF00\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    const ConfigLayers layers = configLayersFromDisk();
+    form.seedFromLayers(layers);
+    REQUIRE(form.menuEntries().empty());
+
+    std::vector<AppEntry> rows;
+    MenuEntryDraft first;
+    first.name = "Editor"; first.command = "/usr/bin/vim -p"; first.category = "Development";
+    rows.push_back(first.toEntry());
+    MenuEntryDraft second;
+    second.name = "Mail"; second.command = "/usr/bin/mutt";
+    rows.push_back(second.toEntry());
+
+    REQUIRE(form.setMenuEntries(rows));
+    CHECK(form.dirty());
+
+    std::string error;
+    REQUIRE(configFileWrite(layers.userFilePath, form.edits(), form.menuEntries(),
+                            form.menuEntriesChanged(), error) == ConfigWriteResult::Ok);
+    form.markSaved();
+    CHECK_FALSE(form.dirty());
+
+    Config readBack;
+    readBack.applyFile(userFile);
+    REQUIRE(readBack.manualMenuEntries.size() == 2);
+    CHECK(readBack.manualMenuEntries[0].name == "Editor");
+    CHECK(readBack.manualMenuEntries[0].execArgv ==
+          std::vector<std::string>({"/usr/bin/vim", "-p"}));
+    CHECK(readBack.manualMenuEntries[0].category == "Development");
+    CHECK(readBack.manualMenuEntries[1].name == "Mail");
+    CHECK(readBack.manualMenuEntries[1].category == "Custom");
+
+    // Everything else in the file is where it was.
+    const std::string written = readFileOrEmpty(userFile);
+    CHECK(written.find("# a comment the writer must preserve") != std::string::npos);
+    CHECK(written.find("borders=#00FF00") != std::string::npos);
+}
+
+TEST_CASE("removing a row and then reverting brings it back, which is why Remove asks nothing",
+          "[wm2_config_smoke]")
+{
+    // D-12 chose no confirmation on Remove. That choice is only safe because
+    // the removal is unsaved and Revert undoes it, so this is the case that
+    // makes the choice defensible rather than merely convenient.
+    const std::string tree = makeTree("menuremove");
+    writeFile(tree + "/user/wm2-born-again/config",
+              "menu-entry-name=Editor\n"
+              "menu-entry-command=/usr/bin/vim\n"
+              "menu-entry-category=Development\n"
+              "menu-entry-name=Mail\n"
+              "menu-entry-command=/usr/bin/mutt\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+    REQUIRE(form.menuEntries().size() == 2);
+
+    std::vector<AppEntry> withoutFirst(form.menuEntries().begin() + 1,
+                                       form.menuEntries().end());
+    REQUIRE(form.setMenuEntries(withoutFirst));
+    CHECK(form.menuEntries().size() == 1);
+    CHECK(form.dirty());
+
+    form.revert();
+    REQUIRE(form.menuEntries().size() == 2);
+    CHECK(form.menuEntries()[0].name == "Editor");
+    CHECK_FALSE(form.dirty());
+}
+
+TEST_CASE("the Menu page asks the window manager for its categories rather than listing any",
+          "[wm2_config_smoke]")
+{
+    const std::string page = sourceOf("apps/wm2-config/MenuPage.cpp");
+    REQUIRE_FALSE(page.empty());
+
+    // The categories the root menu shows are the window manager's answer. A
+    // second implementation of the discovery scan in the GUI would be a second
+    // answer, and the two would disagree the first time a .desktop file
+    // changed.
+    CHECK(page.find("kMenuCategoriesKey") != std::string::npos);
+    CHECK(page.find("menuCategoriesFrom(") != std::string::npos);   // the fallback
+    CHECK(page.find("DesktopEntry") == std::string::npos);
+    CHECK(page.find("scanAll") == std::string::npos);
+    CHECK(page.find("AppCache") == std::string::npos);
+
+    // And it carries no single setting: D-09 puts every one of those on the
+    // other two pages.
+    CHECK(keysDeclaredIn(page).empty());
+}
+
+
+// =============================================================================
+// The Menu page, against a running desktop
+// =============================================================================
+
+TEST_CASE("a row added through the page's model appears in the next root menu",
+          "[wm2_config_smoke]")
+{
+    const std::string home = makeConfigHome("frame-thickness=7\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    ProtocolClient client;
+    REQUIRE(client.connect(configSocketPath(fixture.display().c_str())));
+    REQUIRE(wmMenuEntries(client).empty());
+
+    Rect before;
+    REQUIRE(openRootMenuGeometry(d, driver, before));
+    closeRootMenu(d, driver);
+
+    // Exactly what Add does: build the row from the dialog's draft, append it
+    // to the list the page holds, and send the whole list.
+    MenuEntryDraft draft;
+    draft.name = "AddedFromTheSettingsWindow";
+    draft.command = "/bin/true";
+    draft.category = "ZzzACategoryNothingElseUses";
+
+    std::vector<AppEntry> rows = wmMenuEntries(client);
+    rows.push_back(draft.toEntry());
+    const std::string refusal = commitMenuEntries(client, rows);
+    INFO("refusal: " << refusal);
+    REQUIRE(refusal.empty());
+
+    Rect after;
+    const bool reopened = openRootMenuGeometry(d, driver, after);
+    closeRootMenu(d, driver);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO("menu before " << before.w << "x" << before.h
+                        << " after " << after.w << "x" << after.h);
+    CHECK(reopened);
+
+    // The menu the USER sees changed: one row taller for the category the
+    // entry brought with it, and wider because WindowManager::menu() sizes the
+    // popup to its widest label.
+    CHECK(after.h > before.h);
+    CHECK(after.w > before.w);
+
+    // ...and the window manager reports the row back in the grammar it was
+    // sent in, so the two ends are checked against each other.
+    const std::vector<AppEntry> reported = wmMenuEntries(client);
+    REQUIRE(reported.size() == 1);
+    CHECK(reported[0].name == "AddedFromTheSettingsWindow");
+    CHECK(reported[0].category == "ZzzACategoryNothingElseUses");
+}
+
+TEST_CASE("the category list offered by the page is the one the window manager reports",
+          "[wm2_config_smoke]")
+{
+    // D-12's dropdown. Asserted against what the window manager ANSWERS rather
+    // than against a list written here: the categories its root menu shows are
+    // its own, and a literal in this file would be a third opinion.
+    WmFixture fixture;
+    ProtocolClient client;
+    REQUIRE(client.connect(configSocketPath(fixture.display().c_str())));
+
+    const std::string reported = wmValue(client, kMenuCategoriesKey);
+    INFO("categories reported: '" << reported << "'");
+    const std::vector<std::string> offered = menuCategoriesFromValue(reported);
+    REQUIRE_FALSE(offered.empty());
+    // Custom is last, exactly where the root menu puts it.
+    CHECK(offered.back() == "Custom");
+
+    // A row in a category nothing else uses appears in the answer, which is
+    // what makes the answer the running menu's rather than a static list.
+    MenuEntryDraft draft;
+    draft.name = "CategoryProbe";
+    draft.command = "/bin/true";
+    draft.category = "ZzzProbeCategory";
+    std::vector<AppEntry> rows = wmMenuEntries(client);
+    rows.push_back(draft.toEntry());
+    REQUIRE(commitMenuEntries(client, rows).empty());
+
+    const std::vector<std::string> after =
+        menuCategoriesFromValue(wmValue(client, kMenuCategoriesKey));
+    INFO("categories after: " << wmValue(client, kMenuCategoriesKey));
+    CHECK(contains(after, "ZzzProbeCategory"));
+    CHECK(after.back() == "Custom");
+
+    // The key is READ-ONLY: a settings window may ask what the menu shows and
+    // may not dictate it, because the answer is derived from discovery plus
+    // the entry list and setting it would be setting a view of two things.
+    bool acked = false;
+    std::string refusal;
+    REQUIRE(client.sendSet(kMenuCategoriesKey, "Anything",
+                           [&](const ConfigMessage& reply) {
+                               if (reply.type == ConfigMessageType::Ack) acked = true;
+                               if (reply.type == ConfigMessageType::Error) refusal = reply.reason;
+                           }));
+    REQUIRE(client.pumpUntil([&]() { return acked || !refusal.empty(); }, 15000));
+    CHECK_FALSE(acked);
+    CHECK_FALSE(refusal.empty());
 }
