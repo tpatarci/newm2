@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 21
+open_count: 22
 waived_count: 8
 fixed_count: 9
-total_count: 38
-last_updated: 2026-09-06T20:05:07.666Z
+total_count: 39
+last_updated: 2026-09-06T21:48:51.990Z
 ---
 
 # Broken Windows Ledger
@@ -53,6 +53,7 @@ last_updated: 2026-09-06T20:05:07.666Z
 | 36 | 09 | unrun-verify |  |  | W-05 review-fix residual: the window manager now excludes the reload requester from D-08's broadcast, so each client gets exactly one line per reload of its own (asserted by [config_socket][reentrancy] 'the client that asked for a reload is not also broadcast to'). The RESIDUAL is untested and untestable from this fixture: a foreign notice can still land on a connection between that client SENDING its reload and its reply arriving, and no type-only classifier can tell it from the reply -- the version-1 contract is frozen and carries no correlator. Reaching it needs a second client's reload to be serviced in the window between our send and our service, which nothing outside the window manager can schedule. | open |  | 2026-09-06T19:03:57.766Z |  |
 | 37 | 09 | unrun-verify |  |  | W-06 review-fix residual: the CR-03 ownership arm (fstat's st_uid != geteuid) is now driven by a case that REACHES it -- [config_socket][directory] 'a socket directory owned by somebody else is refused' -- but that case can only run as a process able to give a directory away, so it SKIPS on this host (non-root; also skips under 'unshare -Ur', where chown to an unmapped uid returns EINVAL). It never passes vacuously: both the euid gate and the chown failure are SKIPs, not silent successes. The reachable half (the mkdir refusal) is a separate case scoped entirely inside a scratch TempDir, so no value of euid can make either case create anything at the filesystem root. | open |  | 2026-09-06T19:06:03.889Z |  |
 | 38 | 09 | deviation | src/Manager.cpp | 2049 | Review fix WR-13 narrowed plan 09-04's must-have T7 after its SUMMARY was written: a set of tab-font, menu-font or frame-thickness arriving while a modal grab is held is now REFUSED with a reason rather than applied; documented in docs/RELEASE-NOTES.md but the plan's truth 'applied without waiting for the grab to end' no longer holds for those three keys | open |  | 2026-09-06T20:05:07.666Z |  |
+| 39 | 09 | unrun-verify | apps/wm2-ctl/main.cpp | 214 | Codex PR-review fix P1 (wm2-ctl non-blocking socket, commit 3ef61cc): the CONNECT half is covered by a RED-first [wm_config_live] case (a saturated accept queue; the tool now exits 2 on its own 15 s deadline instead of hanging until the harness watchdog kills it). The SEND half -- the EAGAIN arm that now waits on POLLOUT instead of spinning -- has no automated case. Reaching it needs the peer to stop reading AND more than one socket buffer of data in flight; AF_UNIX stream flow control is charged to the SENDER's SO_SNDBUF (default ~208 KB on this host, not settable from outside the tool) while Linux caps a single argv string at MAX_ARG_STRLEN = 128 KB, so no invocation a test can construct fills it. Verified by reading instead: the arm is the same shape as ProtocolClient.cpp's, which WR-09 closed and which is exercised there. | open |  | 2026-09-06T21:48:51.990Z |  |
 
 ````json
 [
@@ -510,6 +511,18 @@ last_updated: 2026-09-06T20:05:07.666Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-06T20:05:07.666Z",
+    "resolved_at": null
+  },
+  {
+    "id": 39,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "apps/wm2-ctl/main.cpp",
+    "line": 214,
+    "description": "Codex PR-review fix P1 (wm2-ctl non-blocking socket, commit 3ef61cc): the CONNECT half is covered by a RED-first [wm_config_live] case (a saturated accept queue; the tool now exits 2 on its own 15 s deadline instead of hanging until the harness watchdog kills it). The SEND half -- the EAGAIN arm that now waits on POLLOUT instead of spinning -- has no automated case. Reaching it needs the peer to stop reading AND more than one socket buffer of data in flight; AF_UNIX stream flow control is charged to the SENDER's SO_SNDBUF (default ~208 KB on this host, not settable from outside the tool) while Linux caps a single argv string at MAX_ARG_STRLEN = 128 KB, so no invocation a test can construct fills it. Verified by reading instead: the arm is the same shape as ProtocolClient.cpp's, which WR-09 closed and which is exercised there.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T21:48:51.990Z",
     "resolved_at": null
   }
 ]
