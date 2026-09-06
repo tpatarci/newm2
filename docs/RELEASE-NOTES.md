@@ -68,12 +68,29 @@ The silhouette is unchanged — the sideways tab down the left edge of every
 window, with the title running down it and a small button at its top. What
 changed in this release is the surface.
 
-**Ubuntu, in bold, for tab labels and menus.** The chain is
+**Ubuntu, in bold, for tab labels and menus — by default.** The default chain is
 `Ubuntu,Noto Sans,DejaVu Sans,Sans`, so a host without the Ubuntu family still
 resolves something sensible; nothing about the fallback ladder changed. Bold is
 deliberate rather than decorative: on a server without the RENDER extension —
 TightVNC, for one — Xft falls back to unantialiased rendering, and bold survives
-that where lighter weights go ragged.
+that where lighter weights go ragged. The tab label is bold and the menu is not,
+which is why they are two settings rather than one.
+
+**The two fonts are settings now.** `tab-font` sets the face the sideways tab
+label is drawn in, `menu-font` the face of the root menu, each taking a
+fontconfig pattern — `Monospace:size=14`, `Noto Sans:bold:size=11` — in the
+config file or on the command line as `--tab-font=` and `--menu-font=`. There is
+no separate size key on purpose: the pattern already carries the size, and two
+ways of saying it could disagree. Leave either unset and you get exactly the
+face the previous release drew, character for character.
+
+A pattern fontconfig cannot resolve is substituted rather than refused, and the
+tab's fallback ladder is deliberately not configurable, so no font value can
+leave you without a window manager.
+
+**A font change takes effect the next time the window manager starts.** It is
+the one setting in this release that does not apply to windows already on
+screen; the configuration tool will apply it live.
 
 **A silver palette with black text.** The defaults are now a single cool-cast
 family, `#C8CACC` for the tab and menu, `#DCDEE0` for the frame, `#A8ACB0` for
@@ -97,7 +114,9 @@ fixed. Set a dark palette and you get bevels that belong to it. There are no
 separate keys to set, and so no way to set them inconsistently.
 
 All nine colours remain configurable — `tab-background`, `frame-background`,
-`menu-highlight` and the rest — in the config file and on the command line.
+`menu-highlight` and the rest — in the config file and on the command line, and
+as of this release the two fonts, `tab-font` and `menu-font`, are configurable
+the same way.
 
 ---
 
