@@ -376,7 +376,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 09-02-PLAN.md — wave 2 — The display-free halves: the newline-delimited JSON codec and the surgical config-file writer, behind a wire-contract decision checkpoint
+- [x] 09-02-PLAN.md — wave 2 — **COMPLETE 2026-09-06 (`09-02-SUMMARY.md`): DISC-01 frozen at `minimal` by human decision; `include/ConfigProtocol.h` (header-only, 25 `[config_protocol]` cases) and `include/ConfigFileWriter.h`/`src/ConfigFileWriter.cpp` (31 `[config_writer]` cases), both test binaries linking no display library.** Originally: The display-free halves: the newline-delimited JSON codec and the surgical config-file writer, behind a wire-contract decision checkpoint
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
