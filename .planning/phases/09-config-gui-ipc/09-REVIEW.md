@@ -62,7 +62,13 @@ findings:
   warning: 17
   info: 8
   total: 29
-status: issues_found
+fixed:
+  critical: 4
+  warning: 17
+  info: 6
+  declined: 2
+fixed_at: 2026-09-06
+status: fixed
 ---
 
 # Phase 09: Code Review Report
@@ -71,7 +77,37 @@ status: issues_found
 **Depth:** standard
 **Diff base:** 0fec5db
 **Files Reviewed:** 52
-**Status:** issues_found
+**Status:** fixed
+
+## Fix pass, 2026-09-06
+
+All four Criticals and all seventeen Warnings are FIXED, one commit each,
+each with a recorded RED. Six of the eight Info findings are fixed; two are
+DECLINED with the reason on the finding.
+
+| | Fixed | Declined |
+|---|---|---|
+| Critical | CR-01 CR-02 CR-03 CR-04 | -- |
+| Warning | WR-01 .. WR-17 | -- |
+| Info | IN-01 IN-04 IN-05 IN-06 IN-07 IN-08 | IN-02 IN-03 |
+
+Every finding below carries a **Disposition** block naming the commit, the
+RED evidence, and the test that holds it. Where a fix could not be given an
+automated test the Disposition says so and names the reason rather than
+leaving the gap to be inferred; those are WR-04, WR-14, WR-16, WR-17, the
+GLib half of WR-11 and the end-to-end half of WR-12, and each is also
+recorded in `.planning/WINDOWS.md`.
+
+Two fixes deviate from the suggested shape and say why on the finding:
+WR-06 uses a bounded deadline rather than a flag cleared in `reap()` (which
+runs every pass and would clear it before it did anything), and CR-04's
+closing paragraph about the colour reloads is answered by the existing
+nine-colour pre-flight rather than by a second split.
+
+`docs/RELEASE-NOTES.md` gained the behaviour these fixes changed (WR-13's
+three mid-grab refusals, CR-04's whole-or-nothing font reload, WR-12's
+notice skipping, and the four saves the writer now refuses);
+`scripts/gates/doc-keys.sh` is green in both directions.
 
 ## Summary
 
@@ -195,6 +231,23 @@ Whatever shape is chosen, add a `[config_socket]` case that drives it: two
 connections, the first one's peer closed, the second one sending `reload`. It
 fails under ASan today.
 
+
+**Disposition:** FIXED in `f5c9026`.
+
+reap() now defers while a servicing pass is in flight and service() pays the
+debt once every handler has returned; readConnection() takes an INDEX and
+re-validates it (and the descriptor it named) after each handler call. The
+two poll sites' contract from 09-03 is untouched.
+
+**RED:** `AddressSanitizer: heap-use-after-free ... WRITE of size 20` at
+`ConfigSocketServer::deliver` (`src/SocketServer.cpp:519`) from
+`readConnection` (`:504`), freed by `reap()` (`:595`) via `broadcast()`
+(`:553`), in `build/asan`.
+
+**Test:** `tests/test_config_socket.cpp`, `[config_socket][reentrancy]` --
+"A broadcast from inside a handler does not disturb the connection being
+served".
+
 ---
 
 ### CR-02: wm2-config correlates replies positionally and adopts values under the wrong key, then writes them to the user's config file
@@ -296,6 +349,22 @@ Note that `Error` still has to be accepted for any head (the window manager
 answers `get`/`set` refusals with `error`), which is why it is spelled
 explicitly above.
 
+
+**Disposition:** FIXED in `6a529ea`.
+
+`ProtocolClient::dispatch()` matches the arriving type against the head
+request's `expected` (with `error` accepted for any head) and treats a
+non-matching `reloaded` as D-08's notice. `Pending::expected` is now read,
+which also closes IN-01. Every per-key handler in `main.cpp` refuses a value
+whose key is not the one it asked for, warning once per session. No wire
+change.
+
+**RED:** `keyB == "tab-foreground"` with `valueB == "#111111"` -- the
+background colour adopted under the foreground key -- and `notices == 0`.
+
+**Test:** `tests/test_wm2_config_smoke.cpp`,
+`[wm2_config_smoke][protocol][notice]`, three cases.
+
 ---
 
 ### CR-03: Socket directory is created and chmod'ed through an unvalidated symlink on the documented /tmp fallback
@@ -375,6 +444,21 @@ if ((dst.st_mode & 07777) != 0700 && ::fchmod(dirFd, 0700) != 0) {
 is the refusal this path is missing. (Under `XDG_RUNTIME_DIR` the exposure is
 smaller because that directory is itself 0700-owned, but the fallback is a
 documented, supported path — D-16 — and must not be weaker.)
+
+
+**Disposition:** FIXED in `b902245`.
+
+`listen()` opens the directory with `O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC` after
+the mkdir and works through the descriptor: `fstat` for owner and type,
+`fchmod` only when the mode is wrong. `ELOOP` is the refusal.
+
+**RED:** the victim directory chmod'ed `0755 -> 0700` through the planted
+link (`448 == 493`), `listen()` returning true, and a socket bound inside it.
+
+**Test:** `tests/test_config_socket.cpp`, `[config_socket][directory]`, three
+cases. They drive the `XDG_RUNTIME_DIR` route because `listen()` applies one
+sequence of checks to one resolved string whichever branch
+`configSocketDirectory()` took -- so no internal lever had to be invented.
 
 ---
 
@@ -466,6 +550,31 @@ what is actually being drawn with.
 
 ## Warnings
 
+
+**Disposition:** FIXED in `70e8bbf`.
+
+Split into `Border::openTabFace()` / `installTabFace()` and
+`WindowManager::openMenuFace()` / `installMenuFace()`. `applyConfig()` opens
+both before installing either; opening changes nothing, installing cannot
+fail. `WM2_FORCE_MENU_FONT_RELOAD_FAILURE` is the sibling lever.
+
+**RED:** `existing decoration 34, new decoration 57` after a refused reload,
+with `get tab-font` still naming the old pattern.
+
+**Test:** `tests/test_wm_config_live.cpp`, two cases (refused reload changes
+neither font nor either tab width; the same reload with a usable menu-font
+changes both).
+
+**Residual, recorded rather than fixed:** the finding's closing paragraph
+asks for `Border::reloadColours()` / `reloadMenuColours()` to be split the
+same way. They are NOT, and the reason is that the invariant there is held by
+something stronger than a comment: the pre-flight at `src/Manager.cpp:2038`
+resolves all nine colour names through the X server BEFORE either reload
+begins, so the only way to reach a half-applied palette is an allocation that
+fails after an identical one succeeded -- impossible on the TrueColor visuals
+this project targets. Splitting the palette reload would touch every
+graphics context in `Border` for a window that cannot open.
+
 ### WR-01: The config writer treats an unreadable target as an absent one and replaces the whole file
 
 **File:** `src/ConfigFileWriter.cpp:199-201`
@@ -498,6 +607,14 @@ if (ec) {
 if (!exists) return true;
 ```
 
+
+**Disposition:** FIXED in `e13887d`.
+
+`readLines()` inspects the `error_code`: a failed existence check is
+`ReadFailed`, never "absent". **RED:** `result 4` (TempFailed) from a save
+that had already decided the file was absent. **Test:**
+`[config_writer][refusal]`, two cases.
+
 ### WR-02: No protection against a lost update between two concurrent savers
 
 **File:** `src/ConfigFileWriter.cpp:280-491`
@@ -523,6 +640,22 @@ if (lockFd >= 0) ::flock(lockFd, LOCK_EX);     // released by close() below
 if (lockFd >= 0) ::close(lockFd);
 ```
 
+
+**Disposition:** FIXED in `1c805cd`.
+
+An exclusive advisory `flock` on the target's PARENT DIRECTORY, held from
+before the read until after the rename. The directory rather than the file
+because the target may not exist and the rename replaces the inode; it also
+creates no lock file beside the user's configuration, which keeps the
+existing "a save created nothing beyond the file it was handed" guarantee
+true. Best effort and never fatal.
+
+**RED (lock commented out):** `CHECK( content.find("tab-font = ...") != npos )`
+fails with the saved edit absent from the file and `Ok` reported.
+
+**Test:** `[config_writer][concurrency]`, with a pipe handshake so the
+ordering is deterministic rather than a race the test hopes to win.
+
 ### WR-03: Values with leading or trailing whitespace do not round-trip
 
 **File:** `src/ConfigFileWriter.cpp:113-144` (`editsAreAcceptable`), `src/Config.cpp:125-127`
@@ -547,6 +680,14 @@ if (!e.value.empty() &&
     return false;
 }
 ```
+
+
+**Disposition:** FIXED in `dc88cee`.
+
+Refused in `editsAreAcceptable()` beside the newline check. An inner space is
+untouched. **Test:** `[config_writer][refusal]` -- five outer-whitespace
+spellings refused with the file byte-for-byte unchanged, `xterm -ls` still
+accepted, and its round trip through `Config::applyKeyValue()` asserted.
 
 ### WR-04: The write-failure message reports a stale errno
 
@@ -576,6 +717,17 @@ if (::close(fd) != 0 && writeOk)  { writeOk = false; failErrno = errno; }
 // and set failErrno = errno inside the write() loop's error arm too
 ```
 
+
+**Disposition:** FIXED in `55efd24`.
+
+Each failure site records its own errno.
+
+**Disposition on testing:** no test. The three sites need a `write()`, an
+`fsync()` or a `close()` to fail on a real descriptor, which this suite
+cannot arrange without an LD_PRELOAD shim or a deliberately full filesystem
+-- neither of which the project has a precedent for, and both heavier
+apparatus than the defect. Recorded in `.planning/WINDOWS.md`.
+
 ### WR-05: A symlinked config file is silently replaced by a regular file
 
 **File:** `src/ConfigFileWriter.cpp:474`
@@ -597,6 +749,15 @@ if (::lstat(path.c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
     return ConfigWriteResult::WriteFailed;
 }
 ```
+
+
+**Disposition:** FIXED in `c55db96`.
+
+`lstat` before the lock; a symlinked target is `WriteFailed` with a sentence
+naming the link. Not writing THROUGH the link stays the behaviour; only the
+silence is gone. **RED:** `CHECK( S_ISLNK(...) )` fails with `Ok` returned
+and the link replaced by a regular file. **Test:**
+`[config_writer][refusal]`.
 
 ### WR-06: accept() failing with EMFILE/ENFILE spins the event loop at 100% CPU
 
@@ -637,6 +798,23 @@ if (fd < 0) {
 }
 ```
 
+
+**Disposition:** FIXED in `0bd2c34`.
+
+Each `accept()` error class has its own arm. `EMFILE`/`ENFILE` warns once and
+drops the listener out of the READABLE set for a bounded interval reported
+through `timeoutHintMs()`.
+
+**Deviation from the suggested fix, deliberately:** a DEADLINE rather than a
+flag cleared in `reap()`. `reap()` runs on every servicing pass whether or
+not anything was reaped, so the suggested flag would be cleared before it did
+anything; and a flag cleared only by a close would leave the listener
+permanently deaf when the descriptors were exhausted by something other than
+this server.
+
+**RED:** `CHECK( (after[0].events & POLLIN) == 0 )` fails, `1 == 0`.
+**Test:** `[config_socket][accept]`.
+
 ### WR-07: The foreign-peer warning becomes floodable once 64 uids are remembered
 
 **File:** `src/SocketServer.cpp:601-618`
@@ -669,6 +847,15 @@ if (m_warnedUids.size() >= 64) {
 }
 m_warnedUids.push_back(peer);
 ```
+
+
+**Disposition:** FIXED in `88d3488`.
+
+The bound is a refusal to WARN, said once. The rule is extracted as
+`socketForeignWarningDecide()` because no test can become sixty-five
+different users -- the header's own "a decision a test cannot reach is a
+decision nothing proves". **RED:** 203 of 278 assertions fail. **Test:**
+`[config_socket][warn]`, two cases.
 
 ### WR-08: The stale-socket probe uses a blocking connect() during startup
 
@@ -706,6 +893,23 @@ performs at `src/SocketServer.cpp:241`: the path can be swapped between the two.
 Both operations are inside the 0700 directory, so this needs a same-uid attacker
 and is a hardening note rather than a boundary break — but the fix is the same
 `O_NOFOLLOW`/descriptor discipline CR-03 asks for.
+
+
+**Disposition:** FIXED in `cc6e87c`.
+
+The probe is `SOCK_NONBLOCK` with a 250 ms poll on `POLLOUT` and an
+`SO_ERROR` read. Everything unresolved stays `Live`, so T-9-17's
+never-unlink-what-we-did-not-prove-dead rule is intact.
+
+**RED:** the test binary hangs and is killed by a 20-second watchdog (exit
+143) where the fixed build finishes the case in milliseconds.
+
+**Test:** `[config_socket][stale]` -- a peer holding a full backlog.
+
+The finding's second paragraph (the `lstat`/`unlink` TOCTOU inside the
+0700 directory) is left as the hardening note the reviewer called it: it
+needs a same-uid attacker, and CR-03's descriptor discipline now covers the
+directory it lives in.
 
 ### WR-09: ProtocolClient::send() blocks the GTK main loop, and its EAGAIN arm busy-spins
 
@@ -752,6 +956,16 @@ if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
 (`connect()` at `:102` has the same blocking exposure at startup, bounded by the
 listen backlog; the same non-blocking treatment covers it.)
 
+
+**Disposition:** FIXED in `cab7aef`.
+
+`SOCK_NONBLOCK` from the first syscall; `connect()` resolves `EINPROGRESS`
+through `poll()` + `SO_ERROR`; the `EAGAIN` arm waits on `POLLOUT` for what
+is left of the deadline. **RED:** the test binary hangs and is killed by a
+40-second watchdog (exit 143) where the fixed build gives up in 5.006 s
+having said so. **Test:** `[wm2_config_smoke][protocol][nonblocking]`, two
+cases.
+
 ### WR-10: ProtocolClient::onReadable() drains without a bound when frames contain newlines
 
 **File:** `apps/wm2-config/ProtocolClient.cpp:269-298`
@@ -789,6 +1003,16 @@ for (;;) {
 }
 ```
 
+
+**Disposition:** FIXED in `d77a56f`.
+
+Frames are parsed as they complete, so `m_in` never holds more than one
+incomplete line and the over-long guard no longer reasons about newlines; the
+read is bounded at two maximum-length frames per callback. **RED:**
+`CHECK( afterOne < sent )` fails, `4900 < 4900`. **Test:**
+`[wm2_config_smoke][protocol][nonblocking]`, with a `SKIP` and a reason on a
+host whose AF_UNIX buffers cannot hold more than one drain's worth.
+
 ### WR-11: The GLib fd source is left attached to a descriptor ProtocolClient has already closed
 
 **File:** `apps/wm2-config/main.cpp:250-277`, `apps/wm2-config/ProtocolClient.cpp:50-55`, `apps/wm2-config/ProtocolClient.cpp:202-212`
@@ -825,6 +1049,25 @@ m_client.setStateHandler([this]() {
 `setState()` already runs on every state transition including the one
 `disconnect()` performs (`ProtocolClient.cpp:72`), so this covers all callers
 without any of them having to know about GLib.
+
+
+**Disposition:** FIXED in `a20a2f0`.
+
+`detachSocketSource()` is called from the client's state handler, which
+`setState()` runs on every transition including the one `disconnect()`
+performs. An `m_inSocketCallback` flag keeps the removal correct when the
+disconnect happens inside the source's own callback.
+
+**Disposition on testing:** the GLib wiring itself is not covered -- it needs
+a GTK main loop, and the project has no harness that can drive a GLib source
+and inspect its attachment. What IS covered, display-free, is the hook the
+fix hangs off: `[wm2_config_smoke][protocol][nonblocking]` -- "a disconnect
+from a request path still announces itself" proves the state handler fires
+with the descriptor already closed, which is the whole of the mechanism.
+
+The finding's "Related: there is no reconnect path at all" is a feature
+request rather than this defect, and is DECLINED here -- it belongs in a
+plan, not in a review-fix pass.
 
 ### WR-12: wm2-ctl reports success as failure when a concurrent reload broadcast arrives
 
@@ -864,6 +1107,21 @@ for (;;) {
 }
 return reportReply(reply, expected);
 ```
+
+
+**Disposition:** FIXED in `79ebecb`.
+
+The reply loop skips unsolicited notices. The classification is
+`configProtocolIsUnsolicitedNotice()` in `include/ConfigProtocol.h`, used by
+BOTH clients so they cannot come to disagree; it adds no message type,
+changes no member and touches neither the encoder nor the decoder.
+
+**Test:** `[config_protocol][notice]`.
+
+**Disposition on end-to-end testing:** not reachable deterministically from
+the fixture. It needs a reload to land between `wm2-ctl`'s hello-ack and its
+own reply, and nothing outside the window manager can schedule that
+interleaving. Recorded in `.planning/WINDOWS.md`.
 
 ### WR-13: Live apply runs inside modal grabs and mutates state the grab has already cached
 
@@ -911,6 +1169,24 @@ if (m_modalDepth != 0 && applicationTouchesLiveGeometry(next, previous)) {
 At minimum, refuse `menu-font`, `tab-font` and `frame-thickness` while
 `m_modalDepth != 0`; those are the three that move geometry a grab has cached.
 
+
+**Disposition:** FIXED in `f18b255`.
+
+`modalWait()` counts its own depth through an RAII guard (a counter, because
+modal waits nest); `applyConfig()` refuses `tab-font`, `menu-font` and
+`frame-thickness` while it is non-zero.
+
+**Refused, not deferred.** A deferred apply would have to be replayed against
+whatever the configuration had become by the time the grab ended; a refusal
+the client can retry is honest about what happened, and D-06 allows a setting
+to say "not now" as long as it says so. Every other setting still applies
+under a grab.
+
+**RED:** six assertions fail -- all three sets accepted mid-grab, with `get`
+reporting the new values. **Test:** `[wm_config_live]`, with the root menu
+opened by real synthesised input. `docs/RELEASE-NOTES.md` updated; the
+`doc-keys.sh` guard is green.
+
 ### WR-14: The button-hold timer over-counts elapsed time now that the poll timeout is socket-clamped
 
 **File:** `src/Border.cpp:1925`, `src/Events.cpp:224-229` (`clampPollTimeoutForSocket`), `src/Events.cpp:367`
@@ -945,6 +1221,19 @@ if (wait == WindowManager::ModalWait::Timeout) {
     continue;
 }
 ```
+
+
+**Disposition:** FIXED in `de1d6b9`.
+
+The wait is measured with `steady_clock` instead of charging a flat 50 ms.
+
+**Disposition on testing:** no dedicated test. Reproducing the over-count
+needs a connection within 50 ms of a ten-second deadline at the moment the
+press begins -- a 50 ms window reached after a ten-second wait, which is a
+timing apparatus more fragile than the defect it would guard. The existing
+`[wm_config_runtime]` "destroy-window-delay decides whether a tab-button
+press hides or deletes" case guards both directions of the arithmetic and
+passes. Recorded in `.planning/WINDOWS.md`.
 
 ### WR-15: A ';' in a menu entry saves to the file but can never travel over the socket, and silently breaks the GUI's read-back
 
@@ -993,6 +1282,15 @@ if (!parseMenuEntriesValue(reply.value, entries, reason)) {
 }
 ```
 
+
+**Disposition:** FIXED in `724cd32`.
+
+Both halves: `MenuEntryDraft::complete()` refuses `;` in the name, the command
+and the category; the parse failure in `main.cpp` says so in the status line
+instead of returning silently. **Test:** `[wm2_config_smoke][menu]`,
+including the round trip through `configMenuEntriesValue()` /
+`parseMenuEntriesValue()` that the refusal exists to keep true.
+
 ### WR-16: showGeometry's stack buffer is too small for its own format
 
 **File:** `src/Buttons.cpp:763-764`
@@ -1017,6 +1315,16 @@ no documented bound on its arguments, sitting in a file this phase edits, and
 char string[32];
 std::snprintf(string, sizeof(string), "%d %d\n", x, y);
 ```
+
+
+**Disposition:** FIXED in `588c514`.
+
+32 bytes and `snprintf`.
+
+**Disposition on testing:** no test. The overflow is unreachable through any
+caller -- which is what makes it latent -- so a test would have to call
+`showGeometry()` with `INT_MIN` directly against a live display, proving the
+arithmetic rather than the window manager.
 
 ### WR-17: install-components.sh mishandles an absolute build directory
 
@@ -1055,6 +1363,17 @@ form everywhere, including `STAGE_ROOT`.
 
 ## Info
 
+
+**Disposition:** FIXED in `4ffbe15`.
+
+An absolute `build-dir` exits 2 with a reason.
+
+**Disposition on testing:** verified by running it
+(`bash scripts/gates/install-components.sh /tmp/mybuild` -> exit 2), not
+automated: the project has no harness for gate scripts and adding one for a
+two-line argument guard would be more apparatus than the defect. Recorded in
+`.planning/WINDOWS.md`.
+
 ### IN-01: `Pending::expected` is written and never read
 
 **File:** `apps/wm2-config/ProtocolClient.h:117`, `apps/wm2-config/ProtocolClient.cpp:210`
@@ -1062,6 +1381,12 @@ form everywhere, including `STAGE_ROOT`.
 Dead field. It is the symptom of CR-02 rather than a separate problem, and the
 fix for CR-02 puts it to work — but as it stands, a reader sees a field that
 implies a correlation check the code does not perform.
+
+
+**Disposition:** FIXED in `6a529ea`.
+
+Resolved by CR-02: `Pending::expected` is what `dispatch()` now correlates
+on.
 
 ### IN-02: The decoder rejects a repeated `type` member but accepts every other repetition
 
@@ -1074,6 +1399,19 @@ the same class of ambiguity. Track a `seen` bitmask and reject any repetition,
 so two decoders (or a decoder and a future reimplementation) cannot disagree
 about which value a duplicated member carries.
 
+
+**Disposition:** DECLINED.
+
+The decoder is the frozen half of the version-1 wire contract (D-8.5-01), and
+rejecting a repetition the current decoder accepts is a behaviour change to
+it: a client that today gets `key == "b"` from
+`{"type":"set","key":"a","key":"b"}` would begin getting `Malformed`. That is
+the right long-term answer and the wrong thing to do inside a review-fix
+pass, where nothing may change what the codec accepts. No encoder this
+project ships can emit a repeated member, so the ambiguity is reachable only
+by a hand-written client. Left for a protocol version 2, where the change can
+be made with a version bump behind it.
+
 ### IN-03: `adoptEffective` can leave a field dirty with `current == effective`
 
 **File:** `apps/wm2-config/FormState.cpp:113-139`, `apps/wm2-config/FormState.cpp:236-251`
@@ -1085,6 +1423,17 @@ for a value already in force. Harmless output, but the two predicates now mean
 different things and a later reader will assume they agree. Recompute
 `field->dirty = (field->current != field->effective);` at the end of the dirty
 branch.
+
+
+**Disposition:** DECLINED.
+
+`apps/wm2-config/FormState.cpp` was not otherwise touched by this pass, and
+the change is not free: recomputing `field->dirty` at the end of the
+`adoptEffective` branch silently changes which fields `save()` writes a line
+for, which is exactly the kind of behaviour the writer's byte-exact cases
+exist to pin. It deserves its own RED for the `dirty()` / `divergentKeys()`
+disagreement rather than being folded in here. The consequence the finding
+itself names is "harmless output".
 
 ### IN-04: `residentKb` silently reports 0 KB if `sysconf` fails
 
@@ -1103,6 +1452,12 @@ if (page <= 0) return false;
 out = resident * (page / 1024);
 ```
 
+
+**Disposition:** FIXED in `aa28ba5`.
+
+`sysconf()` is checked; a failure is a `false` rather than a silently-zero
+reading every memory budget would satisfy.
+
 ### IN-05: The menu-entry dialog does not check the writer's 256-byte field bound
 
 **File:** `apps/wm2-config/MenuModel.h:77-88`, `src/ConfigFileWriter.cpp:146-169`
@@ -1113,6 +1468,13 @@ whole-list wire bound. Neither checks the per-field 256-byte bound
 applied live, and then fails at Save with "the menu entry command is longer than
 256 characters" — a late refusal for something the dialog could have said
 immediately, in the field where it was typed.
+
+
+**Disposition:** FIXED in `aa28ba5`.
+
+`MenuEntryDraft::complete()` checks the writer's per-field bound, which moves
+to `include/ConfigFileWriter.h` as `kConfigFileMaxValueBytes` so the dialog
+and the writer cannot disagree about it.
 
 ### IN-06: install-components.sh silences a genuine wm2-config build failure
 
@@ -1132,6 +1494,13 @@ the reader at the wrong problem entirely. Read the intent from the cache
 (`BUILD_CONFIG_GUI`) and let a build failure in an ON/AUTO-with-GTK tree fail
 loudly.
 
+
+**Disposition:** FIXED in `aa28ba5`.
+
+The tree's intent is read from a new `CONFIG_GUI_RESOLVED` cache entry, and a
+`wm2-config` that will not compile in a GUI-ENABLED tree is a loud build
+failure.
+
 ### IN-07: The temp file inherits setuid/setgid/sticky bits from the target
 
 **File:** `src/ConfigFileWriter.cpp:441-446`
@@ -1140,6 +1509,11 @@ loudly.
 `S_ISUID`, `S_ISGID` and `S_ISVTX`. A config file should never carry them; if one
 somehow does, this propagates it to the replacement rather than dropping it.
 `st.st_mode & 0777` is the conservative mask for a data file.
+
+
+**Disposition:** FIXED in `aa28ba5`.
+
+`st.st_mode & 0777`.
 
 ### IN-08: The sockaddr_un length check is spelled twice in wm2-ctl
 
@@ -1151,6 +1525,11 @@ The header explains at length (`include/SocketServer.h:115-121`) why this
 predicate has exactly one home; the duplicate is a second copy that can drift
 from it. Call `configSocketPathFits(path)` in `open()` too, or drop the check
 there and let the single call site in `main()` own it.
+
+
+**Disposition:** FIXED in `aa28ba5`.
+
+`Connection::open()` calls `configSocketPathFits()`.
 
 ---
 

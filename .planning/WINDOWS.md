@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 11
+open_count: 17
 waived_count: 8
 fixed_count: 9
-total_count: 28
-last_updated: 2026-09-06T16:31:16.616Z
+total_count: 34
+last_updated: 2026-09-06T17:35:49.158Z
 ---
 
 # Broken Windows Ledger
@@ -43,6 +43,12 @@ last_updated: 2026-09-06T16:31:16.616Z
 | 26 | 09 | unmet-truth | scripts/gates/doc-keys.sh |  | Direction 2 of the doc-keys gate does not catch a bare unhyphenated word presented in plain backticks that is not an accepted key; in prose that form is indistinguishable from an ordinary word. Hyphenated inventions and 'word = value' config lines are caught. Stated in the script. | open |  | 2026-09-06T16:20:59.930Z |  |
 | 27 | 09 | unmet-truth | .planning/phases/09-config-gui-ipc/evidence/remote-desktop/README.md |  | The first wm2-config on a freshly started X server holds ~101 MB and every later one ~50 MB, reproducibly on Xvfb and TigerVNC. Two candidate causes ruled out (per-user fontconfig cache; being the first client). The cause was not determined. | open |  | 2026-09-06T16:21:00.108Z |  |
 | 28 | 09 | deviation | .planning/phases/08.5-v1.0-closeout/evidence/tightvnc/capabilities.txt |  | Pre-existing: capabilities.txt files committed under 08- and 08.5- evidence contain this machine's hostname from 'uname -n'. The public repo prohibits host identifiers. The capture script was fixed in 09-09; the already-committed captures were NOT rewritten (out of this plan's scope). | fixed | Orchestrator scrub after wave 9: the hostname replaced by the placeholder <workstation> in all 16 tracked files (15 evidence files under phases 08 and 08.5, one comment and one diagnostic string in tests/test_wm_resource.cpp). The pushed history still carries the name; whether to rewrite it is the operator's decision. | 2026-09-06T16:21:00.292Z | 2026-09-06T16:31:16.616Z |
+| 29 | 09 | unrun-verify |  |  | WR-04 review fix: the write-failure errno is now captured at each failure site, but no case drives it. The three sites need write(), fsync() or close() to fail on a real descriptor, which needs an LD_PRELOAD shim or a deliberately full filesystem -- neither has a precedent in this project, and both are heavier apparatus than the defect. | open |  | 2026-09-06T17:35:48.226Z |  |
+| 30 | 09 | unrun-verify |  |  | WR-14 review fix: the button-hold tick is now measured rather than assumed, but no case drives the over-count. Reproducing it needs a connection within 50 ms of its ten-second silence deadline at the moment the press begins -- a 50 ms window reached after a ten-second wait. The existing [wm_config_runtime] destroy-window-delay case guards both directions of the arithmetic. | open |  | 2026-09-06T17:35:48.425Z |  |
+| 31 | 09 | unrun-verify |  |  | WR-16 review fix: showGeometry's buffer is now 32 bytes and snprintf, but the overflow is unreachable through any caller -- every one passes screen-clamped coordinates -- so a case would have to call the method with INT_MIN directly and would prove the arithmetic rather than the window manager. | open |  | 2026-09-06T17:35:48.610Z |  |
+| 32 | 09 | unrun-verify |  |  | WR-17 review fix: install-components.sh now refuses an absolute build-dir (verified by running it: exit 2 with the reason). Not automated -- the project has no harness for gate scripts and one built for a two-line argument guard would be more apparatus than the defect. | open |  | 2026-09-06T17:35:48.788Z |  |
+| 33 | 09 | unrun-verify |  |  | WR-11 review fix: the GLib source is now detached from ProtocolClient's state handler, but the GLib wiring itself has no case -- it needs a GTK main loop, and the project has no harness that can drive a GLib source and inspect its attachment. The hook the fix hangs off IS covered display-free ([wm2_config_smoke][protocol][nonblocking], 'a disconnect from a request path still announces itself'). | open |  | 2026-09-06T17:35:48.974Z |  |
+| 34 | 09 | unrun-verify |  |  | WR-12 review fix: wm2-ctl now skips an unsolicited reloaded, and the classification is unit-tested ([config_protocol][notice]). The end-to-end interleaving is not reachable deterministically from the fixture: it needs a reload to land between wm2-ctl's hello-ack and its own reply, and nothing outside the window manager can schedule that. | open |  | 2026-09-06T17:35:49.158Z |  |
 
 ````json
 [
@@ -381,6 +387,78 @@ last_updated: 2026-09-06T16:31:16.616Z
     "reason": "Orchestrator scrub after wave 9: the hostname replaced by the placeholder <workstation> in all 16 tracked files (15 evidence files under phases 08 and 08.5, one comment and one diagnostic string in tests/test_wm_resource.cpp). The pushed history still carries the name; whether to rewrite it is the operator's decision.",
     "recorded_at": "2026-09-06T16:21:00.292Z",
     "resolved_at": "2026-09-06T16:31:16.616Z"
+  },
+  {
+    "id": 29,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "",
+    "line": null,
+    "description": "WR-04 review fix: the write-failure errno is now captured at each failure site, but no case drives it. The three sites need write(), fsync() or close() to fail on a real descriptor, which needs an LD_PRELOAD shim or a deliberately full filesystem -- neither has a precedent in this project, and both are heavier apparatus than the defect.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T17:35:48.226Z",
+    "resolved_at": null
+  },
+  {
+    "id": 30,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "",
+    "line": null,
+    "description": "WR-14 review fix: the button-hold tick is now measured rather than assumed, but no case drives the over-count. Reproducing it needs a connection within 50 ms of its ten-second silence deadline at the moment the press begins -- a 50 ms window reached after a ten-second wait. The existing [wm_config_runtime] destroy-window-delay case guards both directions of the arithmetic.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T17:35:48.425Z",
+    "resolved_at": null
+  },
+  {
+    "id": 31,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "",
+    "line": null,
+    "description": "WR-16 review fix: showGeometry's buffer is now 32 bytes and snprintf, but the overflow is unreachable through any caller -- every one passes screen-clamped coordinates -- so a case would have to call the method with INT_MIN directly and would prove the arithmetic rather than the window manager.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T17:35:48.610Z",
+    "resolved_at": null
+  },
+  {
+    "id": 32,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "",
+    "line": null,
+    "description": "WR-17 review fix: install-components.sh now refuses an absolute build-dir (verified by running it: exit 2 with the reason). Not automated -- the project has no harness for gate scripts and one built for a two-line argument guard would be more apparatus than the defect.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T17:35:48.788Z",
+    "resolved_at": null
+  },
+  {
+    "id": 33,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "",
+    "line": null,
+    "description": "WR-11 review fix: the GLib source is now detached from ProtocolClient's state handler, but the GLib wiring itself has no case -- it needs a GTK main loop, and the project has no harness that can drive a GLib source and inspect its attachment. The hook the fix hangs off IS covered display-free ([wm2_config_smoke][protocol][nonblocking], 'a disconnect from a request path still announces itself').",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T17:35:48.974Z",
+    "resolved_at": null
+  },
+  {
+    "id": 34,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "",
+    "line": null,
+    "description": "WR-12 review fix: wm2-ctl now skips an unsolicited reloaded, and the classification is unit-tested ([config_protocol][notice]). The end-to-end interleaving is not reachable deterministically from the fixture: it needs a reload to land between wm2-ctl's hello-ack and its own reply, and nothing outside the window manager can schedule that.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T17:35:49.158Z",
+    "resolved_at": null
   }
 ]
 ````
