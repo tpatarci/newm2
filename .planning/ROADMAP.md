@@ -2,7 +2,7 @@
 
 ## Overview
 
-Modernize wm2 from a 1997 pre-standard C++ codebase into a buildable, maintainable C++17 window manager. Start with build infrastructure and RAII wrappers so every subsequent phase has a solid foundation. Modernize the event loop, then client lifecycle. Rebuild the visual identity with Xft while preserving the classic sideways-tab look. Add runtime configuration, EWMH compliance, and application discovery. Harden for VNC/Xrandr and add focus rules. Cap it off with a GTK3 config GUI so non-programmers can configure the WM visually.
+Modernize wm2 from a 1997 pre-standard C++ codebase into a buildable, maintainable C++17 window manager. Start with build infrastructure and RAII wrappers so every subsequent phase has a solid foundation. Modernize the event loop, then client lifecycle. Rebuild the visual identity with Xft while preserving the classic sideways-tab look. Add runtime configuration, EWMH compliance, and application discovery. Harden for VNC/Xrandr and add focus rules. Cap it off with a GTK3 config GUI so non-programmers can configure the WM visually, then close with a toolkit-free Xlib edition of that tool so the same configuration works on a plain vanilla X server.
 
 ## Phases
 
@@ -23,6 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [~] **Phase 8: Xrandr + VNC Compatibility + Focus/Rules** - Display config, extension fallbacks, VNC compatibility, focus stealing prevention, window rules. **All 14 plans complete; 5 of 7 success criteria verified.** Two remain unmet and are declared, not stubbed: four-target remote-desktop coverage (2 of 4 exercised — XDIS-05) and WM_NAME matching (RULES-01). See VERIFICATION.md.
 - [ ] **Phase 8.5: v1.0 Closeout** *(INSERTED 2026-08-30)* - Finish the three requirements Phase 8 left Pending: title matching for window rules plus the config key rename (RULES-01), the two remaining remote-desktop targets (XDIS-05), and the interaction checklist as a per-item table (TEST-08). Inserted **before** Phase 9 because RULES-01 changes the config surface the GUI will expose.
 - [ ] **Phase 9: Config GUI + IPC** - GTK3 config tool, Unix domain socket IPC, live configuration changes, optional dependency
+- [ ] **Phase 10: Native X11 Configuration Tool** *(added 2026-09-06, last in line)* - A second `wm2-config` front end written against plain Xlib (Xft when present), no toolkit, core protocol only; same socket, same file writer, same pages as the GTK tool
 
 ## Phase Details
 
@@ -406,10 +407,31 @@ Plans:
 
 - [ ] 09-09-PLAN.md — wave 9 — "Configure…" on the root menu, the documentation-parity gate, checklist rows, and the measured remote-desktop pass
 
+### Phase 10: Native X11 Configuration Tool
+
+**Goal**: The configuration tool runs anywhere the window manager runs. A second front end, built against plain Xlib with no widget toolkit, offers the same three pages and the same editing semantics as the GTK tool, over the same socket and the same config file, on a bare X server with nothing but the core protocol.
+**Depends on**: Phase 9
+**Requirements**: XCFG-01, XCFG-02, XCFG-03, XCFG-04, XCFG-05
+**Success Criteria** (what must be TRUE):
+
+  1. A native binary links against libX11 (and libXft when available) and nothing toolkit-shaped; `ldd` shows no GTK, GLib, Cairo, or Pango
+  2. It runs on an X server that offers only the core protocol: no Shape, Xrandr, Render, or XInput2 required, and with Render absent it falls back to core X fonts rather than refusing to start
+  3. Every operation the GTK tool supports (Appearance, Behaviour, Menu pages; per-setting and per-page reset; Save/Discard/Cancel on close; reload refresh; file-only mode when no WM is running) works identically, driven by the Phase 9 socket protocol and surgical file writer unchanged
+  4. It is exercised on all four remote-desktop targets from Phase 8 (TigerVNC, TightVNC, XRDP, X2Go) and under Xvfb in the test suite, with RSS recorded
+  5. The widget set it needs (button, text field, toggle, list, colour and font pickers) lives in the tree under the project's MIT licence, with no bundled third-party toolkit
+
+**Plans**: 0 plans
+
+*(Added 2026-09-06 during Phase 9 execution, at the operator's direction, after the observation that hand-rolling the GUI's widgets in raw Xlib would be a project of its own. That widget set is the substantial part, which is why this phase sits last: it must not delay Phase 9's GTK tool, and it consumes Phase 9's socket, codec, writer, and page design as fixed inputs. The GTK tool stays; this adds an alternative for servers where GTK is unwanted or unavailable. Compatibility with plain vanilla X is the governing constraint, not feature parity beyond what the GTK tool already does.)*
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 10 to break down)
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 9
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 9 -> 10
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -423,3 +445,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 
 | 8. Xrandr + VNC + Focus/Rules | 14/14 | Verified with gaps | 2026-08-30 |
 | 8.5 v1.0 Closeout *(INSERTED)* | 12/13 (08.5-07 superseded) | Shipped: PR #6 merged `0fec5db`; verification `human_needed`; security review pending | 2026-09-05 |
 | 9. Config GUI + IPC | 3/9 | In Progress|  |
+| 10. Native X11 Configuration Tool | 0/0 | Not started (added 2026-09-06) | - |

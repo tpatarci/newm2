@@ -504,6 +504,10 @@ Recent decisions affecting current work:
 - 08.5-09 lead, recorded and NOT attributed: trip-r-3/-4/-5 each carry a BadWindow cascade (X_CreateWindow, X_ReparentWindow, X_MapWindow, X_ChangeSaveSet, all on window 0x80003b) -- the WM framing a window that no longer exists. trip-r-1 and trip-r-2 have clean 12-line stderr and still failed to frame, so it is 3 of 5 and NOT the universal signature. Starting point for the re-plan; a refutation of one mechanism is not an attribution to another.
 - **08.5-10 HALTED AT TASK 3 -- the blocking-human operator ruling has NOT been taken.** The measurement is complete and committed (evidence/gates/wakeup/, 40 eight-channel bundles, measurement.log, README with one **Proposed outcome:** line reading ATTRIBUTED). What does NOT exist: any **Attribution outcome:** line, any **Terminal disposition:** line, and any round-4 append to evidence/gates/attribution/README.md -- that file is byte-identical to the pin 397310a (diff removes 0 and adds 0). Nothing records 08.5-07 as the flake fix; 08.5-05/-07/-08 stay held. Under the precommitted terminal rule ATTRIBUTED -> FIX-PLAN and everything else -> one of SHIP-WITH-RECORDED-DEFECT | REVERSE-RULING-B | DESCOPE-FROM-V1.0; no branch schedules another attribution round.
 
+### Roadmap Evolution
+
+- Phase 10 added 2026-09-06 (operator direction, during Phase 9 wave 3): Native X11 Configuration Tool. A toolkit-free Xlib edition of `wm2-config`, core protocol only, same socket and file writer as Phase 9. Last in the roadmap; depends on Phase 9; requirements XCFG-01..05.
+
 ## Deferred Items
 
 Items acknowledged and carried forward from previous milestone close:

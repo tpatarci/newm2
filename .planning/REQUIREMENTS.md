@@ -118,6 +118,14 @@
 - **PLSH-02**: _NET_WM_PING for hung window detection
 - **PLSH-03**: Animated window operations (optional, with config toggle)
 
+### Native X11 Configuration Tool (added 2026-09-06, Phase 10, last in line)
+
+- [ ] **XCFG-01**: A configuration front end built against plain Xlib (Xft when available) with no widget toolkit dependency, offering the same three pages and the same editing operations as the GTK tool
+- [ ] **XCFG-02**: Uses only the X11 core protocol: no required extensions; with Render or Xft unavailable it falls back to core X fonts and still runs
+- [ ] **XCFG-03**: Speaks the Phase 9 socket protocol unchanged and uses the same surgical config-file writer, including file-only mode when no window manager is running
+- [ ] **XCFG-04**: Verified under Xvfb in the test suite and on the four remote-desktop targets (TigerVNC, TightVNC, XRDP, X2Go), with RSS recorded
+- [ ] **XCFG-05**: The widget set it needs lives in the tree under the project's MIT licence; no bundled third-party toolkit
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -187,6 +195,11 @@
 | CGUI-03 | Phase 9 | Pending |
 | CGUI-04 | Phase 9 | Pending |
 | CGUI-05 | Phase 9 | Pending |
+| XCFG-01 | Phase 10 | Pending |
+| XCFG-02 | Phase 10 | Pending |
+| XCFG-03 | Phase 10 | Pending |
+| XCFG-04 | Phase 10 | Pending |
+| XCFG-05 | Phase 10 | Pending |
 | TEST-01 | Phase 1 | Complete |
 | TEST-02 | Phase 1 | Complete |
 | TEST-03 | Phase 3 | Complete |
