@@ -1203,6 +1203,14 @@ if(BUILD_TESTS)
     target_include_directories(test_desktopentry PRIVATE
         ${CMAKE_SOURCE_DIR}/include
     )
+    # The [packaging] cases parse the two .desktop files this repository SHIPS,
+    # out of the source tree, rather than a copy written by the test -- so the
+    # test needs to know where the source tree is. Same shape as the
+    # WM2_SOURCE_DIR definitions the [wm_socket] and [wm2_config_smoke] targets
+    # already carry for the same reason.
+    target_compile_definitions(test_desktopentry PRIVATE
+        WM2_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    )
     catch_discover_tests(test_desktopentry ADD_TAGS_AS_LABELS)
 
     # BinaryScanner (ELF DT_NEEDED) unit tests (pure data transformation, no X11 needed)

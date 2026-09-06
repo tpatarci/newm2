@@ -7,6 +7,9 @@
 #include <cstdlib>
 #include <fstream>
 #include <string>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <vector>
 
 // Helper: write a temp .desktop file and return its path (mirrors
 // tests/test_config.cpp's writeTempConfig)
@@ -268,4 +271,148 @@ TEST_CASE("parseFile handles a CRLF-terminated blank line without crashing", "[d
     REQUIRE(result->name == "Test");
 
     removeTempFile(path);
+}
+
+// =============================================================================
+// The two .desktop files this repository ships (plan 09-08, D-11 and D-19)
+//
+// These cases parse the REAL files out of the source tree rather than a copy
+// written here. The claim being checked is about what gets INSTALLED: an entry
+// that this project's own scanner rejects would never reach the root menu, no
+// matter how well-formed it looked to a human reader, and "it will show up
+// under Settings" is otherwise a promise nobody can test until after somebody
+// has installed the package on their machine.
+//
+// The stub-binary dance below is not scaffolding around the assertion -- it IS
+// part of it. Both entries carry a `TryExec`, so what the parser returns
+// depends on whether the named binary is installed, which is exactly the
+// behaviour D-11 wants (no entry rather than a menu item that fails to launch)
+// and exactly what T-9-47 relies on.
+// =============================================================================
+
+#ifndef WM2_SOURCE_DIR
+#error "WM2_SOURCE_DIR must be defined for the packaging-entry cases"
+#endif
+
+namespace {
+
+// A directory of stub executables, created under the CURRENT working directory
+// -- which ctest sets to the build tree -- rather than at a fixed path under
+// the system temporary directory, for the same reason the gate scripts stage
+// there (T-9-48). Removed by the destructor.
+class StubBinDir {
+public:
+    explicit StubBinDir(const std::vector<std::string>& names) {
+        char tmpl[] = "wm2-desktopentry-stubbin-XXXXXX";
+        const char* made = mkdtemp(tmpl);
+        REQUIRE(made != nullptr);
+        m_dir = made;
+        for (const auto& n : names) {
+            const std::string p = m_dir + "/" + n;
+            {
+                std::ofstream out(p);
+                out << "#!/bin/sh\nexit 0\n";
+            }
+            REQUIRE(chmod(p.c_str(), 0755) == 0);
+            m_files.push_back(p);
+        }
+    }
+    ~StubBinDir() {
+        for (const auto& f : m_files) std::remove(f.c_str());
+        rmdir(m_dir.c_str());
+    }
+    StubBinDir(const StubBinDir&) = delete;
+    StubBinDir& operator=(const StubBinDir&) = delete;
+
+    const std::string& path() const { return m_dir; }
+
+private:
+    std::string              m_dir;
+    std::vector<std::string> m_files;
+};
+
+// $PATH restricted to exactly one directory for the duration, restored after.
+class ScopedPath {
+public:
+    explicit ScopedPath(const std::string& only) {
+        const char* orig = std::getenv("PATH");
+        m_had = (orig != nullptr);
+        if (m_had) m_orig = orig;
+        setenv("PATH", only.c_str(), 1);
+    }
+    ~ScopedPath() {
+        if (m_had) {
+            setenv("PATH", m_orig.c_str(), 1);
+        } else {
+            unsetenv("PATH");
+        }
+    }
+    ScopedPath(const ScopedPath&) = delete;
+    ScopedPath& operator=(const ScopedPath&) = delete;
+
+private:
+    std::string m_orig;
+    bool        m_had = false;
+};
+
+std::string packagingFile(const char* name) {
+    return std::string(WM2_SOURCE_DIR) + "/packaging/" + name;
+}
+
+// The file must be READABLE before anything is asserted about the parse. A
+// packaging file that is missing and a packaging file the scanner rejects both
+// come back as std::nullopt, and those are very different failures to be told
+// about.
+void requireReadable(const std::string& path) {
+    INFO("packaging file: " << path);
+    std::ifstream in(path);
+    REQUIRE(in.good());
+}
+
+} // namespace
+
+TEST_CASE("the shipped wm2-config entry parses and lands under Settings",
+          "[desktopentry][packaging]") {
+    const std::string path = packagingFile("wm2-config.desktop");
+    requireReadable(path);
+
+    StubBinDir bins({"wm2-config"});
+    ScopedPath onlyStubs(bins.path());
+
+    auto result = DesktopEntry::parseFile(path);
+    REQUIRE(result.has_value());
+    REQUIRE(result->category == "Settings");
+    REQUIRE(result->execArgv.size() == 1);
+    REQUIRE(result->execArgv[0] == "wm2-config");
+    REQUIRE_FALSE(result->name.empty());
+    REQUIRE(result->source == AppEntry::Source::Desktop);
+}
+
+TEST_CASE("the shipped wm2-config entry yields no menu entry when the binary is not installed",
+          "[desktopentry][packaging]") {
+    const std::string path = packagingFile("wm2-config.desktop");
+    requireReadable(path);
+
+    // A PATH containing nothing at all: the config-gui component is not
+    // installed, and the entry must therefore produce no menu item rather than
+    // one that fails when clicked.
+    StubBinDir empty({});
+    ScopedPath onlyStubs(empty.path());
+
+    REQUIRE_FALSE(DesktopEntry::parseFile(path).has_value());
+}
+
+TEST_CASE("the shipped session entry names the window manager and survives D-05 filtering",
+          "[desktopentry][packaging]") {
+    const std::string path = packagingFile("wm2-born-again.desktop");
+    requireReadable(path);
+
+    StubBinDir bins({"wm2-born-again"});
+    ScopedPath onlyStubs(bins.path());
+
+    auto result = DesktopEntry::parseFile(path);
+    REQUIRE(result.has_value());
+    REQUIRE(result->name == "wm2-born-again");
+    REQUIRE(result->execArgv.size() == 1);
+    REQUIRE(result->execArgv[0] == "wm2-born-again");
 }
