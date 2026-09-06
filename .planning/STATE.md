@@ -4,15 +4,15 @@ milestone: v1.0
 current_phase: 09
 current_phase_name: Config GUI + IPC
 status: executing
-stopped_at: Completed 09-06-PLAN.md
-last_updated: "2026-09-06T12:02:25.902Z"
+stopped_at: Completed 09-07-PLAN.md
+last_updated: "2026-09-06T13:15:38.182Z"
 last_activity: 2026-09-06
-state_head: 22323a3e3b0185b442b9007b3857f0db84f089ae
+state_head: c134ea9e42c466bd61d27a83fa00560f5cf0b19d
 progress:
   total_phases: 11
   completed_phases: 4
   total_plans: 58
-  completed_plans: 54
+  completed_plans: 55
 milestone_name: milestone
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 ## Current Position
 
 Phase: 09 (Config GUI + IPC) — EXECUTING
-Plan: 7 of 9
+Plan: 8 of 9
 Status: Ready to execute
 Progress: [████████░░] 81% (7/9 phases complete)
 
@@ -364,6 +364,7 @@ Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
 | Phase 09 P04 | 30 min | 3 tasks | 13 files |
 | Phase 09 P05 | 1h 40m | 3 tasks | 17 files |
 | Phase 09 P06 | 65 min | 3 tasks | 13 files |
+| Phase 09 P07 | 105 min | 3 tasks | 21 files |
 
 ## Accumulated Context
 
@@ -485,6 +486,9 @@ Recent decisions affecting current work:
 - [Phase 09]: 09-05: D-08's reload notice reuses the already-frozen 'reloaded' type and carries nothing but its type, so version 1 gains no twelfth message and the notice cannot become a second copy of the settings (T-9-31)
 - [Phase 09]: 09-05: D-06's per-setting next-start fallback was NOT exercised -- every setting the GUI will offer applies live, and docs/RELEASE-NOTES.md names no exception
 - [Phase 09]: 09-05: the menu-open deferral (T-9-32) is a structural mitigation with no mutation-proof case -- removing it leaves the held-open case green in both trees, recorded in WINDOWS.md rather than claimed as covered
+- [Phase 09]: The window manager answers a read-only 'menu-categories' key on the existing get verb, so the settings window's category dropdown asks rather than re-running discovery. No twelfth message type; refused on set by construction.
+- [Phase 09]: The menu command tokeniser was hoisted to configTokeniseCommand() in include/Config.h -- one whitespace split with two callers, the config parser and the GUI dialog, because 'exactly the same way' is only true of one function.
+- [Phase 09]: FormField::staleUnderEdit marks the DISAGREEMENT a reload created, not the edit: a reload bringing exactly what the user typed marks nothing, or the mark would mean what 'dirty' already means.
 
 ### Pending Todos
 
@@ -535,6 +539,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-06T12:02:25.372Z
-Stopped at: Completed 09-06-PLAN.md
+Last session: 2026-09-06T13:15:29.820Z
+Stopped at: Completed 09-07-PLAN.md
 Resume file: None

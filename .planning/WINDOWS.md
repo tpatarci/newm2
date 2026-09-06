@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 4
+open_count: 8
 waived_count: 8
 fixed_count: 7
-total_count: 19
-last_updated: 2026-09-06T12:15:16.921Z
+total_count: 23
+last_updated: 2026-09-06T13:15:05.034Z
 ---
 
 # Broken Windows Ledger
@@ -34,6 +34,10 @@ last_updated: 2026-09-06T12:15:16.921Z
 | 17 | 09 | deviation | tests/test_wm_config_live.cpp | 793 | The reload-unreadable-file case SKIPs when euid==0: root can read a mode-000 file, so on a root-only host the 'reload names the file and changes nothing' evidence is not collected | open |  | 2026-09-06T09:16:12.670Z |  |
 | 18 | 09 | unrun-verify | tests/test_wm_config_live.cpp |  | The menu-open deferral (T-9-32) has no mutation-proof case: removing 'if (m_menuOpen)' leaves 'a menu held open across a menu-entry change is not disturbed' green in both the debug and the ASan tree, because the category vector's buffer is reused rather than freed | open |  | 2026-09-06T10:53:30.413Z |  |
 | 19 | 09 | unrun-verify | scripts/gates/build-all.sh |  | The release tree and its link audit were not run for plan 09-06; only debug and asan were gated | fixed | Release gate run by the orchestrator after wave 6 closed: build-all.sh release green, 498/498, link audit OK (24 entries, all in the intended runtime set) | 2026-09-06T12:03:32.878Z | 2026-09-06T12:15:16.921Z |
+| 20 | 09 | deviation | tests/test_wm2_config_smoke.cpp |  | Eight of the nine Behaviour settings are proven here only as far as the window manager ADOPTING the value through the GUI's own FormState and ProtocolClient; that adopting it changes an observable behaviour is owned per setting by the [wm_config_live] cases from 09-05. Only click-to-focus has both halves in one case (the tracer). The join -- the value that arrived through the GUI's client is the value whose behaviour changed -- is an inference for the other eight | open |  | 2026-09-06T13:15:04.446Z |  |
+| 21 | 09 | deviation | tests/test_wm2_config_smoke.cpp |  | 'a reload notice arriving with an entry dialog open leaves the dialog's contents alone' is structural: it holds a MenuEntryDraft across adoptEffectiveMenuEntries() and adds a comment-stripped source guard that MenuPage::refreshFromForm() names no dialog. The live arm -- a real reload while gtk_dialog_run() is spinning -- is not driven, because reaching it means synthesising input into a modal GTK dialog | open |  | 2026-09-06T13:15:04.636Z |  |
+| 22 | 09 | deviation | apps/wm2-config/MenuPage.cpp |  | The entry dialog states the name-override rule unconditionally rather than only when the typed name matches a discovered application. Detecting a match needs the discovered application NAMES and no protocol key exposes them; publishing the user's installed-application list over the socket was judged a wider surface than the note is worth | open |  | 2026-09-06T13:15:04.837Z |  |
+| 23 | 09 | unrun-verify | scripts/gates/build-all.sh |  | The release tree and its link audit were not run for plan 09-07; only debug (526/526) and asan were gated. No link line of a shipped target changed in this plan -- only the test target gained libXtst -- but that is an argument rather than a run | open |  | 2026-09-06T13:15:05.034Z |  |
 
 ````json
 [
@@ -264,6 +268,54 @@ last_updated: 2026-09-06T12:15:16.921Z
     "reason": "Release gate run by the orchestrator after wave 6 closed: build-all.sh release green, 498/498, link audit OK (24 entries, all in the intended runtime set)",
     "recorded_at": "2026-09-06T12:03:32.878Z",
     "resolved_at": "2026-09-06T12:15:16.921Z"
+  },
+  {
+    "id": 20,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "tests/test_wm2_config_smoke.cpp",
+    "line": null,
+    "description": "Eight of the nine Behaviour settings are proven here only as far as the window manager ADOPTING the value through the GUI's own FormState and ProtocolClient; that adopting it changes an observable behaviour is owned per setting by the [wm_config_live] cases from 09-05. Only click-to-focus has both halves in one case (the tracer). The join -- the value that arrived through the GUI's client is the value whose behaviour changed -- is an inference for the other eight",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T13:15:04.446Z",
+    "resolved_at": null
+  },
+  {
+    "id": 21,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "tests/test_wm2_config_smoke.cpp",
+    "line": null,
+    "description": "'a reload notice arriving with an entry dialog open leaves the dialog's contents alone' is structural: it holds a MenuEntryDraft across adoptEffectiveMenuEntries() and adds a comment-stripped source guard that MenuPage::refreshFromForm() names no dialog. The live arm -- a real reload while gtk_dialog_run() is spinning -- is not driven, because reaching it means synthesising input into a modal GTK dialog",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T13:15:04.636Z",
+    "resolved_at": null
+  },
+  {
+    "id": 22,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "apps/wm2-config/MenuPage.cpp",
+    "line": null,
+    "description": "The entry dialog states the name-override rule unconditionally rather than only when the typed name matches a discovered application. Detecting a match needs the discovered application NAMES and no protocol key exposes them; publishing the user's installed-application list over the socket was judged a wider surface than the note is worth",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T13:15:04.837Z",
+    "resolved_at": null
+  },
+  {
+    "id": 23,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "scripts/gates/build-all.sh",
+    "line": null,
+    "description": "The release tree and its link audit were not run for plan 09-07; only debug (526/526) and asan were gated. No link line of a shipped target changed in this plan -- only the test target gained libXtst -- but that is an argument rather than a run",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T13:15:05.034Z",
+    "resolved_at": null
   }
 ]
 ````
