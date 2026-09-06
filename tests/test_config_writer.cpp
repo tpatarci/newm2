@@ -679,3 +679,33 @@ TEST_CASE("A menu entry carrying a newline is refused", "[config_writer]") {
             ConfigWriteResult::InvalidEdit);
     REQUIRE(readFile(path) == original);
 }
+
+TEST_CASE("Two edits naming the same key are refused rather than half-honoured",
+          "[config_writer]") {
+    TempDir dir;
+    const std::string path = dir.file("config");
+    const std::string original = "frame-thickness = 7\n";
+    writeFile(path, original);
+
+    std::string error;
+    // Honouring both would append a second frame-thickness line, which is the
+    // "two lines for one key, later wins" state the duplicate collapse exists
+    // to prevent -- so the writer refuses the set instead of producing it.
+    REQUIRE(save(path, {set("frame-thickness", "9"), set("frame-thickness", "11")}, error) ==
+            ConfigWriteResult::InvalidEdit);
+    REQUIRE_FALSE(error.empty());
+    REQUIRE(readFile(path) == original);
+}
+
+TEST_CASE("A file with no trailing newline keeps that shape when nothing lands at its end",
+          "[config_writer]") {
+    TempDir dir;
+    const std::string path = dir.file("config");
+    writeFile(path, "frame-thickness=7\ntab-background = #C8CACC");  // no trailing newline
+
+    std::string error;
+    REQUIRE(save(path, {set("frame-thickness", "9")}, error) == ConfigWriteResult::Ok);
+
+    // The last line was not touched, so the file still ends without a newline.
+    REQUIRE(readFile(path) == "frame-thickness=9\ntab-background = #C8CACC");
+}

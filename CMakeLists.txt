@@ -814,6 +814,7 @@ if(BUILD_TESTS)
     #
     add_executable(test_config_writer
         tests/test_config_writer.cpp
+        src/ConfigFileWriter.cpp
     )
     target_link_libraries(test_config_writer PRIVATE
         Catch2::Catch2WithMain
