@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 9
+open_count: 8
 waived_count: 8
-fixed_count: 7
+fixed_count: 8
 total_count: 24
-last_updated: 2026-09-06T15:09:02.517Z
+last_updated: 2026-09-06T15:22:50.706Z
 ---
 
 # Broken Windows Ledger
@@ -38,7 +38,7 @@ last_updated: 2026-09-06T15:09:02.517Z
 | 21 | 09 | deviation | tests/test_wm2_config_smoke.cpp |  | 'a reload notice arriving with an entry dialog open leaves the dialog's contents alone' is structural: it holds a MenuEntryDraft across adoptEffectiveMenuEntries() and adds a comment-stripped source guard that MenuPage::refreshFromForm() names no dialog. The live arm -- a real reload while gtk_dialog_run() is spinning -- is not driven, because reaching it means synthesising input into a modal GTK dialog | open |  | 2026-09-06T13:15:04.636Z |  |
 | 22 | 09 | deviation | apps/wm2-config/MenuPage.cpp |  | The entry dialog states the name-override rule unconditionally rather than only when the typed name matches a discovered application. Detecting a match needs the discovered application NAMES and no protocol key exposes them; publishing the user's installed-application list over the socket was judged a wider surface than the note is worth | open |  | 2026-09-06T13:15:04.837Z |  |
 | 23 | 09 | unrun-verify | scripts/gates/build-all.sh |  | The release tree and its link audit were not run for plan 09-07; only debug (526/526) and asan were gated. No link line of a shipped target changed in this plan -- only the test target gained libXtst -- but that is an argument rather than a run | open |  | 2026-09-06T13:15:05.034Z |  |
-| 24 | 09 | unrun-verify | scripts/gates/build-all.sh |  | Release and ASan trees were last run in full at 530 tests (commit 441d62d); the 531st test, a display-free desktop-entry case added afterwards, was re-run in the ASan tree by label only and the release suite was not re-run at the final commit | open |  | 2026-09-06T15:09:02.517Z |  |
+| 24 | 09 | unrun-verify | scripts/gates/build-all.sh |  | Release and ASan trees were last run in full at 530 tests (commit 441d62d); the 531st test, a display-free desktop-entry case added afterwards, was re-run in the ASan tree by label only and the release suite was not re-run at the final commit | fixed | Release gate re-run by the orchestrator after wave 8 closed at the final commit: build-all.sh release green, 531/531, link audit OK (24 entries, all in the intended runtime set) | 2026-09-06T15:09:02.517Z | 2026-09-06T15:22:50.706Z |
 
 ````json
 [
@@ -325,10 +325,10 @@ last_updated: 2026-09-06T15:09:02.517Z
     "file": "scripts/gates/build-all.sh",
     "line": null,
     "description": "Release and ASan trees were last run in full at 530 tests (commit 441d62d); the 531st test, a display-free desktop-entry case added afterwards, was re-run in the ASan tree by label only and the release suite was not re-run at the final commit",
-    "status": "open",
-    "reason": "",
+    "status": "fixed",
+    "reason": "Release gate re-run by the orchestrator after wave 8 closed at the final commit: build-all.sh release green, 531/531, link audit OK (24 entries, all in the intended runtime set)",
     "recorded_at": "2026-09-06T15:09:02.517Z",
-    "resolved_at": null
+    "resolved_at": "2026-09-06T15:22:50.706Z"
   }
 ]
 ````
