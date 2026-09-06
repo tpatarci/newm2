@@ -14,6 +14,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
+#include <sys/file.h>
 #include <fstream>
 #include <sstream>
 #include <sys/stat.h>
@@ -189,6 +190,49 @@ void appendMenuEntry(const AppEntry& e, std::vector<std::string>& out) {
     out.push_back("menu-entry-category = " + e.category);
 }
 
+// An exclusive advisory lock over the whole read-modify-write cycle (WR-02).
+//
+// configFileWrite() is read, classify, emit, rename. rename() gives atomicity
+// of the FILE; it gives none at all to the cycle. Two savers -- two wm2-config
+// windows, the program being deliberately G_APPLICATION_NON_UNIQUE, or one
+// window and a hand edit -- interleave as A reads, B reads, A renames, B
+// renames, and B's output was computed from the pre-A file. A's edits are gone
+// with no diagnostic, which "the last one to press Save wins" understates.
+//
+// THE DIRECTORY, NOT A LOCK FILE. The target may not exist yet, and even when
+// it does the rename replaces the inode, so a lock taken on the file would be
+// held on the wrong one by the time it mattered. Locking the parent directory
+// has neither problem, creates no litter beside the user's configuration, and
+// costs nothing in contention: the directory holds one configuration file.
+//
+// BEST EFFORT, NEVER FATAL. A filesystem that will not lock (some NFS mounts)
+// leaves the save exactly as unserialised as it was before this existed, which
+// is strictly no worse; a save is never refused because a lock could not be
+// taken.
+class DirectoryLock {
+public:
+    explicit DirectoryLock(const std::filesystem::path& directory) {
+        m_fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (m_fd < 0) return;
+        if (::flock(m_fd, LOCK_EX) != 0) {
+            ::close(m_fd);
+            m_fd = -1;
+        }
+    }
+
+    ~DirectoryLock() {
+        if (m_fd < 0) return;
+        (void)::flock(m_fd, LOCK_UN);
+        ::close(m_fd);      // released by the close alone; the unlock is explicit
+    }
+
+    DirectoryLock(const DirectoryLock&) = delete;
+    DirectoryLock& operator=(const DirectoryLock&) = delete;
+
+private:
+    int m_fd = -1;
+};
+
 // Reads the file into lines. `exists` distinguishes "no such file" (which is an
 // empty starting point, not an error) from a real read failure.
 bool readLines(const std::string& path, std::vector<std::string>& lines,
@@ -316,6 +360,13 @@ ConfigWriteResult configFileWrite(const std::string& path,
             return ConfigWriteResult::DirectoryFailed;
         }
     }
+
+    // --- The lock, held from before the read until after the rename ---------
+    //
+    // Declared here so it covers every return below: the read the output is
+    // computed from and the rename that publishes it are one critical section,
+    // or a concurrent saver's edits are lost (WR-02).
+    const DirectoryLock lock(directory);
 
     // --- Read ---------------------------------------------------------------
     std::vector<std::string> lines;

@@ -18,7 +18,10 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <vector>
 
@@ -951,4 +954,73 @@ TEST_CASE("an absent target is still an empty starting point, not a failure",
     CHECK(save(path, {set("frame-thickness", "9")}, error) == ConfigWriteResult::Ok);
     CHECK(error.empty());
     CHECK(readFile(path).find("frame-thickness = 9") != std::string::npos);
+}
+
+
+// ---------------------------------------------------------------------------
+// Two concurrent savers do not lose each other's edits (WR-02)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("a save waits for a concurrent saver rather than overwriting it",
+          "[config_writer][concurrency]") {
+    TempDir dir;
+    const std::string path = dir.file("config");
+    writeFile(path, "# hand written\nframe-thickness = 7\n");
+
+    // A child stands in for the second wm2-config window: it takes the same
+    // lock a save takes, writes the file, and only then lets go. The pipe
+    // handshake is what makes the case deterministic rather than a race the
+    // test hopes to win -- the parent's save does not begin until the child
+    // holds the lock.
+    int ready[2] = { -1, -1 };
+    REQUIRE(::pipe(ready) == 0);
+
+    const pid_t child = ::fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+        ::close(ready[0]);
+        const int fd = ::open(dir.path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (fd < 0) ::_exit(1);
+        if (::flock(fd, LOCK_EX) != 0) ::_exit(1);
+
+        char go = 'g';
+        ssize_t ignored = ::write(ready[1], &go, 1);
+        (void)ignored;
+        ::close(ready[1]);
+
+        // Long enough that a save which ignored the lock would certainly have
+        // finished and renamed before this line runs.
+        ::usleep(400 * 1000);
+        writeFile(path, "# hand written\nframe-thickness = 7\nmenu-font = Sans:size=9\n");
+        ::flock(fd, LOCK_UN);
+        ::close(fd);
+        ::_exit(0);
+    }
+
+    ::close(ready[1]);
+    char go = 0;
+    REQUIRE(::read(ready[0], &go, 1) == 1);
+    ::close(ready[0]);
+
+    std::string error;
+    const ConfigWriteResult r = save(path, {set("tab-font", "Sans:bold:size=13")}, error);
+
+    int status = 0;
+    ::waitpid(child, &status, 0);
+
+    const std::string content = readFile(path);
+    INFO("result " << static_cast<int>(r) << ", error '" << error << "'");
+    INFO("file:\n" << content);
+
+    CHECK(r == ConfigWriteResult::Ok);
+
+    // BOTH edits survive. Without the lock the save read the file before the
+    // child wrote it, so the child's line is absent from the output that was
+    // renamed over it -- a lost update with no diagnostic, which is exactly
+    // what "the last one to press Save wins" hides.
+    CHECK(content.find("menu-font = Sans:size=9") != std::string::npos);
+    CHECK(content.find("tab-font = Sans:bold:size=13") != std::string::npos);
+    // And the pass-through content is still pass-through.
+    CHECK(content.find("# hand written") != std::string::npos);
+    CHECK(content.find("frame-thickness = 7") != std::string::npos);
 }
