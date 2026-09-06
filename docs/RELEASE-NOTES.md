@@ -116,10 +116,26 @@ The bevel shades are **derived from whichever tab background you configure**, no
 fixed. Set a dark palette and you get bevels that belong to it. There are no
 separate keys to set, and so no way to set them inconsistently.
 
-All nine colours remain configurable — `tab-background`, `frame-background`,
-`menu-highlight` and the rest — in the config file and on the command line, and
-as of this release the two fonts, `tab-font` and `menu-font`, are configurable
-the same way.
+All nine colours remain configurable in the config file and on the command line,
+and as of this release the two fonts, `tab-font` and `menu-font`, are
+configurable the same way. The nine, in full, so there is no "and the rest" for
+you to go looking for:
+
+| Key | What it colours |
+|---|---|
+| `tab-foreground` | the title text running down the sideways tab |
+| `tab-background` | the tab itself, and the shades its bevel is derived from |
+| `frame-background` | the window frame around a focused window |
+| `button-background` | the small button at the top of the tab |
+| `borders` | the outlines of the frame and the tab |
+| `menu-foreground` | the root menu's text |
+| `menu-background` | the root menu's background |
+| `menu-highlight` | the row of the root menu under the pointer |
+| `menu-borders` | the root menu's border |
+
+Each takes anything the X server can parse — a name like `slategray`, or a
+`#RRGGBB` value. A value the server refuses is refused rather than substituted,
+and the colour you had stays.
 
 ---
 
@@ -558,6 +574,32 @@ the list, change that record, and send it back. A `;` inside a command has no
 escape; write that entry into the config file instead, where each key is its own
 line.
 
+In the config file the same list is three keys per entry, in the same
+begins-a-new-record shape the rule keys use:
+
+```
+menu-entry-name     = Editor
+menu-entry-command  = /usr/bin/vim
+menu-entry-category = Custom
+```
+
+`menu-entry-name` opens a new entry; `menu-entry-command` is the program it
+runs, split on whitespace with **no** shell evaluation and no quote handling, so
+a semicolon or a `&&` you type is one literal argument rather than the start of
+a second command; `menu-entry-category` is the submenu it appears under, and
+defaults to `Custom` when you leave it out. There are no `--menu-entry-*`
+command-line flags, for the same reason there are no `--rule-*` ones.
+
+**One key is readable and not settable: `menu-categories`.** `wm2-ctl get
+menu-categories` prints the category names the next root menu will show —
+whatever discovery found on this machine, plus your own manual entries' — as one
+`;`-separated value. It is refused by `set`, and refused as an unknown setting
+rather than by a special case, because the list is *derived* from two things and
+setting a view of two things would mean setting neither. It exists so the
+settings window's category dropdown can offer the categories this window manager
+actually shows instead of running a second copy of discovery that would disagree
+with the first the moment a `.desktop` file changed.
+
 **When the files change under it, every connected tool is told.** After a
 `wm2-ctl reload` the window manager sends a notice to every program connected to
 its socket, so a settings window left open somewhere knows its picture is stale.
@@ -661,6 +703,7 @@ bash scripts/preflight.sh                       # every declared dependency, on 
 bash scripts/gates/build-all.sh                 # Debug, Release and sanitizer trees, full suite
 bash scripts/gates/build-all.sh nogtk           # the same suite with the settings window switched off
 bash scripts/gates/install-components.sh        # stage both packages; check neither one leaks a toolkit
+bash scripts/gates/doc-keys.sh                  # every key this document names, and every key the binary accepts, in both directions
 bash scripts/analysis/run-static-analysis.sh    # cppcheck and clang-tidy against the baseline
 bash scripts/capture-display-capabilities.sh :2 label
 
@@ -673,6 +716,15 @@ wm2-ctl reload                                  # re-read the config files
 `./wm2-born-again --help` lists every setting, and every setting it lists is one
 the binary will accept — the usage text is generated from the same table the
 option parser is handed, so the two cannot drift apart.
+
+**This document cannot drift apart from that table either**, and that is a gate
+rather than a promise. `bash scripts/gates/doc-keys.sh` reads the accepted key
+set out of the option table, the configuration parser's own key comparisons and
+the protocol key constants, reads the keys this document presents out of its
+backticked names and its configuration examples, and fails if either set has
+something the other does not — naming the key, in whichever direction it went
+missing. A key mentioned only inside an HTML comment does not count as
+documented, because a reader cannot see one.
 
 ### The configuration socket
 
