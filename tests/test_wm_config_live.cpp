@@ -941,6 +941,84 @@ TEST_CASE("wm2-ctl exits 2 when there is no window manager to talk to",
     CHECK(r.err.find(absent) != std::string::npos);
 }
 
+TEST_CASE("wm2-ctl gives up on a listener that never accepts, within its bound",
+          "[wm_config_live]")
+{
+    // THE HANG THAT WAS REACHABLE WITHOUT A WINDOW MANAGER AT ALL. The tool's
+    // descriptor was a BLOCKING one, and a blocking connect() to a unix socket
+    // whose accept queue is full does not fail -- it waits for room, for ever.
+    // A window manager wedged in a modal loop, or simply slow to accept while
+    // several clients arrive at once, is enough: `wm2-ctl status` in a shell
+    // script never returns and the 15-second exchange bound this tool
+    // documents is not a bound at all.
+    //
+    // Nothing here is a window manager. A listening socket with a backlog of
+    // one, saturated by connections nobody accepts, is the whole reproduction,
+    // and every descriptor it opens is closed by the one that opened it.
+    // A SHORT, unguessable directory from mkdtemp() (T-8-TMP) rather than the
+    // test work directory: sun_path holds 108 bytes, and a build tree nested a
+    // few directories deep spends more than that before it reaches a file name.
+    char templ[] = "/tmp/wm2-ctl-backlog-XXXXXX";
+    const char* made = ::mkdtemp(templ);
+    REQUIRE(made != nullptr);
+    const std::string dir  = made;
+    const std::string path = dir + "/socket";
+    ::unlink(path.c_str());
+
+    const int listener = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    REQUIRE(listener >= 0);
+
+    struct sockaddr_un addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    REQUIRE(path.size() + 1 <= sizeof(addr.sun_path));
+    std::memcpy(addr.sun_path, path.c_str(), path.size());
+    REQUIRE(::bind(listener, reinterpret_cast<struct sockaddr*>(&addr),
+                   sizeof(addr)) == 0);
+    REQUIRE(::listen(listener, 1) == 0);
+
+    // Saturate the queue with NON-BLOCKING connects, so filling it cannot hang
+    // this process the way it is about to hang the one under test. The loop
+    // stops at the first refusal, which is the kernel saying the queue is full.
+    std::vector<int> fillers;
+    for (int i = 0; i < 64; ++i) {
+        const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+        if (fd < 0) break;
+        if (::connect(fd, reinterpret_cast<struct sockaddr*>(&addr),
+                      sizeof(addr)) != 0) {
+            ::close(fd);
+            break;
+        }
+        fillers.push_back(fd);
+    }
+    INFO("connections queued before the backlog filled: " << fillers.size());
+    REQUIRE(!fillers.empty());
+
+    const auto began = std::chrono::steady_clock::now();
+    CtlResult r = runCtl({"--socket", path, "status"}, "");
+    const long elapsedMs = static_cast<long>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - began).count());
+
+    for (int fd : fillers) ::close(fd);
+    ::close(listener);
+    ::unlink(path.c_str());
+    ::rmdir(dir.c_str());
+
+    INFO(r.describe());
+    INFO("elapsed " << elapsedMs << "ms");
+
+    // DISC-01a: 2 is "nothing to talk to". runCtl's watchdog reports -1 for a
+    // child it had to kill, which is what a blocking connect() produced here.
+    CHECK(r.exitCode == 2);
+    CHECK(r.err.find("wm2:") != std::string::npos);
+
+    // And it gave up on its OWN deadline rather than on the harness's: the
+    // tool's bound is 15 seconds, so anything beyond that plus a generous
+    // margin means the wait was not the tool's.
+    CHECK(elapsedMs < 19000);
+}
+
 TEST_CASE("wm2-ctl --help lists every subcommand it accepts",
           "[wm_config_live]")
 {

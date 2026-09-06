@@ -73,6 +73,13 @@ constexpr int kExitUsage   = 3;
 // loop fails the command rather than hanging a shell script forever.
 constexpr int kDeadlineMs = 15000;
 
+// How long the connect retry loop pauses between attempts when the window
+// manager's accept queue is full. Short enough that a queue draining after a
+// few milliseconds is not waited on for longer than it took, long enough that
+// a queue that stays full for the whole deadline costs a few hundred wake-ups
+// rather than a spinning core.
+constexpr int kRetryPauseMs = 25;
+
 void warn(const std::string& text)
 {
     // The project's convention, matched exactly: every diagnostic this codebase
@@ -136,8 +143,18 @@ void printUsage(std::FILE* out)
         kMenuEntriesKey);
 }
 
-// One connection to the window manager. Owns its descriptor; every wait has a
-// deadline and no read is ever a blocking one.
+// One connection to the window manager. Owns its descriptor, and the
+// descriptor is NON-BLOCKING from the moment it is created: every wait in this
+// class -- the connect, every write and every read -- is a bounded poll()
+// against the one deadline below.
+//
+// THAT IS THE WHOLE OF THE 15-SECOND CONTRACT, and a blocking descriptor made
+// it a fiction. connect() to a unix socket whose accept queue is full does not
+// fail, it waits for room; send() to a peer that has stopped reading waits for
+// the buffer to drain. Neither ever returns EAGAIN on a blocking descriptor,
+// so the deadline arithmetic in send() -- which only ran after EAGAIN -- never
+// ran at all, and `wm2-ctl status` in a shell script could hang for ever
+// against a window manager that was merely slow to accept.
 class Connection {
 public:
     ~Connection() { if (m_fd >= 0) ::close(m_fd); }
@@ -161,27 +178,68 @@ public:
         }
         std::memcpy(addr.sun_path, path.c_str(), path.size());
 
-        m_fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        m_fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
         if (m_fd < 0) {
             warn(std::string("cannot create a socket: ") + std::strerror(errno));
             return kExitNoSocket;
         }
 
-        if (::connect(m_fd, reinterpret_cast<struct sockaddr*>(&addr),
-                      sizeof(addr)) != 0) {
-            const int err = errno;
-            if (err == ENOENT || err == ECONNREFUSED) {
-                // The two ordinary "nothing is listening" answers: no socket
-                // node at all, or a node left behind by a window manager that
-                // is gone. Named as one condition because a user does not care
-                // which of the two it is.
-                warn("no window manager is listening on " + path);
-            } else {
-                warn("cannot connect to " + path + ": " + std::strerror(err));
+        const auto until = Clock::now() + std::chrono::milliseconds(kDeadlineMs);
+        for (;;) {
+            if (::connect(m_fd, reinterpret_cast<struct sockaddr*>(&addr),
+                          sizeof(addr)) == 0) {
+                return kExitOk;
             }
+            const int err = errno;
+
+            if (err == EINTR) continue;
+
+            // Already connected: the answer to a retry whose predecessor
+            // completed underneath it. Not an error.
+            if (err == EISCONN) return kExitOk;
+
+            if (err == EINPROGRESS) {
+                // The ordinary asynchronous connect: writable means settled,
+                // and SO_ERROR says whether it settled well.
+                if (!waitFor(POLLOUT, until)) {
+                    warn("no window manager answered on " + path +
+                         " within " + std::to_string(kDeadlineMs / 1000) +
+                         " seconds");
+                    return kExitNoSocket;
+                }
+                int pending = 0;
+                socklen_t len = sizeof(pending);
+                if (::getsockopt(m_fd, SOL_SOCKET, SO_ERROR, &pending, &len) != 0) {
+                    warn("cannot connect to " + path + ": " +
+                         std::strerror(errno));
+                    return kExitNoSocket;
+                }
+                if (pending == 0) return kExitOk;
+                warnConnectFailure(path, pending);
+                return kExitNoSocket;
+            }
+
+            if (err == EAGAIN || err == EWOULDBLOCK) {
+                // THE FULL ACCEPT QUEUE, and the reason this is a retry loop
+                // rather than one poll(). A unix socket whose backlog is full
+                // answers a non-blocking connect() with EAGAIN and offers no
+                // event to wait for -- there is nothing poll() could report --
+                // so the only bounded answer is to try again until the
+                // deadline. A blocking descriptor waits here for ever, which
+                // is exactly the hang this loop replaces.
+                if (Clock::now() >= until) {
+                    warn("no window manager accepted a connection on " + path +
+                         " within " + std::to_string(kDeadlineMs / 1000) +
+                         " seconds");
+                    return kExitNoSocket;
+                }
+                ::poll(nullptr, 0, kRetryPauseMs);
+                continue;
+            }
+
+            warnConnectFailure(path, err);
             return kExitNoSocket;
         }
-        return kExitOk;
     }
 
     bool send(const ConfigMessage& message)
@@ -197,7 +255,13 @@ public:
             if (n > 0) { sent += static_cast<std::size_t>(n); continue; }
             if (n < 0 && (errno == EINTR)) continue;
             if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                if (Clock::now() >= until) return false;
+                // WAITED FOR, not spun on. The descriptor is non-blocking now,
+                // so a peer that accepted the connection and stopped reading
+                // really does produce EAGAIN here -- and the earlier `continue`
+                // turned that into a hot loop burning a core until the
+                // deadline. poll() carries the remaining time and returns as
+                // soon as there is room to write.
+                if (!waitFor(POLLOUT, until)) return false;
                 continue;
             }
             return false;
@@ -252,6 +316,44 @@ public:
     }
 
 private:
+    // Wait for `events` on the descriptor, or until `until`. False on the
+    // deadline and on an error the caller cannot retry -- so every caller
+    // treats false as "give up", and no caller can wait without a bound.
+    bool waitFor(short events, Clock::time_point until) const
+    {
+        for (;;) {
+            const auto left = until - Clock::now();
+            if (left <= Clock::duration::zero()) return false;
+
+            struct pollfd p;
+            p.fd = m_fd;
+            p.events = events;
+            p.revents = 0;
+            const int ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(left).count());
+            const int r = ::poll(&p, 1, ms > 0 ? ms : 1);
+            if (r < 0) { if (errno == EINTR) continue; return false; }
+            if (r == 0) return false;
+            return true;
+        }
+    }
+
+    // One diagnostic for a connect that failed, whether it failed synchronously
+    // or was collected from SO_ERROR afterwards -- spelled once so the two
+    // routes cannot describe the same condition differently.
+    static void warnConnectFailure(const std::string& path, int err)
+    {
+        if (err == ENOENT || err == ECONNREFUSED) {
+            // The two ordinary "nothing is listening" answers: no socket node
+            // at all, or a node left behind by a window manager that is gone.
+            // Named as one condition because a user does not care which of the
+            // two it is.
+            warn("no window manager is listening on " + path);
+        } else {
+            warn("cannot connect to " + path + ": " + std::strerror(err));
+        }
+    }
+
     int m_fd = -1;
     std::string m_in;
 };
