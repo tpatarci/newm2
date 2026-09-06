@@ -759,6 +759,14 @@ if(BUILD_TESTS)
         target_link_libraries(test_wm2_config_smoke PRIVATE
             Catch2::Catch2WithMain
             PkgConfig::X11
+            # XTEST, for ONE case: the 09-07 tracer, which proves that
+            # click-to-focus committed through the page's own model changes how
+            # the running desktop gives focus to real synthesised pointer
+            # input. A value echo would pass against a window manager that
+            # stored the setting and never consulted it. Test-only, as
+            # everywhere else here -- the shipped wm2-born-again target must
+            # still NOT gain libXtst.
+            PkgConfig::XTST
         )
         target_include_directories(test_wm2_config_smoke PRIVATE
             ${CMAKE_SOURCE_DIR}/include

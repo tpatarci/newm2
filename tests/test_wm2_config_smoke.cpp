@@ -33,6 +33,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "support/WmFixture.h"
+#include "support/XTestDriver.h"
 
 #include "../apps/wm2-config/ConnectionState.h"
 #include "../apps/wm2-config/FormState.h"
@@ -417,6 +418,285 @@ const char* kGuiNotBuilt =
     "wm2-config was not built in this tree (BUILD_CONFIG_GUI resolved to OFF, "
     "or pkg-config could not find gtk+-3.0), so there is no binary to open a "
     "window with. The display-free cases in this file still ran.";
+
+
+// ---------------------------------------------------------------------------
+// Reading a page's source (plan 09-07)
+// ---------------------------------------------------------------------------
+//
+// The same shape 09-06 used for the Appearance page: a page full of widgets
+// cannot be linked into a display-free binary, so what a page CARRIES is
+// asserted by reading its source. What 09-07 adds is that the key list is
+// DERIVED from the page rather than written out here -- every key the page
+// declares gets its live case automatically, and a key added to a page with no
+// live coverage cannot slip past by not being on a list in this file.
+
+std::string sourceOf(const std::string& relativePath)
+{
+    return readFileOrEmpty(std::string(WM2_SOURCE_DIR) + "/" + relativePath);
+}
+
+// Every settable key whose quoted spelling appears in `source`, in
+// configKeySpecs() order. `menu-entries` is not one of those specs (it is an
+// ordered group rather than a single setting), so the Menu page is asked about
+// separately.
+std::vector<std::string> keysDeclaredIn(const std::string& source)
+{
+    std::vector<std::string> out;
+    for (const ConfigKeySpec& spec : configKeySpecs()) {
+        if (source.find("\"" + spec.name + "\"") != std::string::npos) {
+            out.push_back(spec.name);
+        }
+    }
+    return out;
+}
+
+bool contains(const std::vector<std::string>& haystack, const std::string& needle)
+{
+    return std::find(haystack.begin(), haystack.end(), needle) != haystack.end();
+}
+
+// The nine settings D-09 puts on the Behaviour page, in the order the page
+// presents them. Written out ONCE, here, because "the page carries exactly
+// these" is the assertion.
+const std::vector<std::string>& behaviourKeys()
+{
+    static const std::vector<std::string> keys = {
+        "click-to-focus", "raise-on-focus", "auto-raise",
+        "focus-stealing-prevention",
+        "auto-raise-delay", "pointer-stopped-delay", "destroy-window-delay",
+        "new-window-command", "exec-using-shell",
+    };
+    return keys;
+}
+
+
+// ---------------------------------------------------------------------------
+// An isolated configuration for a window manager fixture
+// ---------------------------------------------------------------------------
+
+// XDG_CONFIG_DIRS is overridden as well as XDG_CONFIG_HOME: xdgConfigDirs()
+// falls back to /etc/xdg when the variable is unset, so on a machine that has a
+// system-wide config the host's settings would layer under every case here.
+std::string makeConfigHome(const std::string& contents)
+{
+    const std::string base = makeTree("wmcfg");
+    ::mkdir((base + "/wm2-born-again").c_str(), 0700);
+    std::ofstream out(base + "/wm2-born-again/config");
+    out << contents;
+    out.close();
+    return base;
+}
+
+WmFixtureOptions fixtureWithConfigHome(const std::string& home)
+{
+    WmFixtureOptions o;
+    o.childEnv["XDG_CONFIG_HOME"] = home;
+    o.childEnv["XDG_CONFIG_DIRS"] = home + "/no-system-config";
+    return o;
+}
+
+
+// ---------------------------------------------------------------------------
+// The running desktop, observed through the server
+// ---------------------------------------------------------------------------
+//
+// Ported from tests/test_wm_config_live.cpp rather than shared through a header
+// on purpose: this suite needs four of that file's forty helpers, and a shared
+// test-support header carrying the other thirty-six would make every one of
+// them a dependency of a binary that must keep linking on a host with no
+// toolkit. The project's own convention for small helpers is per translation
+// unit.
+
+void settleTick() { std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
+
+// Wake the window manager's event loop so it flushes its X output buffer. The
+// nudge is override-redirect, so eventCreate() returns immediately for it and
+// it can never be managed or perturb an assertion.
+void pumpWm(Display* d)
+{
+    XSetWindowAttributes attr;
+    attr.override_redirect = True;
+    Window nudge = XCreateWindow(d, DefaultRootWindow(d), -20, -20, 1, 1, 0,
+                                 CopyFromParent, InputOnly, CopyFromParent,
+                                 CWOverrideRedirect, &attr);
+    XSync(d, False);
+    XDestroyWindow(d, nudge);
+    XSync(d, False);
+}
+
+void settleWm(Display* d)
+{
+    for (int i = 0; i < 15; ++i) { pumpWm(d); settleTick(); }
+}
+
+struct Rect { int x = 0, y = 0, w = 0, h = 0; };
+
+bool serverRect(Display* d, Window w, Rect& out)
+{
+    Window rootRet = None;
+    int x = 0, y = 0;
+    unsigned int width = 0, height = 0, bw = 0, depth = 0;
+    if (!XGetGeometry(d, w, &rootRet, &x, &y, &width, &height, &bw, &depth)) return false;
+    int absX = 0, absY = 0;
+    Window child = None;
+    if (!XTranslateCoordinates(d, w, DefaultRootWindow(d), 0, 0, &absX, &absY, &child)) {
+        return false;
+    }
+    out.x = absX;
+    out.y = absY;
+    out.w = static_cast<int>(width);
+    out.h = static_cast<int>(height);
+    return true;
+}
+
+Rect rectOf(Display* d, Window w) { Rect r; serverRect(d, w, r); return r; }
+
+Window parentOf(Display* d, Window w)
+{
+    Window wroot = None, parent = None, *children = nullptr;
+    unsigned int n = 0;
+    if (!XQueryTree(d, w, &wroot, &parent, &children, &n)) return None;
+    if (children) XFree(children);
+    return parent;
+}
+
+Window awaitFrameFor(Display* d, Window win, int timeoutMs = 8000)
+{
+    Window root = DefaultRootWindow(d);
+    Window frame = None;
+    const bool framed = WmFixture::pollUntil([&] {
+        pumpWm(d);
+        Window parent = parentOf(d, win);
+        if (parent == None || parent == root) return false;
+        frame = parent;
+        return true;
+    }, timeoutMs);
+    return framed ? frame : None;
+}
+
+// _NET_WM_USER_TIME published as zero BEFORE the map is the spec's explicit
+// "do not focus me on map", which is the cheapest way to construct a window
+// that is on screen and NOT focused.
+Window mapUnfocusedClient(Display* d, int x, int y, int w, int h,
+                          Window& clientOut, const char* name)
+{
+    Window root = DefaultRootWindow(d);
+    Window win = XCreateSimpleWindow(d, root, x, y,
+                                     static_cast<unsigned>(w), static_cast<unsigned>(h), 0,
+                                     BlackPixel(d, DefaultScreen(d)),
+                                     WhitePixel(d, DefaultScreen(d)));
+    if (name) XStoreName(d, win, name);
+    const unsigned long zero = 0;
+    XChangeProperty(d, win, XInternAtom(d, "_NET_WM_USER_TIME", False),
+                    XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<const unsigned char*>(&zero), 1);
+    clientOut = win;
+    XMapWindow(d, win);
+    XSync(d, False);
+    return awaitFrameFor(d, win);
+}
+
+Window activeWindow(Display* d)
+{
+    const Atom atom = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
+    Atom actualType = None;
+    int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0;
+    unsigned char* raw = nullptr;
+    if (XGetWindowProperty(d, DefaultRootWindow(d), atom, 0, 1, False, XA_WINDOW,
+                           &actualType, &actualFormat, &nItems, &bytesAfter,
+                           &raw) != Success) {
+        return None;
+    }
+    Window out = None;
+    if (raw && actualFormat == 32 && nItems >= 1) out = *reinterpret_cast<Window*>(raw);
+    if (raw) XFree(raw);
+    return out;
+}
+
+Window pumpedActiveWindow(Display* d) { pumpWm(d); return activeWindow(d); }
+
+// The one fixed wait here, and it is a wait for a NON-EVENT: an assertion of
+// the form "this did not happen" has to give the window manager long enough to
+// have done it.
+void waitPastFocusDelays()
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+}
+
+// Where the pointer is parked so it is over neither a client nor the menu.
+constexpr int kParkX = 5;
+constexpr int kParkY = 5;
+
+
+// ---------------------------------------------------------------------------
+// Committing through the GUI's own two halves
+// ---------------------------------------------------------------------------
+//
+// FormState decides what the value is; the GUI's own ProtocolClient carries it.
+// Nothing here is a hand-rolled socket client, so a change that broke
+// wm2-config's client breaks these cases too.
+
+// What the running window manager says it is using for `key`.
+std::string wmValue(ProtocolClient& client, const std::string& key)
+{
+    bool answered = false;
+    std::string value;
+    if (!client.sendGet(key, [&](const ConfigMessage& reply) {
+            answered = true;
+            if (reply.type == ConfigMessageType::Value) value = reply.value;
+        })) {
+        return std::string();
+    }
+    client.pumpUntil([&]() { return answered; }, 15000);
+    return value;
+}
+
+// Commit `value` for `key` exactly as a page's control does: through the form,
+// then through the client. Returns the window manager's refusal reason, or "".
+std::string commitThroughForm(FormState& form, ProtocolClient& client,
+                              const std::string& key, const std::string& value)
+{
+    if (!form.setValue(key, value)) return "the form refused the value";
+
+    bool acked = false;
+    std::string refusal;
+    if (!client.sendSet(key, form.value(key), [&](const ConfigMessage& reply) {
+            if (reply.type == ConfigMessageType::Ack) acked = true;
+            if (reply.type == ConfigMessageType::Error) refusal = reply.reason;
+        })) {
+        return "the client refused to send";
+    }
+    if (!client.pumpUntil([&]() { return acked || !refusal.empty(); }, 15000)) {
+        return "the window manager did not answer";
+    }
+    return refusal;
+}
+
+// A value for `key` that is NOT what the window manager currently reports, so
+// "it changed" cannot be true of the starting state.
+std::string differentValueFor(const std::string& key, const std::string& current)
+{
+    const ConfigKeySpec* spec = configKeySpecFor(key);
+    if (!spec) return std::string();
+    switch (spec->kind) {
+    case ConfigValueKind::Boolean:
+        return current == "true" ? "false" : "true";
+    case ConfigValueKind::Integer: {
+        // In range by construction, and different from whatever is in force.
+        const int candidate = (current == std::to_string(spec->minValue + 37))
+                                  ? spec->minValue + 91
+                                  : spec->minValue + 37;
+        return std::to_string(candidate);
+    }
+    case ConfigValueKind::String:
+        // Never executed by a `set` -- new-window-command is only run when the
+        // root menu's New entry is chosen -- and deliberately not a shell line.
+        return current == "/bin/true" ? "/bin/echo" : "/bin/true";
+    }
+    return std::string();
+}
 
 }  // namespace
 
@@ -1040,4 +1320,300 @@ TEST_CASE("writing an empty edit set WOULD move the file's modification time",
     REQUIRE(modificationTime(userFile, after));
     CHECK_FALSE(sameTime(before, after));
     CHECK(readFileOrEmpty(userFile) == "borders=#00FF00\n");   // same bytes, new stamp
+}
+
+
+// =============================================================================
+// The Behaviour page (D-09, D-05, plan 09-07)
+// =============================================================================
+//
+// The page is a file full of widgets, so what it CARRIES is read from its
+// source -- the shape 09-06 established. What is different here is that the key
+// list the live cases below iterate is DERIVED from that source rather than
+// written out in this file: a setting added to the page gets a live case for
+// free, and a setting added with no live path cannot slip past by not being on
+// a list here.
+//
+// WHAT THESE CASES DO AND DO NOT PROVE, said plainly. The tracer case proves
+// the whole chain for click-to-focus with real pointer input: the page's model,
+// the page's socket client, and a focus behaviour that visibly changes. The
+// remaining eight settings are proven here as far as the window manager
+// ADOPTING the value through the GUI's own two halves; that adopting the value
+// changes an observable behaviour is owned, per setting, by the [wm_config_live]
+// suite plan 09-05 built, and 09-07's SUMMARY names the case for each. Copying
+// those eight XTEST cases into this file would have been a second copy of a
+// suite rather than a second proof.
+
+TEST_CASE("the Behaviour page carries what D-09 assigns to it and nothing else",
+          "[wm2_config_smoke]")
+{
+    const std::string page = sourceOf("apps/wm2-config/BehaviourPage.cpp");
+    REQUIRE_FALSE(page.empty());
+
+    const std::vector<std::string> declared = keysDeclaredIn(page);
+    INFO("keys the page declares: " << declared.size());
+    for (const std::string& key : behaviourKeys()) {
+        INFO("key D-09 puts on the Behaviour page: " << key);
+        CHECK(contains(declared, key));
+    }
+
+    // And nothing D-09 assigns elsewhere has wandered onto this page. Checked
+    // by absence, which is the half a "does it have everything" assertion
+    // cannot cover.
+    CHECK(declared.size() == behaviourKeys().size());
+    for (const std::string& key : declared) {
+        INFO("key the page declares: " << key);
+        CHECK(contains(behaviourKeys(), key));
+    }
+}
+
+TEST_CASE("the Appearance and Behaviour pages partition the settable keys between them",
+          "[wm2_config_smoke]")
+{
+    // The two pages together must account for every single setting the option
+    // table declares, or a key exists that no page can edit -- which is how a
+    // settings window quietly stops being able to set something. D-09 assigns
+    // every one of them to one of the two, and the Menu page carries no single
+    // settings at all.
+    const std::vector<std::string> appearance =
+        keysDeclaredIn(sourceOf("apps/wm2-config/AppearancePage.cpp"));
+    const std::vector<std::string> behaviour =
+        keysDeclaredIn(sourceOf("apps/wm2-config/BehaviourPage.cpp"));
+
+    for (const ConfigKeySpec& spec : configKeySpecs()) {
+        const bool onAppearance = contains(appearance, spec.name);
+        const bool onBehaviour  = contains(behaviour, spec.name);
+        INFO("settable key: " << spec.name);
+        CHECK((onAppearance || onBehaviour));
+        CHECK_FALSE((onAppearance && onBehaviour));
+    }
+}
+
+TEST_CASE("every Behaviour control's wording is built from the option table's own summary",
+          "[wm2_config_smoke]")
+{
+    // The acceptance criterion is that no label contradicts the summary
+    // `--help` prints. That is satisfied STRUCTURALLY rather than by comparing
+    // two strings: the tooltip is assembled at runtime from
+    // configKeySpecFor(key)->summary, so the window and `--help` cannot come to
+    // describe one setting in two ways. The label above it is a short human
+    // phrase, and the SUMMARY lists every pair.
+    const std::string page = sourceOf("apps/wm2-config/BehaviourPage.cpp");
+    REQUIRE_FALSE(page.empty());
+
+    CHECK(page.find("configKeySpecFor(") != std::string::npos);
+    CHECK(page.find("->summary") != std::string::npos);
+
+    // Every key the page carries HAS a summary to build that tooltip from, or
+    // the structural guarantee is empty for it.
+    for (const std::string& key : behaviourKeys()) {
+        const ConfigKeySpec* spec = configKeySpecFor(key);
+        INFO("key: " << key);
+        REQUIRE(spec != nullptr);
+        CHECK_FALSE(spec->summary.empty());
+    }
+}
+
+TEST_CASE("the shell flag's label states that the command is shell-evaluated",
+          "[wm2_config_smoke]")
+{
+    // T-9-41: the checkbox is where a user learns what turning this on means.
+    // Naming the flag would tell them nothing; the consequence is the label.
+    const std::string page = sourceOf("apps/wm2-config/BehaviourPage.cpp");
+    REQUIRE_FALSE(page.empty());
+
+    const std::size_t at = page.find("\"exec-using-shell\"");
+    REQUIRE(at != std::string::npos);
+
+    // Within the row that declares the key, not merely somewhere in the file.
+    const std::size_t from = at;
+    const std::size_t to = std::min(page.size(), at + 1400);
+    const std::string row = page.substr(from, to - from);
+    INFO("exec-using-shell row:\n" << row);
+    CHECK(row.find("shell") != std::string::npos);
+    CHECK(row.find("/bin/sh") != std::string::npos);
+}
+
+TEST_CASE("the delay controls are built from the parser's own bounds, not from a third copy",
+          "[wm2_config_smoke]")
+{
+    // Same arrangement as the frame-thickness slider: the range is read from
+    // the table the window manager validates a `set` against, so the control
+    // cannot ask for a value the window manager will refuse.
+    for (const char* key : {"auto-raise-delay", "pointer-stopped-delay",
+                            "destroy-window-delay"}) {
+        const ConfigKeySpec* spec = configKeySpecFor(key);
+        INFO("delay: " << key);
+        REQUIRE(spec != nullptr);
+        CHECK(spec->kind == ConfigValueKind::Integer);
+        CHECK(spec->minValue == 1);
+        CHECK(spec->maxValue == 60000);
+    }
+
+    const std::string page = sourceOf("apps/wm2-config/BehaviourPage.cpp");
+    REQUIRE_FALSE(page.empty());
+    // A fourth hand-written copy of the bound is what this arrangement exists
+    // to prevent, so the numbers must not appear in the page at all.
+    CHECK(page.find("60000") == std::string::npos);
+}
+
+
+// =============================================================================
+// The Behaviour page, against a running desktop
+// =============================================================================
+
+TEST_CASE("click-to-focus committed through the page's model changes how the desktop gives focus",
+          "[wm2_config_smoke]")
+{
+    // THE TRACER. The whole chain for one setting: the GUI's own FormState
+    // decides the value, the GUI's own ProtocolClient carries it, and real
+    // synthesised pointer input shows that focus stopped following the pointer.
+    // A value echo would pass against a window manager that stored the setting
+    // and never consulted it; this cannot.
+    //
+    // Bound to the page: if the Behaviour page does not carry this key, this
+    // case is proving something about FormState and the protocol client rather
+    // than about the control a user actually presses, and it says so instead of
+    // passing.
+    REQUIRE(contains(keysDeclaredIn(sourceOf("apps/wm2-config/BehaviourPage.cpp")),
+                     "click-to-focus"));
+
+    const std::string home = makeConfigHome(
+        "click-to-focus=false\nauto-raise=true\nauto-raise-delay=50\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    ProtocolClient client;
+    REQUIRE(client.connect(configSocketPath(fixture.display().c_str())));
+
+    const std::string tree = makeTree("behaviourtracer");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+
+    // --- the control half: with the file's click-to-focus=false the pointer
+    // alone focuses. Without this the negative below could pass on a window
+    // manager whose pointer focus never worked at all.
+    Window first = None;
+    REQUIRE(mapUnfocusedClient(d, 160, 140, 280, 200, first, "pointer") != None);
+    REQUIRE(pumpedActiveWindow(d) != first);
+
+    const Rect firstRect = rectOf(d, first);
+    driver.moveTo(firstRect.x + firstRect.w / 2, firstRect.y + firstRect.h / 2);
+    const bool focusedByPointer =
+        WmFixture::pollUntil([&] { return pumpedActiveWindow(d) == first; }, 8000);
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    REQUIRE(focusedByPointer);
+
+    driver.moveTo(kParkX, kParkY);
+    settleWm(d);
+
+    // --- the flip, through the page's own two halves ------------------------
+    const std::string refusal = commitThroughForm(form, client, "click-to-focus", "true");
+    INFO("refusal: " << refusal);
+    REQUIRE(refusal.empty());
+
+    Window second = None;
+    REQUIRE(mapUnfocusedClient(d, 520, 340, 280, 200, second, "click") != None);
+    REQUIRE(pumpedActiveWindow(d) != second);
+
+    const Rect secondRect = rectOf(d, second);
+    driver.moveTo(secondRect.x + secondRect.w / 2, secondRect.y + secondRect.h / 2);
+    waitPastFocusDelays();
+    settleWm(d);
+    const Window afterEnter = activeWindow(d);
+
+    // ...and a CLICK on the same spot still focuses it, so what changed is the
+    // route and not the window manager's ability to focus anything.
+    driver.press(Button1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    driver.release(Button1);
+    const bool focusedByClick =
+        WmFixture::pollUntil([&] { return pumpedActiveWindow(d) == second; }, 8000);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO("active after pointer entry: " << afterEnter << " second: " << second);
+    CHECK(afterEnter != second);
+    CHECK(focusedByClick);
+
+    // And the window manager reports what the form asked for, so the page and
+    // the desktop agree about what happened.
+    CHECK(wmValue(client, "click-to-focus") == "true");
+}
+
+TEST_CASE("every Behaviour setting committed through the page's model reaches the running window manager",
+          "[wm2_config_smoke]")
+{
+    // One fixture for all nine, on purpose: nine fixtures would be nine Xvfb
+    // servers and nine window managers for one question that is the same
+    // question each time. The keys are read from the page's own source, so this
+    // covers whatever the page actually carries rather than whatever this file
+    // remembers it carrying.
+    const std::vector<std::string> keys =
+        keysDeclaredIn(sourceOf("apps/wm2-config/BehaviourPage.cpp"));
+    REQUIRE(keys.size() == behaviourKeys().size());
+
+    WmFixture fixture;
+    ProtocolClient client;
+    REQUIRE(client.connect(configSocketPath(fixture.display().c_str())));
+
+    const std::string tree = makeTree("behaviourall");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+
+    for (const std::string& key : keys) {
+        INFO("setting: " << key);
+        const std::string before = wmValue(client, key);
+        const std::string wanted = differentValueFor(key, before);
+        REQUIRE_FALSE(wanted.empty());
+        REQUIRE(wanted != before);
+
+        const std::string refusal = commitThroughForm(form, client, key, wanted);
+        INFO("refusal: " << refusal);
+        CHECK(refusal.empty());
+        CHECK(wmValue(client, key) == wanted);
+    }
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+}
+
+TEST_CASE("a delay outside the parser's range is refused, so the control's clamp is a convenience and not the validation",
+          "[wm2_config_smoke]")
+{
+    // The control clamps because a user should not be able to ask for
+    // something that will be refused. But the clamp is NOT the validation: the
+    // window manager validates every set regardless, and a GUI that were the
+    // only validator would be a GUI whose bugs became the window manager's.
+    WmFixture fixture;
+    ProtocolClient client;
+    REQUIRE(client.connect(configSocketPath(fixture.display().c_str())));
+
+    for (const char* key : {"auto-raise-delay", "pointer-stopped-delay",
+                            "destroy-window-delay"}) {
+        const ConfigKeySpec* spec = configKeySpecFor(key);
+        REQUIRE(spec != nullptr);
+        const std::string before = wmValue(client, key);
+
+        for (const std::string& outOfRange : {std::to_string(spec->minValue - 1),
+                                              std::to_string(spec->maxValue + 1)}) {
+            INFO("key: " << key << " value: " << outOfRange);
+            bool acked = false;
+            std::string refusal;
+            REQUIRE(client.sendSet(key, outOfRange, [&](const ConfigMessage& reply) {
+                if (reply.type == ConfigMessageType::Ack) acked = true;
+                if (reply.type == ConfigMessageType::Error) refusal = reply.reason;
+            }));
+            REQUIRE(client.pumpUntil([&]() { return acked || !refusal.empty(); }, 15000));
+            CHECK_FALSE(acked);
+            CHECK_FALSE(refusal.empty());
+        }
+
+        CHECK(wmValue(client, key) == before);
+    }
 }
