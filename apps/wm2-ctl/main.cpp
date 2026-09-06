@@ -117,6 +117,23 @@ void printUsage(std::FILE* out)
         std::fprintf(out, "  %-28s %-11s %s\n", spec.name.c_str(), kind,
                      spec.summary.c_str());
     }
+
+    // The one key that is NOT in that table, and cannot be: the manual menu
+    // entries are an ordered repeated group rather than a single setting, so
+    // the whole list travels as one value in the config file's own key order.
+    // See include/ConfigProtocol.h for the grammar. Printed here so a user
+    // reading --help learns the key exists, spelled from the same constant the
+    // window manager compares against.
+    std::fprintf(out,
+        "  %-28s %-11s %s\n"
+        "\n"
+        "The %s value carries the WHOLE list and replaces it, in the config\n"
+        "file's own key order with ';' between records, for example:\n"
+        "  menu-entry-name=Editor;menu-entry-command=/usr/bin/vim\n"
+        "An empty value removes every manual entry.\n",
+        kMenuEntriesKey, "LIST",
+        "every manual root-menu entry, as one value",
+        kMenuEntriesKey);
 }
 
 // One connection to the window manager. Owns its descriptor; every wait has a

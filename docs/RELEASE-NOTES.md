@@ -535,11 +535,34 @@ restart:
 | `click-to-focus`, `raise-on-focus`, `auto-raise`, `focus-stealing-prevention` | the very next interaction |
 | `auto-raise-delay`, `pointer-stopped-delay`, `destroy-window-delay` | the next interaction that waits on them |
 | `new-window-command`, `exec-using-shell` | what the menu's **New** entry runs next time you choose it |
+| the manual root-menu entries | what the next root menu you open contains; a menu that is already open is left alone and picks the change up the next time |
 
 A value the running window manager cannot use — a colour the X server will not
 parse, a font pattern with no usable face — is **refused**, and everything keeps
 the value it had. You cannot leave the window manager without a colour or
 without a face by mistyping one.
+
+**The manual menu entries travel as one value.** `wm2-ctl get menu-entries`
+prints your whole list in the config file's own key order, with `;` between
+records, and `wm2-ctl set menu-entries ...` replaces the whole list with what
+you send:
+
+```
+wm2-ctl set menu-entries \
+  'menu-entry-name=Editor;menu-entry-command=/usr/bin/vim;menu-entry-category=Custom'
+```
+
+An empty value removes every manual entry. It is one value rather than a
+command per row because the entries are an ordered list — to change one, read
+the list, change that record, and send it back. A `;` inside a command has no
+escape; write that entry into the config file instead, where each key is its own
+line.
+
+**When the files change under it, every connected tool is told.** After a
+`wm2-ctl reload` the window manager sends a notice to every program connected to
+its socket, so a settings window left open somewhere knows its picture is stale.
+The notice says only that a reload happened; whatever wants a value asks for it,
+so the notice can never become a second, drifting copy of your settings.
 
 **Nothing about your windows crosses the socket.** No window title, no
 application class, no window geometry, no window count broken down per window —

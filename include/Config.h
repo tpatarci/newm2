@@ -222,6 +222,54 @@ const std::vector<ConfigKeySpec>& configKeySpecs();
 // The spec for one key, or nullptr for a key that is not a single setting.
 const ConfigKeySpec* configKeySpecFor(const std::string& key);
 
+// -----------------------------------------------------------------------------
+// The manual menu entries, as ONE value (plan 09-05, D-12)
+// -----------------------------------------------------------------------------
+//
+// `menu-entry-name` / `-command` / `-category` are an ORDERED, STATEFUL
+// accumulator: a name opens an entry and the other two fill in whichever entry
+// is currently open. That grammar reads perfectly as consecutive lines of a
+// file and does not survive being cut into independent request-reply messages,
+// which is why configKeySpecs() does not name them and why the socket cannot
+// treat them as settings.
+//
+// So the whole list travels as ONE value, in the file's own key order, records
+// separated by ';':
+//
+//   menu-entry-name=Editor;menu-entry-command=/usr/bin/vim;menu-entry-category=Custom;menu-entry-name=Mail;menu-entry-command=/usr/bin/mutt
+//
+// WHOLESALE REPLACEMENT, never a mutation of one row. That is what makes the
+// operation idempotent -- sending the same list twice leaves the same list --
+// and what lets a settings window's Add, Edit and Remove rows map onto it with
+// no per-row protocol and no row identity to keep in sync.
+//
+// The separator has NO ESCAPE, deliberately: a ';' inside a value would need
+// one, an escape needs a second grammar, and a second grammar is a second thing
+// to get wrong. A command that must contain a ';' is written into the config
+// file directly, where the accumulator's own line-per-key form has no
+// separator to collide with.
+
+// Render `config`'s manual entries in the grammar above. Empty for a
+// configuration with no manual entries, which is the same value that clears
+// them.
+std::string configMenuEntriesValue(const Config& config);
+
+// Parse the grammar above into `out`, replacing whatever it held. False with a
+// human-readable reason in `reasonOut` for a record that is not one of the
+// three keys, for a record with no '=', or for a value that opens a command or
+// a category before any name -- each of which the file parser answers with a
+// warning to a stderr nobody is reading, and which over the socket must be a
+// refusal instead.
+bool parseMenuEntriesValue(const std::string& value,
+                           std::vector<AppEntry>& out,
+                           std::string& reasonOut);
+
+// The permanent spelling of the key that carries the value above. Named here
+// rather than spelled as a literal at each of its three use sites (the socket's
+// get arm, its set arm, and wm2-ctl's help).
+inline constexpr const char* kMenuEntriesKey = "menu-entries";
+
+
 // The EFFECTIVE value of one key, spelled the way the config file would spell
 // it: a boolean as "true" or "false", an integer in decimal, a string
 // verbatim. False for a key configKeySpecs() does not name, leaving `out`

@@ -754,3 +754,83 @@ bool configValueForKey(const Config& config, const std::string& key,
     // can tell "no such key" from "set to the empty string".
     return false;
 }
+
+
+// -----------------------------------------------------------------------------
+// The manual menu entries, as one value (plan 09-05, D-12)
+//
+// See the comment block in include/Config.h for the grammar and for why the
+// list travels whole rather than a row at a time. Both functions below go
+// through Config::applyKeyValue() in the one direction that matters -- parsing
+// -- so a menu entry that arrives over the socket is built by exactly the same
+// accumulator that builds one from a file, with the same D-07 category default
+// and the same whitespace tokenisation of the command (which is NOT a shell
+// evaluation: threat T-9-28).
+// -----------------------------------------------------------------------------
+
+std::string configMenuEntriesValue(const Config& config) {
+    std::string out;
+    for (const AppEntry& entry : config.manualMenuEntries) {
+        if (!out.empty()) out += ';';
+        out += "menu-entry-name=" + entry.name;
+
+        std::string command;
+        for (const std::string& token : entry.execArgv) {
+            if (!command.empty()) command += ' ';
+            command += token;
+        }
+        out += ";menu-entry-command=" + command;
+        out += ";menu-entry-category=" + entry.category;
+    }
+    return out;
+}
+
+bool parseMenuEntriesValue(const std::string& value,
+                           std::vector<AppEntry>& out,
+                           std::string& reasonOut) {
+    // Parsed into a SCRATCH Config, so the accumulator state and the D-07
+    // default live where they always live and this function owns no second
+    // copy of either.
+    Config scratch;
+    scratch.manualMenuEntries.clear();
+
+    std::size_t pos = 0;
+    while (pos <= value.size()) {
+        const std::size_t sep = value.find(';', pos);
+        const std::string record = (sep == std::string::npos)
+            ? value.substr(pos)
+            : value.substr(pos, sep - pos);
+
+        if (!record.empty()) {
+            const std::size_t eq = record.find('=');
+            if (eq == std::string::npos) {
+                reasonOut = "expected key=value in '" + record + "'";
+                return false;
+            }
+            const std::string key = record.substr(0, eq);
+            const std::string val = record.substr(eq + 1);
+
+            if (key != "menu-entry-name" && key != "menu-entry-command" &&
+                key != "menu-entry-category") {
+                reasonOut = "'" + key + "' is not a menu entry key";
+                return false;
+            }
+            // The accumulator's own precondition, checked HERE rather than
+            // left to it: the file parser answers a command or a category with
+            // no preceding name by warning to a stderr nobody is reading and
+            // carrying on, which over the socket would acknowledge a list that
+            // silently lost a record.
+            if (key != "menu-entry-name" && scratch.manualMenuEntries.empty()) {
+                reasonOut = "'" + key + "' before any menu-entry-name";
+                return false;
+            }
+            scratch.applyKeyValue(key, val);
+        }
+
+        if (sep == std::string::npos) break;
+        pos = sep + 1;
+    }
+
+    out = scratch.manualMenuEntries;
+    return true;
+}

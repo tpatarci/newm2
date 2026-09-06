@@ -55,6 +55,39 @@
 // message additively. The protocol number in the hello is how a peer learns
 // what it may send; a new member rides a version bump, not silence.
 //
+// THE MENU-ENTRY VALUE GRAMMAR (plan 09-05, D-12). Not a frozen message type
+// and not a change to one: it is the agreed shape of the `value` member of a
+// `get`/`set`/`value` whose `key` is the literal `menu-entries`, and it is
+// written down HERE because this file is the contract between the window
+// manager, wm2-ctl and the settings window, and all three have to spell it the
+// same way.
+//
+// The config file's manual entries are an ORDERED, STATEFUL accumulator --
+// `menu-entry-name` opens an entry and `menu-entry-command` /
+// `menu-entry-category` fill in whichever is open -- which reads correctly as
+// consecutive lines of a file and does not survive being cut into independent
+// request-reply messages. So the WHOLE list travels as ONE value, in the file's
+// own key order, records separated by ';':
+//
+//   menu-entry-name=Editor;menu-entry-command=/usr/bin/vim;menu-entry-category=Custom
+//
+// WHOLESALE REPLACEMENT, never a mutation of one row: a `set` of this key
+// replaces the entire list, and the empty value clears it. That is what makes
+// the operation idempotent, and what lets a settings window's Add, Edit and
+// Remove rows map onto it with no per-row protocol and no row identity for the
+// two ends to keep in sync. A client that wants to change one row sends the
+// whole list back with that row changed, having read it with `get`.
+//
+// The separator has NO ESCAPE, deliberately: an escape needs a second grammar
+// and a second grammar is a second thing to get wrong. A command that must
+// contain a ';' is written into the config file directly, where the
+// accumulator's line-per-key form has no separator to collide with.
+//
+// `menu-entries` is deliberately NOT one of the keys `configKeySpecs()` names.
+// That list is a view of the single settings the option table declares and is
+// asserted equal to the config file writer's managed key list, and the writer
+// emits the three accumulator keys rather than a `menu-entries=` line.
+//
 // DISC-01d -- the window-manager version travels in the status-reply field
 // list (D-14 names it as status), not as a member of hello-ack. D-15 asks the
 // handshake for a program name and a protocol version and nothing else, and

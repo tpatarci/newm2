@@ -227,9 +227,32 @@ private:
     // Application discovery (Phase 7): merged AppEntry list from Desktop/BinaryScan/Manual
     // sources, and the same entries grouped into category buckets (alphabetical,
     // "Custom" always last) ready for menu rendering.
+    // The AUTO-DISCOVERED half, kept as it arrived (plan 09-05). m_apps below
+    // is this list with the effective configuration's manual entries merged
+    // onto it, and the merge is re-run whenever those entries change -- which
+    // cannot be done from m_apps alone, because D-08's name-match rule
+    // REPLACES an auto-discovered entry rather than shadowing it.
+    std::vector<AppEntry> m_autoApps;
+
     std::vector<AppEntry> m_apps;
     std::vector<std::pair<std::string, std::vector<AppEntry>>> m_appCategories;
     void buildAppCategories();
+
+    // Re-run the startup merge and regroup, from m_autoApps and the effective
+    // configuration's manual entries. The SAME merge the startup path uses --
+    // AppCache::mergeEntries() -- rather than a second one, so a manual entry
+    // set over the socket lands exactly where the identical line in a config
+    // file would put it.
+    void rebuildAppCategoriesFromConfig();
+
+    // A root menu is open right now, and its modal loop is holding a pointer
+    // INTO m_appCategories (the submenu's entry vector). Rebuilding that list
+    // underneath it is the defect class plans 08-13 and 08-14 already fixed
+    // once, so applyConfig() defers instead: it sets the flag below and menu()
+    // rebuilds before it assembles the NEXT menu. A menu already open is left
+    // undisturbed, which is also what D-08 asks for.
+    bool m_menuOpen = false;
+    bool m_appCategoriesStale = false;
 
     // Capability sentinel convention (Phase 8). Every optional X extension this
     // WM depends on is represented by the SAME triple:

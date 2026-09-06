@@ -232,6 +232,30 @@ void WindowManager::menu(XButtonEvent *e)
 {
     if (e->window == m_menuWindow || e->window == m_submenuWindow) return;
 
+    // CGUI-04 (plan 09-05). Two things happen here, in this order, and both
+    // exist because the manual menu entries can now change while the window
+    // manager is running.
+    //
+    // FIRST, pick up a list a `set` deferred. applyConfig() will not rebuild
+    // m_appCategories while a menu is open, because the modal loop below holds
+    // a pointer INTO it (subEntries), so the rebuild happens here instead --
+    // before a single label is read, and while no loop is iterating anything.
+    //
+    // SECOND, say so for the duration. The flag is what applyConfig() consults,
+    // and it is cleared on EVERY exit from this function by the guard below
+    // rather than at the returns, because this function has several and a
+    // missed one would leave the window manager permanently deferring rebuilds.
+    if (m_appCategoriesStale) {
+        rebuildAppCategoriesFromConfig();
+        m_appCategoriesStale = false;
+    }
+
+    struct MenuOpenGuard {
+        bool &flag;
+        explicit MenuOpenGuard(bool &f) : flag(f) { flag = true; }
+        ~MenuOpenGuard() { flag = false; }
+    } menuOpenGuard(m_menuOpen);
+
     std::vector<Client*> clients;
     clients.reserve(m_hiddenClients.size());
     std::transform(m_hiddenClients.begin(), m_hiddenClients.end(),

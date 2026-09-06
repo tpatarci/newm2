@@ -1,5 +1,6 @@
 #include "Manager.h"
 #include "Client.h"
+#include "AppCache.h"  // mergeEntries -- the one merge the startup path and the live path share
 #include "Border.h"   // FRAME_WIDTH -- the live frame thickness applyConfig() writes
 #include "TimestampWait.h"
 #include <string>
@@ -76,7 +77,7 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     , m_root(None)
     , m_defaultColormap(None)
     , m_activeClient(nullptr)
-    , m_apps(apps)
+    , m_autoApps(apps)
     , m_shapeEvent(0)
     , m_randrEventBase(-1)
     , m_lastKnownScreenW(0)
@@ -126,9 +127,15 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
                  m_config.autoRaise    ? "Auto-raise on."   : "Auto-raise off.",
                  m_config.raiseOnFocus ? "Raise on focus."  : "No raise on focus.");
 
-    // Group the merged AppEntry list into category buckets for menu rendering.
-    // Pure data grouping, no X11 dependency -- safe to run before the display opens.
-    buildAppCategories();
+    // Merge the configuration's manual entries onto what discovery found, then
+    // group the result into category buckets for menu rendering. Pure data, no
+    // X11 dependency -- safe to run before the display opens.
+    //
+    // The merge happens HERE rather than in main.cpp (where it lived until plan
+    // 09-05) because the manual entries can now change while the window manager
+    // is running: the same merge has to be re-runnable, from the same two
+    // inputs, and both of them therefore have to be things this object holds.
+    rebuildAppCategoriesFromConfig();
 
     // Open display via RAII
     m_display.reset(XOpenDisplay(nullptr));
@@ -322,6 +329,13 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
 WindowManager::~WindowManager()
 {
     // RAII handles resource cleanup
+}
+
+
+void WindowManager::rebuildAppCategoriesFromConfig()
+{
+    m_apps = AppCache::mergeEntries(m_autoApps, m_config.manualMenuEntries);
+    buildAppCategories();
 }
 
 
@@ -2070,6 +2084,25 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
         XFlush(display());
     }
 
+    // --- Manual menu entries ------------------------------------------------
+    //
+    // Compared on the RENDERED value rather than field by field: the same
+    // string is what `get` returns and what a `set` carries, so "did this
+    // change?" is asked in exactly the vocabulary the protocol uses and cannot
+    // answer differently from it.
+    if (configMenuEntriesValue(next) != configMenuEntriesValue(previous)) {
+        if (m_menuOpen) {
+            // A modal menu loop is iterating m_appCategories right now and
+            // holds a pointer into one of its entry vectors. Rebuilding under
+            // it is the defect 08-13/08-14 fixed once already, so the new list
+            // is picked up by the NEXT opening instead -- which is also what
+            // "a menu already open is not disturbed" means.
+            m_appCategoriesStale = true;
+        } else {
+            rebuildAppCategoriesFromConfig();
+        }
+    }
+
     return true;
 }
 
@@ -2077,6 +2110,50 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
 bool WindowManager::applyConfigSet(const std::string &key, const std::string &value,
                                    std::string &reasonOut)
 {
+    // The manual menu entries, which are NOT a single setting and are handled
+    // before the table is consulted (plan 09-05, D-12). The whole list arrives
+    // as one value in the config file's own key order and REPLACES what was
+    // there; see include/Config.h for the grammar and for why a per-row
+    // protocol would have been the wrong shape. Deliberately not added to
+    // configKeySpecs(): that view is of the single settings the option table
+    // declares, it is asserted equal to configFileManagedKeys(), and the file
+    // writer does not write a `menu-entries=` line -- it writes the three
+    // accumulator keys.
+    if (key == kMenuEntriesKey) {
+        Config next = m_config;
+        if (!parseMenuEntriesValue(value, next.manualMenuEntries, reasonOut)) {
+            return false;
+        }
+
+        // The fail-closed read-back, in the shape the settings path uses but
+        // asked as a ROUND TRIP, because the request's exact bytes are not the
+        // right thing to compare against: a value that omits a category, or
+        // separates command tokens with runs of spaces, is legitimate and is
+        // stored in canonical form. What must hold is that rendering the stored
+        // list and parsing it again produces the same list -- if it does not,
+        // the renderer and the parser have come to disagree, which is a bug and
+        // must be a refusal rather than a silent misapply.
+        const std::string rendered = configMenuEntriesValue(next);
+        std::vector<AppEntry> reparsed;
+        std::string ignored;
+        if (!parseMenuEntriesValue(rendered, reparsed, ignored) ||
+            reparsed.size() != next.manualMenuEntries.size()) {
+            reasonOut = "the configuration parser did not accept this value";
+            return false;
+        }
+        for (std::size_t i = 0; i < reparsed.size(); ++i) {
+            const AppEntry &a = reparsed[i];
+            const AppEntry &b = next.manualMenuEntries[i];
+            if (a.name != b.name || a.category != b.category ||
+                a.execArgv != b.execArgv || a.source != b.source) {
+                reasonOut = "the configuration parser did not accept this value";
+                return false;
+            }
+        }
+
+        return applyConfig(next, reasonOut);
+    }
+
     const ConfigKeySpec *spec = configKeySpecFor(key);
     if (!spec) {
         // Not a single setting. `rule-*` and `menu-entry-*` land here too, and
@@ -2184,6 +2261,25 @@ bool WindowManager::reloadConfigFromDisk(std::string &reasonOut)
     if (!applyConfig(next, reasonOut)) return false;
 
     m_savedConfig = next;
+
+    // D-08: EVERY connected client is told the files were re-read, on its own
+    // connection, so a settings window left open somewhere knows its picture is
+    // stale. Sent only AFTER the reload has succeeded and been applied -- a
+    // notice about a reload that was refused would be worse than none.
+    //
+    // The notice is `reloaded`, which is already one of the eleven types the
+    // version-1 contract froze, so this adds no twelfth. It carries NOTHING
+    // beyond its type: a client that wants a value asks for it (T-9-31), and a
+    // notice that carried values would be a second, drifting copy of the
+    // settings. ConfigSocketServer::broadcast() writes to hello-completed
+    // connections only, so a stranger is told nothing (D-15).
+    //
+    // The client that asked for the reload receives this AND its own
+    // `reloaded` reply. Both say the same thing, so a client reading one line
+    // is correct either way; wm2-ctl reads one and exits.
+    ConfigMessage notice;
+    notice.type = ConfigMessageType::Reloaded;
+    m_socketServer.broadcast(configProtocolEncode(notice));
     return true;
 }
 
@@ -2271,7 +2367,9 @@ ConfigSocketReply WindowManager::handleConfigRequest(const ConfigSocketRequest &
         // a client is asking is "what are you using?", and after a `set` those
         // two are deliberately different things.
         std::string value;
-        if (!configValueForKey(m_config, message.key, value)) {
+        if (message.key == kMenuEntriesKey) {
+            value = configMenuEntriesValue(m_config);
+        } else if (!configValueForKey(m_config, message.key, value)) {
             refuseKey(message.key, "unknown setting");
             return out;
         }

@@ -42,6 +42,7 @@
 #include "Config.h"
 #include "ConfigFileWriter.h"
 #include "SocketServer.h"
+#include "ConfigProtocol.h"
 
 #include "x11wrap.h"
 #include <X11/Xlib.h>
@@ -49,10 +50,14 @@
 #include <X11/Xutil.h>
 #include <X11/extensions/shape.h>
 
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <cerrno>
+#include <poll.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -751,6 +756,113 @@ int decorationWidth(Display* d, Window frame, Window client)
 {
     return rectOf(d, frame).w - rectOf(d, client).w;
 }
+
+// ---------------------------------------------------------------------------
+// A raw protocol client (plan 09-05)
+//
+// The broadcast cases need something wm2-ctl cannot express: a connection that
+// stays open across a reload, and a second connection that never completes the
+// handshake. wm2-ctl performs one request and exits, by design, so those two
+// are spoken here directly -- the same shape tests/test_wm_socket.cpp uses,
+// with the same rule that every wait has a deadline and no read blocks.
+// ---------------------------------------------------------------------------
+
+class Conn {
+public:
+    explicit Conn(const std::string& path)
+    {
+        m_fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (m_fd < 0) return;
+
+        struct sockaddr_un addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        if (path.size() + 1 > sizeof(addr.sun_path)) { closeFd(); return; }
+        std::memcpy(addr.sun_path, path.c_str(), path.size());
+
+        if (::connect(m_fd, reinterpret_cast<struct sockaddr*>(&addr),
+                      sizeof(addr)) != 0) {
+            closeFd();
+        }
+    }
+    ~Conn() { closeFd(); }
+    Conn(const Conn&) = delete;
+    Conn& operator=(const Conn&) = delete;
+
+    bool connected() const { return m_fd >= 0; }
+
+    bool sendRaw(const std::string& bytes)
+    {
+        std::size_t sent = 0;
+        while (sent < bytes.size()) {
+            const ssize_t n = ::send(m_fd, bytes.data() + sent,
+                                     bytes.size() - sent, MSG_NOSIGNAL);
+            if (n > 0) { sent += static_cast<std::size_t>(n); continue; }
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+                settleTick();
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    bool send(const ConfigMessage& m) { return sendRaw(configProtocolEncode(m)); }
+
+    bool readLine(std::string& out, int timeoutMs)
+    {
+        const auto until = Clock::now() + std::chrono::milliseconds(timeoutMs);
+        for (;;) {
+            const std::size_t nl = m_in.find('\n');
+            if (nl != std::string::npos) {
+                out = m_in.substr(0, nl + 1);
+                m_in.erase(0, nl + 1);
+                return true;
+            }
+            const auto left = until - Clock::now();
+            if (left <= std::chrono::steady_clock::duration::zero()) return false;
+
+            struct pollfd p;
+            p.fd = m_fd;
+            p.events = POLLIN;
+            p.revents = 0;
+            const int ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(left).count());
+            const int r = ::poll(&p, 1, ms > 0 ? ms : 1);
+            if (r < 0) { if (errno == EINTR) continue; return false; }
+            if (r == 0) return false;
+
+            char buf[4096];
+            const ssize_t n = ::recv(m_fd, buf, sizeof(buf), 0);
+            if (n == 0) return false;                 // peer closed
+            if (n < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) continue;
+                return false;
+            }
+            m_in.append(buf, static_cast<std::size_t>(n));
+        }
+    }
+
+    bool shakeHands()
+    {
+        ConfigMessage hello;
+        hello.type = ConfigMessageType::Hello;
+        hello.program = "test_wm_config_live";
+        hello.protocol = kConfigProtocolVersion;
+        if (!send(hello)) return false;
+
+        std::string line;
+        if (!readLine(line, 8000)) return false;
+        ConfigMessage ack;
+        return configProtocolDecode(line, ack) == ConfigDecodeResult::Ok &&
+               ack.type == ConfigMessageType::HelloAck;
+    }
+
+private:
+    void closeFd() { if (m_fd >= 0) ::close(m_fd); m_fd = -1; }
+    int m_fd = -1;
+    std::string m_in;
+};
 
 // Close a menu the press above left open, by releasing outside every row.
 void closeRootMenu(Display* d, XTestDriver& driver)
@@ -2346,4 +2458,363 @@ TEST_CASE("setting new-window-command and exec-using-shell changes what the menu
     CHECK(directRan);
     CHECK_FALSE(ranWithoutShell);
     CHECK(ranWithShell);
+}
+
+
+// -----------------------------------------------------------------------------
+// The root menu rebuilds, and every connected client learns the file changed
+// (CGUI-04, D-08, D-12, plan 09-05)
+// -----------------------------------------------------------------------------
+
+// WHAT THE ROOT MENU ACTUALLY SHOWS, and why the two cases below assert on a
+// CATEGORY label rather than on an entry name.
+//
+// WindowManager::menu()'s outer rows are: the New entry, one row per hidden
+// client, then one row per CATEGORY -- `m_appCategories[i].first`, the category
+// name. An entry's own name is only ever drawn in that category's submenu,
+// which opens on a MotionNotify over its row and whose row index cannot be
+// computed from outside without knowing the entry height and how many
+// categories the host's application scan produced.
+//
+// So "the manual entry is present in the next root menu" is observed here as
+// the row the entry brings INTO that menu: a manual entry in a category nothing
+// else populates adds exactly one row, of exactly that label's width. That is a
+// property of the entry -- remove the entry and the row goes with it, which is
+// the second case below -- and it is measurable without a submenu.
+
+TEST_CASE("a manual menu entry set over the socket appears in the next root menu",
+          "[wm_config_live]")
+{
+    const std::string home = makeConfigHome("frame-thickness=7\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    const unsigned long bg = namedPixel(d, "#c8cacc");
+    REQUIRE(bg != ~0UL);
+
+    // No manual entries at all to begin with, so what the menu gains is
+    // entirely the entry this case adds.
+    const std::string before = ctlGet(fixture, "menu-entries");
+    INFO("menu-entries before: '" << before << "'");
+    REQUIRE(before.empty());
+
+    Window menu = None;
+    Rect firstRect;
+    REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, firstRect, bg));
+    closeRootMenu(d, driver);
+
+    CtlResult r = ctl(fixture, {"set", "menu-entries",
+        "menu-entry-name=SetOverTheSocket;"
+        "menu-entry-command=/bin/true;"
+        "menu-entry-category=ZzzAnExtremelyLongCategoryLabelIndeed"});
+
+    Window menu2 = None;
+    Rect secondRect;
+    const bool reopened =
+        openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu2, secondRect, bg);
+    closeRootMenu(d, driver);
+
+    const std::string after = ctlGet(fixture, "menu-entries");
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO(r.describe());
+    INFO("menu-entries after: " << after);
+    INFO("menu before " << describe(firstRect) << " after " << describe(secondRect));
+
+    CHECK(r.exitCode == 0);
+    CHECK(reopened);
+
+    // The window manager reports the list it was given, rendered in the same
+    // grammar the request used -- so the two ends are checked against each
+    // other rather than against a literal written twice.
+    CHECK(after == "menu-entry-name=SetOverTheSocket;"
+                   "menu-entry-command=/bin/true;"
+                   "menu-entry-category=ZzzAnExtremelyLongCategoryLabelIndeed");
+
+    // ...and the menu the USER sees changed: one row taller for the row the
+    // entry brought with it, and wider because WindowManager::menu() measures
+    // every label and sizes the popup to the widest one.
+    CHECK(secondRect.h > firstRect.h);
+    CHECK(secondRect.w > firstRect.w);
+}
+
+TEST_CASE("removing every manual entry removes its category from the next menu",
+          "[wm_config_live]")
+{
+    // The entry's category is one nothing else populates, so emptying the list
+    // must take the whole category row out of the menu with it -- which is a
+    // narrower menu, because that row is the widest label in it.
+    const std::string home = makeConfigHome(
+        "menu-entry-name=SoleEntry\n"
+        "menu-entry-command=/bin/true\n"
+        "menu-entry-category=ZzzUniqueCategoryNameThatNothingElseUses\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    const unsigned long bg = namedPixel(d, "#c8cacc");
+
+    Window menu = None;
+    Rect withCategory;
+    REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, withCategory, bg));
+    closeRootMenu(d, driver);
+
+    // The empty value is how a list is cleared.
+    CtlResult r = ctl(fixture, {"set", "menu-entries", ""});
+
+    Window menu2 = None;
+    Rect withoutCategory;
+    const bool reopened =
+        openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu2, withoutCategory, bg);
+    closeRootMenu(d, driver);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO(r.describe());
+    INFO("menu-entries after: '" << ctlGet(fixture, "menu-entries") << "'");
+    INFO("menu with category " << describe(withCategory)
+         << " without " << describe(withoutCategory));
+
+    CHECK(r.exitCode == 0);
+    CHECK(reopened);
+    CHECK(ctlGet(fixture, "menu-entries").empty());
+    // One fewer row, and the widest label gone with it.
+    CHECK(withoutCategory.h < withCategory.h);
+    CHECK(withoutCategory.w < withCategory.w);
+}
+
+TEST_CASE("a menu held open across a menu-entry change is not disturbed",
+          "[wm_config_live]")
+{
+    // T-9-32. WindowManager::menu() runs a modal loop holding a pointer INTO
+    // the category list, so rebuilding that list underneath it is the defect
+    // class 08-13 and 08-14 already fixed once. The rebuild is deferred to the
+    // next opening instead, and this case is what says so from outside: the
+    // open menu keeps its geometry, the window manager keeps answering, and the
+    // change appears the next time the menu is opened.
+    const std::string home = makeConfigHome("frame-thickness=7\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    const unsigned long bg = namedPixel(d, "#c8cacc");
+
+    Window menu = None;
+    Rect openRect;
+    REQUIRE(openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, openRect, bg));
+
+    // The menu is UP and the button is still held. The socket answers anyway --
+    // 09-03's shared descriptor set is what makes that true even inside a
+    // modal grab.
+    CtlResult r = ctl(fixture, {"set", "menu-entries",
+        "menu-entry-name=AddedWhileTheMenuWasOpen;"
+        "menu-entry-command=/bin/true;"
+        "menu-entry-category=ZzzAnExtremelyLongCategoryLabelIndeed"});
+    settleTick();
+    settleTick();
+
+    Rect stillOpen;
+    const bool measured = serverRect(d, menu, stillOpen);
+    closeRootMenu(d, driver);
+
+    Window menu2 = None;
+    Rect afterRect;
+    const bool reopened =
+        openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu2, afterRect, bg);
+    closeRootMenu(d, driver);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO(r.describe());
+    INFO("menu while open " << describe(openRect) << " -> " << describe(stillOpen)
+         << ", reopened " << describe(afterRect));
+
+    CHECK(r.exitCode == 0);
+    // The open menu was not resized, remeasured or redrawn under the loop.
+    CHECK(measured);
+    CHECK(stillOpen == openRect);
+    // ...and the next one picked the change up.
+    CHECK(reopened);
+    CHECK(afterRect.w > openRect.w);
+
+    // Still responsive: it frames a window afterwards.
+    Window late = None;
+    Window lateFrame = mapClientAndAwaitFrame(d, 500, 400, 200, 160, late, "after-menu");
+    CHECK(lateFrame != None);
+    CHECK(fixture.wmAlive());
+}
+
+TEST_CASE("a reload tells every client that completed a hello, and no stranger",
+          "[wm_config_live]")
+{
+    // D-08. Two connections: one that completed the handshake and one that
+    // connected and said nothing. Exactly the first is told.
+    const std::string home = makeConfigHome("frame-thickness=7\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+
+    const std::string socketPath = socketPathFor(fixture.display());
+    INFO("socket: " << socketPath);
+
+    Conn greeted(socketPath);
+    REQUIRE(greeted.connected());
+    REQUIRE(greeted.shakeHands());
+
+    Conn stranger(socketPath);
+    REQUIRE(stranger.connected());
+
+    // The file changes under the running window manager, then a reload is asked
+    // for through the shipped tool -- a THIRD connection, so neither of the two
+    // above is the one that requested it.
+    writeConfigFile(home, "frame-thickness=23\n");
+    CtlResult r = ctl(fixture, {"reload"});
+
+    std::string noticeLine;
+    const bool greetedHeard = greeted.readLine(noticeLine, 8000);
+
+    ConfigMessage notice;
+    ConfigDecodeResult decoded = ConfigDecodeResult::Malformed;
+    if (greetedHeard) decoded = configProtocolDecode(noticeLine, notice);
+
+    // A shorter deadline than the handshake one, because this is proving a
+    // NON-event; a stranger is also dropped on the hello deadline, and either
+    // way it never receives a line.
+    std::string strangerLine;
+    const bool strangerHeard = stranger.readLine(strangerLine, 1500);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO(r.describe());
+    INFO("greeted heard: " << greetedHeard << " '" << noticeLine << "'");
+    INFO("stranger heard: " << strangerHeard << " '" << strangerLine << "'");
+
+    CHECK(r.exitCode == 0);
+    CHECK(greetedHeard);
+    CHECK(decoded == ConfigDecodeResult::Ok);
+    CHECK(notice.type == ConfigMessageType::Reloaded);
+
+    // T-9-31: the notice carries its type and NOTHING else. A client that wants
+    // a value asks for it, so the notice can never become a second, drifting
+    // copy of the settings.
+    CHECK(notice.key.empty());
+    CHECK(notice.value.empty());
+    CHECK(notice.reason.empty());
+    CHECK(notice.program.empty());
+    CHECK(notice.protocol == 0);
+    CHECK(notice.fields.empty());
+
+    // D-15: a connection that never said hello is not a client, and is told
+    // nothing.
+    CHECK_FALSE(strangerHeard);
+}
+
+TEST_CASE("a client that never reads does not stop the window manager reloading",
+          "[wm_config_live]")
+{
+    // T-9-30. The broadcast writes to descriptors whose far end this process
+    // does not control. A connection that completes the handshake and then
+    // never reads a byte must not be able to block the window manager: the
+    // proof of that is that it keeps working afterwards.
+    const std::string home = makeConfigHome("frame-thickness=7\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    Conn idle(socketPathFor(fixture.display()));
+    REQUIRE(idle.connected());
+    REQUIRE(idle.shakeHands());
+
+    Window client = None;
+    Window frame = mapClientAndAwaitFrame(d, 200, 150, 300, 220, client, "unread");
+    REQUIRE(frame != None);
+    const Rect before = rectOf(d, frame);
+
+    // Several reloads in a row, each producing a notice nobody on that
+    // connection is collecting.
+    for (int i = 0; i < 5; ++i) {
+        writeConfigFile(home, "frame-thickness=" + std::to_string(9 + i * 2) + "\n");
+        CtlResult r = ctl(fixture, {"reload"});
+        INFO("reload " << i << ": " << r.describe());
+        CHECK(r.exitCode == 0);
+    }
+
+    const Rect after = awaitFrameChange(d, frame, before);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO("frame before " << describe(before) << " after " << describe(after));
+
+    CHECK_FALSE(after == before);
+    CHECK(ctlGet(fixture, "frame-thickness") == "17");
+    CHECK(fixture.wmAlive());
+}
+
+TEST_CASE("a malformed menu-entries value is refused and the menu is unchanged",
+          "[wm_config_live]")
+{
+    const std::string home = makeConfigHome(
+        "menu-entry-name=KeepMe\nmenu-entry-command=/bin/true\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+
+    const std::string before = ctlGet(fixture, "menu-entries");
+    REQUIRE(before.find("KeepMe") != std::string::npos);
+
+    // A record that is not a key=value pair; a key that is not one of the
+    // three; and a command with no name to attach to. The FILE parser answers
+    // the last of those with a warning to a stderr nobody is reading, which
+    // over the socket would acknowledge a list that silently lost a record.
+    CtlResult noEquals = ctl(fixture, {"set", "menu-entries", "menu-entry-name"});
+    CtlResult wrongKey = ctl(fixture, {"set", "menu-entries", "frame-thickness=9"});
+    CtlResult orphan   = ctl(fixture, {"set", "menu-entries",
+                                       "menu-entry-command=/bin/true"});
+
+    const std::string after = ctlGet(fixture, "menu-entries");
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO("no equals: " << noEquals.describe());
+    INFO("wrong key: " << wrongKey.describe());
+    INFO("orphan: " << orphan.describe());
+    INFO("menu-entries before '" << before << "' after '" << after << "'");
+
+    CHECK(noEquals.exitCode == 1);
+    CHECK(wrongKey.exitCode == 1);
+    CHECK(orphan.exitCode == 1);
+    CHECK(after == before);
+}
+
+TEST_CASE("setting the same menu-entries value twice changes nothing the second time",
+          "[wm_config_live]")
+{
+    const std::string home = makeConfigHome("frame-thickness=7\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+
+    const std::string value =
+        "menu-entry-name=Twice;menu-entry-command=/bin/true;menu-entry-category=Custom";
+
+    CtlResult first  = ctl(fixture, {"set", "menu-entries", value});
+    const std::string afterFirst = ctlGet(fixture, "menu-entries");
+    CtlResult second = ctl(fixture, {"set", "menu-entries", value});
+    const std::string afterSecond = ctlGet(fixture, "menu-entries");
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    INFO("first: " << first.describe());
+    INFO("second: " << second.describe());
+    INFO("after first '" << afterFirst << "' after second '" << afterSecond << "'");
+
+    CHECK(first.exitCode == 0);
+    CHECK(second.exitCode == 0);
+    // Wholesale replacement is what makes this idempotent: a second identical
+    // list is the same list, never the list twice over.
+    CHECK(afterFirst == value);
+    CHECK(afterSecond == afterFirst);
 }

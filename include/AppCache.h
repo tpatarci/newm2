@@ -53,6 +53,19 @@ void write(const std::string& path, const CacheData& data);
 std::vector<AppEntry> mergeEntries(const std::vector<AppEntry>& autoDiscovered,
                                     const std::vector<AppEntry>& manualEntries);
 
+// The auto-discovered half of loadOrRescan() below, on its own: reads the
+// cache at cachePath, rescans and persists a fresh one when needsRescan() says
+// the cache is stale or empty, and returns what discovery found WITHOUT any
+// manual entries merged in.
+//
+// Split out for plan 09-05 (CGUI-04). Manual menu entries can now change while
+// the window manager is running, and rebuilding the merged list then means
+// merging the new manual entries onto the auto-discovered ones AGAIN -- which
+// requires having kept them. They cannot be recovered from the merged list,
+// because D-08's name-match rule REPLACES an auto-discovered entry rather than
+// shadowing it, so the original is gone.
+std::vector<AppEntry> loadAutoDiscovered(const std::string& cachePath);
+
 // Orchestrates the full load: reads the cache at cachePath, rescans
 // (DesktopEntry::scanAll() + BinaryScanner::scanUsrBin()) and persists a
 // fresh cache if needsRescan() says the cache is stale or empty, then
