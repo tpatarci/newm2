@@ -17,8 +17,13 @@
 // So the GLib INTEGRATION is a two-line adapter and it lives at the call site:
 // this class exposes the descriptor a source should watch (fileDescriptor())
 // and the handler that source should call (onReadable()), and apps/wm2-config/
-// main.cpp attaches them with g_unix_fd_add(). Nothing here ever blocks on a
-// read: onReadable() drains what is already there and returns.
+// main.cpp attaches them with g_unix_fd_add(). NOTHING HERE EVER BLOCKS, on a
+// read or on a write: the descriptor is non-blocking from the first syscall,
+// onReadable() drains a bounded amount of what is already there and returns,
+// and send() waits on poll() with the handshake deadline rather than on the
+// kernel. Writes matter as much as reads and are the ones this program spends
+// its time on -- a `set` per committed control, up to twenty-one in a row on a
+// discard, all from GTK signal handlers (WR-09).
 //
 // pumpUntil() is the one exception, and it is deliberately narrow: it polls the
 // descriptor with a deadline, and it exists for the handshake -- which happens

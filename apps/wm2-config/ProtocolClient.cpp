@@ -92,15 +92,47 @@ bool ProtocolClient::connect(const std::string& path)
     addr.sun_family = AF_UNIX;
     std::memcpy(addr.sun_path, path.c_str(), path.size());
 
-    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    // NON-BLOCKING, FROM THE FIRST SYSCALL (WR-09). This descriptor is owned by
+    // a GTK main loop: every blocking operation on it is a frozen settings
+    // window with no repaint and no way out, and writes are where this program
+    // spends its time -- request() -> send() runs from button and entry
+    // handlers, up to twenty-one in a row on a discard. connect() has the same
+    // exposure at startup, bounded only by the peer's listen backlog, so it is
+    // covered by the same treatment.
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (fd < 0) {
         setState(State::NoSocket,
                  std::string("cannot create a socket: ") + std::strerror(errno));
         return false;
     }
 
-    if (::connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) != 0) {
-        const int err = errno;
+    int rc  = ::connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+    int err = errno;
+    if (rc < 0 && (err == EINPROGRESS || err == EAGAIN || err == EWOULDBLOCK)) {
+        struct pollfd p;
+        p.fd      = fd;
+        p.events  = POLLOUT;
+        p.revents = 0;
+        const int r = ::poll(&p, 1, kHandshakeMs);
+        if (r <= 0) {
+            ::close(fd);
+            setState(State::NoSocket,
+                     "the window manager's socket did not accept a connection "
+                     "in time");
+            return false;
+        }
+        socklen_t len = sizeof(err);
+        if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) != 0) {
+            const int failed = errno;
+            ::close(fd);
+            setState(State::NoSocket,
+                     std::string("cannot connect: ") + std::strerror(failed));
+            return false;
+        }
+        rc = (err == 0) ? 0 : -1;
+    }
+
+    if (rc != 0) {
         ::close(fd);
         // ENOENT and ECONNREFUSED are the two ordinary "nothing is listening"
         // answers -- no socket node, or one left behind by a window manager
@@ -190,7 +222,19 @@ bool ProtocolClient::send(const ConfigMessage& message)
         if (n > 0) { sent += static_cast<std::size_t>(n); continue; }
         if (n < 0 && errno == EINTR) continue;
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            if (Clock::now() >= until) return false;
+            // WAITED ON, NOT SPUN ON (WR-09). The descriptor is non-blocking,
+            // so without the poll below this arm is a busy loop burning a core
+            // for the whole handshake deadline while the window is frozen
+            // anyway.
+            const auto left = until - Clock::now();
+            if (left <= Clock::duration::zero()) return false;
+            struct pollfd p;
+            p.fd      = m_fd;
+            p.events  = POLLOUT;
+            p.revents = 0;
+            const int ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(left).count());
+            if (::poll(&p, 1, ms > 0 ? ms : 1) <= 0) return false;
             continue;
         }
         return false;

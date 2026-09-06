@@ -2838,3 +2838,58 @@ TEST_CASE("An error answers whichever request is at the head",
     CHECK(client.pumpUntil([&]() { return answered; }, 5000));
     CHECK(reason == "the X server cannot parse that colour");
 }
+
+
+// ---------------------------------------------------------------------------
+// Nothing this client does can freeze the settings window (WR-09, WR-10)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("the client's descriptor is non-blocking once connected",
+          "[wm2_config_smoke][protocol][nonblocking]")
+{
+    ScriptedPeer peer(shortSocketPath("wr09flags"));
+    REQUIRE(peer.listening());
+
+    ProtocolClient client;
+    REQUIRE(client.connect(peer.path()));
+    REQUIRE(peer.connection(5000) >= 0);
+
+    // The descriptor belongs to a GTK main loop. Every blocking operation on
+    // it is a frozen window with no repaint and no way out.
+    const int fd = client.fileDescriptor();
+    REQUIRE(fd >= 0);
+    const int flags = ::fcntl(fd, F_GETFL, 0);
+    REQUIRE(flags >= 0);
+    CHECK((flags & O_NONBLOCK) != 0);
+}
+
+TEST_CASE("a peer that stops reading does not hang the client for ever",
+          "[wm2_config_smoke][protocol][nonblocking]")
+{
+    ScriptedPeer peer(shortSocketPath("wr09wedge"));
+    REQUIRE(peer.listening());
+
+    ProtocolClient client;
+    REQUIRE(client.connect(peer.path()));
+    REQUIRE(peer.connection(5000) >= 0);
+
+    // The peer never reads another byte. Sends fill the socket buffer and then
+    // have nowhere to go -- a window manager inside a long modal grab, stopped
+    // with SIGSTOP, or simply wedged.
+    const std::string big(kConfigProtocolMaxLine / 2, 'x');
+
+    const auto started = std::chrono::steady_clock::now();
+    bool refused = false;
+    for (int i = 0; i < 4000 && !refused; ++i) {
+        if (!client.sendSet("new-window-command", big, nullptr)) refused = true;
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started).count();
+
+    INFO("gave up after " << elapsed << " ms");
+
+    // It CAME BACK, and it came back having said so rather than having
+    // silently succeeded. With a blocking descriptor this loop never returns.
+    CHECK(refused);
+    CHECK(elapsed < 30000);
+}
