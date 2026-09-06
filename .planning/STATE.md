@@ -5,10 +5,9 @@ current_phase: 09
 current_phase_name: Config GUI + IPC
 status: executing
 stopped_at: Phase 9 context gathered
-last_updated: "2026-09-06T00:15:19.434Z"
-last_activity: 2026-09-05
-last_activity_desc: Phase 8.5 shipped -- PR
-state_head: 77dbb791d967b6d021458cd1946d31ed9338a97c
+last_updated: "2026-09-06T00:17:42.166Z"
+last_activity: 2026-09-06
+state_head: 468d84420d66bea56938558901d5d59ac8a7576b
 progress:
   total_phases: 10
   completed_phases: 4
@@ -24,11 +23,11 @@ milestone_name: milestone
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** A lightweight, visually distinctive window manager that works well on resource-constrained VPS instances via remote desktop -- simple enough for non-programmers to configure, reliable enough for daily use.
-**Current focus:** Phase 08.5 — v1.0 Closeout
+**Current focus:** Phase 09 — Config GUI + IPC
 
 ## Current Position
 
-Phase: 09 (Config GUI + IPC) — READY TO EXECUTE
+Phase: 09 (Config GUI + IPC) — EXECUTING
 
 **Position as of 2026-09-05 (evening).** On 2026-09-05 the operator instructed the
 delegated project lead to finish everything planned without stopping for
@@ -118,7 +117,7 @@ Plan: 2 of 10
   this round's measurement refuted and which the precommitted terminal rule
   forbids. **The next action is RE-PLANNING the attribution around the actual
   failing path** — an add-only round, as 08.5-09 was.
-Status: Ready to execute
+Status: Executing Phase 09
   ruled at the Task 3 `checkpoint:decision` (`gate="blocking-human"`).
   **Verdict of record: `REFUTED`. `08.5-07` disposition: `RE-PLAN`. No
   sub-decision** (a sub-decision is carried only by an `inconclusive` ruling).
@@ -289,7 +288,7 @@ Known gate false-negative, recorded so it is not "fixed": `check.decision-covera
   two-digit ID. Coverage verified manually at planning time: all 8 decisions
   (`D-8.5-01`..`-06`, `D-8-TIGHTVNC`, `D-8-X2GO`) are cited by at least one plan;
   `08.5-10` cites six of them.
-Last activity: 2026-08-31 — Phase 08.5 execution started
+Last activity: 2026-09-06
   preserved; next action is executing 08.5-10 alone
 
 Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).
