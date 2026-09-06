@@ -291,7 +291,7 @@ Known gate false-negative, recorded so it is not "fixed": `check.decision-covera
   two-digit ID. Coverage verified manually at planning time: all 8 decisions
   (`D-8.5-01`..`-06`, `D-8-TIGHTVNC`, `D-8-X2GO`) are cited by at least one plan;
   `08.5-10` cites six of them.
-Last activity: 2026-09-06
+Last activity: 2026-09-06 - Completed quick task 260906-ldw: tab label baseline clearance (tab 16 -> 25 px on the default font; knob kTabFrameClearance)
   preserved; next action is executing 08.5-10 alone
 
 Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).
@@ -516,6 +516,12 @@ Recent decisions affecting current work:
 - **08.5-09 RULED 2026-08-31: verdict REFUTED, 08.5-07 disposition RE-PLAN. 08.5-07, 08.5-08 and 08.5-05 are NOT to be started.** The precommitted terminal rule binds: 08.5-07 is NOT the flake fix and must not be recorded as one. timestamp() may still be hardened on its own merits, but v1.0 stays blocked until the bundle table names the actual failing path, or ruling B is reversed as a NEW, separately recorded release-policy decision. Evidence: evidence/gates/reproducer/ and the single **Verdict:** line in evidence/gates/attribution/README.md (397310a).
 - 08.5-09 lead, recorded and NOT attributed: trip-r-3/-4/-5 each carry a BadWindow cascade (X_CreateWindow, X_ReparentWindow, X_MapWindow, X_ChangeSaveSet, all on window 0x80003b) -- the WM framing a window that no longer exists. trip-r-1 and trip-r-2 have clean 12-line stderr and still failed to frame, so it is 3 of 5 and NOT the universal signature. Starting point for the re-plan; a refutation of one mechanism is not an attribution to another.
 - **08.5-10 HALTED AT TASK 3 -- the blocking-human operator ruling has NOT been taken.** The measurement is complete and committed (evidence/gates/wakeup/, 40 eight-channel bundles, measurement.log, README with one **Proposed outcome:** line reading ATTRIBUTED). What does NOT exist: any **Attribution outcome:** line, any **Terminal disposition:** line, and any round-4 append to evidence/gates/attribution/README.md -- that file is byte-identical to the pin 397310a (diff removes 0 and adds 0). Nothing records 08.5-07 as the flake fix; 08.5-05/-07/-08 stay held. Under the precommitted terminal rule ATTRIBUTED -> FIX-PLAN and everything else -> one of SHIP-WITH-RECORDED-DEFECT | REVERSE-RULING-B | DESCOPE-FROM-V1.0; no branch schedules another attribution round.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260906-ldw | Tab label baseline clearance: size the rotated tab from a full glyph box and fix the baseline per font so descenders end 5 px short of the frame edge (operator request from the 09-06 screenshot) | 2026-09-06 | 94cfaa3 | [260906-ldw-tab-label-baseline-clearance-size-the-ro](./quick/260906-ldw-tab-label-baseline-clearance-size-the-ro/) |
 
 ### Roadmap Evolution
 
