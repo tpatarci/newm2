@@ -2444,3 +2444,101 @@ TEST_CASE("the window shows the reload notice where the banner is, not in a seco
     CHECK(window.find("notice(") != std::string::npos);
     CHECK(window.find("m_notice") != std::string::npos);
 }
+
+
+// ---------------------------------------------------------------------------
+// D-20 / D-32: the settings window's resident memory, against a stated budget
+//
+// This project constrains itself to running comfortably on a 512 MB VPS
+// alongside a VNC server, and Phase 8 made that a test the suite enforces
+// rather than a sentence in a document. The window manager's own figure has
+// been asserted since plan 08-14 ([wm_resource_budget], 11.8 MB against a
+// 24 MB budget). The settings window had nothing.
+//
+// 09-RESEARCH's assumption log named it "the single most consequential
+// unverified number in the document" and instructed that no plan skip the
+// measurement on the strength of the 30-60 MB estimate beside it. Plan 09-09
+// took the measurement. The estimate was low.
+//
+// THE BUDGET BELOW IS CHOSEN FROM THE MEASUREMENT, NOT BEFORE IT.
+//
+// Measured on the reference host, release tree, Xvfb 1280x1024x24, three
+// repeats of each:
+//
+//   the FIRST wm2-config launched on a freshly started X server   ~101 MB
+//   every LATER wm2-config on that same server                     ~51 MB
+//
+// That split is reproducible and is NOT explained here, because it was not
+// determined: it is not the per-user fontconfig cache (a fresh HOME on each
+// run reproduces the ~51 MB figure from the second launch onward) and it is not
+// "being the first client on the server" (an xclock connected first does not
+// change it). What it is remains open. What matters for a budget is that a real
+// session opens the settings window once, so ~101 MB is the figure a user
+// actually pays, and it is the figure this budget is set against.
+//
+// 160 MB is roughly 1.6x the highest measured value -- tighter than the
+// window manager's own ~2x, because at this size a 2x budget would be most of
+// a quarter of the whole 512 MB machine and would stop being a detector.
+//
+// WHAT THIS CASE IS FOR. It is a regression detector, not the release figure.
+// The release figure comes from the once-per-release remote-desktop pass D-20
+// requires, recorded under
+// .planning/phases/09-config-gui-ipc/evidence/remote-desktop/.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("wm2-config's resident memory is measured against a stated budget",
+          "[wm2_config_smoke]")
+{
+#ifndef WM2_CONFIG_PATH
+    SKIP(kGuiNotBuilt);
+#else
+    // Measured 101 MB; see the note above for how this number was chosen.
+    constexpr long kBudgetKb = 160L * 1024L;
+
+    WmFixture fixture;
+    const std::string home = makeTree("guihome-rss");
+
+    ChildProcess gui = spawnConfigGui(fixture.display(), {}, home);
+    REQUIRE(gui.pid() > 0);
+
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    // Measure only once the window is up and the connection state has been
+    // decided: a process still linking and parsing has not finished allocating,
+    // and a figure taken then would be an under-report that drifts with how
+    // busy the host is.
+    Window win = None;
+    std::string state;
+    const bool appeared = WmFixture::pollUntil([&]() {
+        state.clear();
+        win = findConfigWindow(d, DefaultRootWindow(d), state);
+        return win != None && isViewable(d, win) && !state.empty();
+    }, 30000);
+    REQUIRE(appeared);
+
+    long guiKb = 0;
+    REQUIRE(wm2test::residentKb(gui.pid(), guiKb));
+
+    long wmKb = 0;
+    REQUIRE(wm2test::residentKb(fixture.wm().pid(), wmKb));
+
+    INFO("wm2-config resident " << guiKb << " kB against a " << kBudgetKb
+         << " kB budget; the window manager beside it holds " << wmKb << " kB");
+
+    // Anti-vacuity: a reader that returned 0 for a live process would satisfy
+    // any budget. The settings window links GTK; it cannot be under a megabyte.
+    CHECK(guiKb > 1024);
+    CHECK(guiKb <= kBudgetKb);
+
+    // The two figures are read through ONE reader, which is the whole reason it
+    // was moved into the shared fixture header: the release notes put them side
+    // by side against one 512 MB budget, and that comparison is only honest if
+    // the same field in the same units produced both.
+    CHECK(wmKb > 0);
+    CHECK(wmKb < guiKb);
+
+    gui.shutdown();   // by the PID spawnConfigGui() created, never by name
+#endif
+}

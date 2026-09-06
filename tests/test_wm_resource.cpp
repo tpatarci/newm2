@@ -268,23 +268,13 @@ bool allListed(Display* d, const std::vector<Window>& wins)
 // Process measurement
 // ---------------------------------------------------------------------------
 
-// Resident set size in kilobytes, from /proc/<pid>/statm field 2 (resident
-// pages). Chosen over VmSize because virtual size says nothing about what is
-// actually held -- ASan alone reserves an enormous virtual mapping that no VPS
-// ever commits.
-bool residentKb(pid_t pid, long& out)
-{
-    if (pid <= 0) return false;
-    const std::string path = "/proc/" + std::to_string(pid) + "/statm";
-    FILE* f = std::fopen(path.c_str(), "rb");
-    if (!f) return false;
-    long total = 0, resident = 0;
-    const int n = std::fscanf(f, "%ld %ld", &total, &resident);
-    std::fclose(f);
-    if (n != 2) return false;
-    out = resident * (::sysconf(_SC_PAGESIZE) / 1024);
-    return true;
-}
+// The resident-set reader moved to tests/support/WmFixture.h in plan 09-09,
+// where the settings window's own budget case can reach it. Same function,
+// same field, same units -- shared rather than copied, because the window
+// manager's figure and the GUI's figure are put side by side in the release
+// notes against ONE 512 MB budget, and two readers that disagreed by a page
+// size would make that comparison meaningless. `using namespace wm2test` at
+// the top of this file is what keeps every call site below unchanged.
 
 // ---------------------------------------------------------------------------
 // The measurement ladder

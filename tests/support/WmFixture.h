@@ -965,4 +965,31 @@ inline bool readWindowProp(Display* d, Window w, Atom prop, Window& out)
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Resident set size in kilobytes, from /proc/<pid>/statm field 2 (resident
+// pages). Chosen over VmSize because virtual size says nothing about what is
+// actually held -- ASan alone reserves an enormous virtual mapping that no VPS
+// ever commits.
+//
+// It lived in tests/test_wm_resource.cpp until plan 09-09, which needed the
+// same reader for the settings window's own process. Shared rather than
+// copied: the 512 MB budget is one budget, and two readers that disagreed by a
+// page size would make the window manager's figure and the GUI's figure
+// incomparable -- which is the one thing the release notes put them side by
+// side to do.
+// ---------------------------------------------------------------------------
+inline bool residentKb(pid_t pid, long& out)
+{
+    if (pid <= 0) return false;
+    const std::string path = "/proc/" + std::to_string(pid) + "/statm";
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    long total = 0, resident = 0;
+    const int n = std::fscanf(f, "%ld %ld", &total, &resident);
+    std::fclose(f);
+    if (n != 2) return false;
+    out = resident * (::sysconf(_SC_PAGESIZE) / 1024);
+    return true;
+}
+
 } // namespace wm2test
