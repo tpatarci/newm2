@@ -33,7 +33,7 @@ affects: [09-07-behaviour-and-menu-pages, 09-08-install-components, 09-09-releas
 actuals:
   tokens: 36000     # chars/4 over the realized diff (144,621 chars, 1fec9fd..22323a3, PNGs excluded)
   tasks: 3
-  commits: 6          # MEASURED: git rev-list --count 1fec9fd..HEAD -- 5 production commits plus this SUMMARY's own
+  commits: 7          # MEASURED: git rev-list --count 1fec9fd..HEAD -- 5 production commits, the SUMMARY, and the defect-ledger entry
   plan_head_before: 1fec9fdf0c73ebf391db97f34e1ccb6ff1b8c47b
 
 tech-stack:

@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 4
+open_count: 5
 waived_count: 8
 fixed_count: 6
-total_count: 18
-last_updated: 2026-09-06T10:53:30.413Z
+total_count: 19
+last_updated: 2026-09-06T12:03:32.878Z
 ---
 
 # Broken Windows Ledger
@@ -33,6 +33,7 @@ last_updated: 2026-09-06T10:53:30.413Z
 | 16 | 09 | deviation | tests/test_config_writer.cpp | 604 | The T-9-07/T-9-08 atomicity case SKIPs when euid==0: directory permissions are not enforced for root, so on a root-only host that evidence is not collected | open |  | 2026-09-06T07:41:36.481Z |  |
 | 17 | 09 | deviation | tests/test_wm_config_live.cpp | 793 | The reload-unreadable-file case SKIPs when euid==0: root can read a mode-000 file, so on a root-only host the 'reload names the file and changes nothing' evidence is not collected | open |  | 2026-09-06T09:16:12.670Z |  |
 | 18 | 09 | unrun-verify | tests/test_wm_config_live.cpp |  | The menu-open deferral (T-9-32) has no mutation-proof case: removing 'if (m_menuOpen)' leaves 'a menu held open across a menu-entry change is not disturbed' green in both the debug and the ASan tree, because the category vector's buffer is reused rather than freed | open |  | 2026-09-06T10:53:30.413Z |  |
+| 19 | 09 | unrun-verify | scripts/gates/build-all.sh |  | The release tree and its link audit were not run for plan 09-06; only debug and asan were gated | open |  | 2026-09-06T12:03:32.878Z |  |
 
 ````json
 [
@@ -250,6 +251,18 @@ last_updated: 2026-09-06T10:53:30.413Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-06T10:53:30.413Z",
+    "resolved_at": null
+  },
+  {
+    "id": 19,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "scripts/gates/build-all.sh",
+    "line": null,
+    "description": "The release tree and its link audit were not run for plan 09-06; only debug and asan were gated",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T12:03:32.878Z",
     "resolved_at": null
   }
 ]
