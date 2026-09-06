@@ -270,6 +270,42 @@ bool parseMenuEntriesValue(const std::string& value,
 inline constexpr const char* kMenuEntriesKey = "menu-entries";
 
 
+// The categories the running root menu currently shows, ';'-separated, in the
+// menu's own order -- alphabetical with "Custom" last (plan 09-07, D-12).
+//
+// READ-ONLY, and read-only by construction rather than by a check: it is not
+// one of the keys configKeySpecs() names, so applyConfigSet() refuses it as an
+// unknown setting like any other non-setting. That is the correct shape,
+// because the list is DERIVED -- from what discovery found plus the manual
+// entry list -- and setting a view of two things would mean setting neither.
+//
+// It exists because D-12 asks the settings window's category dropdown to offer
+// "the categories the WM currently shows". The GUI cannot compute that: it
+// would have to re-run the .desktop and /usr/bin scan, and a second
+// implementation of discovery is a second answer that disagrees with the first
+// the moment a .desktop file changes. So the window manager answers, and the
+// GUI asks.
+//
+// This adds no TWELFTH MESSAGE TYPE -- the eleven the version-1 contract froze
+// are untouched. It adds one key to the vocabulary the existing `get` verb
+// carries, which is exactly what plan 09-05 did for `menu-entries`.
+inline constexpr const char* kMenuCategoriesKey = "menu-categories";
+
+
+// Split a command string into an argument vector the way the config file's
+// `menu-entry-command` arm splits it: on whitespace, with NO shell evaluation,
+// no quote handling and no field codes.
+//
+// One implementation with two callers -- Config::applyKeyValue() and the
+// settings window's menu-entry dialog -- so a command typed into the window and
+// the same line written into the file cannot become two different argument
+// vectors. The dialog SHOWS the result of this call (T-9-40), which is the
+// honest form of the guarantee that a manual entry is never shell-evaluated: a
+// semicolon the user typed is visibly one argument rather than the start of a
+// second command.
+std::vector<std::string> configTokeniseCommand(const std::string& command);
+
+
 // The EFFECTIVE value of one key, spelled the way the config file would spell
 // it: a boolean as "true" or "false", an integer in decimal, a string
 // verbatim. False for a key configKeySpecs() does not name, leaving `out`

@@ -224,13 +224,12 @@ void Config::applyKeyValue(const std::string& key, const std::string& value,
         // file (a trusted source, per the config-manual-entries threat
         // disposition) -- simple whitespace tokenization is sufficient,
         // unlike .desktop's Exec= quoting/field-code handling.
-        std::vector<std::string> tokens;
-        std::istringstream ss(value);
-        std::string token;
-        while (ss >> token) {
-            tokens.push_back(token);
-        }
-        manualMenuEntries.back().execArgv = tokens;
+        //
+        // The split moved into configTokeniseCommand() for plan 09-07: the
+        // settings window's menu-entry dialog has to produce the same argument
+        // vector this line produces, and "the same way" is only true of one
+        // function with two callers.
+        manualMenuEntries.back().execArgv = configTokeniseCommand(value);
         return;
     }
 
@@ -767,6 +766,20 @@ bool configValueForKey(const Config& config, const std::string& key,
 // and the same whitespace tokenisation of the command (which is NOT a shell
 // evaluation: threat T-9-28).
 // -----------------------------------------------------------------------------
+
+std::vector<std::string> configTokeniseCommand(const std::string& command)
+{
+    // Whitespace only, no shell, no quotes, no field codes -- the split the
+    // menu-entry accumulator has always performed, hoisted here in plan 09-07
+    // so the settings window's dialog can call the same function rather than
+    // grow a second one that agrees with it until it does not.
+    std::vector<std::string> tokens;
+    std::istringstream ss(command);
+    std::string token;
+    while (ss >> token) tokens.push_back(token);
+    return tokens;
+}
+
 
 std::string configMenuEntriesValue(const Config& config) {
     std::string out;

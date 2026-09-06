@@ -339,26 +339,67 @@ void WindowManager::rebuildAppCategoriesFromConfig()
 }
 
 
-void WindowManager::buildAppCategories()
+namespace {
+
+// THE ORDERING RULE, in one place (plan 09-07).
+//
+// std::map keys sort alphabetically, giving the base ordering for free;
+// "Custom" (D-07: manual/uncategorized entries) is special-cased to always be
+// appended last, matching conventional WM root-menu UX.
+//
+// Two callers: the menu's own bucket list, and the read-only `menu-categories`
+// answer the settings window's dropdown reads. A second copy of this rule
+// would be a dropdown that offered the categories in an order the menu does not
+// use, which is precisely the kind of quiet disagreement D-12 asks the window
+// manager -- rather than the GUI -- to be the source of truth about.
+void bucketAppCategories(const std::vector<AppEntry>& apps,
+                         std::vector<std::pair<std::string, std::vector<AppEntry>>>& out)
 {
-    // std::map keys sort alphabetically, giving us the base ordering for free;
-    // "Custom" (D-07: manual/uncategorized entries) is special-cased to always
-    // be appended last, matching conventional WM root-menu UX.
     std::map<std::string, std::vector<AppEntry>> buckets;
-    for (const AppEntry& entry : m_apps) {
+    for (const AppEntry& entry : apps) {
         buckets[entry.category].push_back(entry);
     }
 
-    m_appCategories.clear();
+    out.clear();
     for (auto& kv : buckets) {
         if (kv.first == "Custom") continue;
-        m_appCategories.emplace_back(kv.first, std::move(kv.second));
+        out.emplace_back(kv.first, std::move(kv.second));
     }
 
     auto customIt = buckets.find("Custom");
     if (customIt != buckets.end()) {
-        m_appCategories.emplace_back(customIt->first, std::move(customIt->second));
+        out.emplace_back(customIt->first, std::move(customIt->second));
     }
+}
+
+}  // namespace
+
+
+void WindowManager::buildAppCategories()
+{
+    bucketAppCategories(m_apps, m_appCategories);
+}
+
+
+std::string WindowManager::menuCategoriesValue() const
+{
+    // The SAME merge the menu itself performs, on the effective configuration,
+    // so the answer is what the next opening will actually show rather than
+    // what the last one did.
+    std::vector<std::pair<std::string, std::vector<AppEntry>>> categories;
+    bucketAppCategories(AppCache::mergeEntries(m_autoApps, m_config.manualMenuEntries),
+                        categories);
+
+    // ';'-separated, the same separator the menu-entry value grammar uses. A
+    // category containing a ';' cannot be spelled -- and cannot exist either,
+    // because the .desktop Categories field uses ';' as its own separator and a
+    // manual entry's category is one config-file value on one line.
+    std::string out;
+    for (const auto &pair : categories) {
+        if (!out.empty()) out += ";";
+        out += pair.first;
+    }
+    return out;
 }
 
 
@@ -2369,6 +2410,12 @@ ConfigSocketReply WindowManager::handleConfigRequest(const ConfigSocketRequest &
         std::string value;
         if (message.key == kMenuEntriesKey) {
             value = configMenuEntriesValue(m_config);
+        } else if (message.key == kMenuCategoriesKey) {
+            // READ-ONLY by construction: the key is not one configKeySpecs()
+            // names, so the `set` arm below refuses it as an unknown setting
+            // without a special case. Answering it here is a view of what the
+            // next root menu will show (plan 09-07, D-12).
+            value = menuCategoriesValue();
         } else if (!configValueForKey(m_config, message.key, value)) {
             refuseKey(message.key, "unknown setting");
             return out;

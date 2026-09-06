@@ -146,14 +146,74 @@ public:
 
     // The keys whose current value differs from the effective one -- what a
     // Revert must send back to the running window manager so the desktop and
-    // the file agree again.
+    // the file agree again. `menu-entries` is included in this list whenever
+    // the row list has moved, so the Menu page needs no separate revert path.
     std::vector<std::string> divergentKeys() const;
+
+    // ---------------------------------------------------------------------
+    // The manual menu entries (D-12, plan 09-07)
+    // ---------------------------------------------------------------------
+    //
+    // NOT a FormField, because they are not a single setting: the file spells
+    // them as an ordered three-key group, the writer rewrites them as a block
+    // rather than as an edit, and configFileManagedKeys() therefore does not
+    // name them. They live here anyway, in the same model, so that Save,
+    // Revert and Reset mean exactly the same thing on the Menu page as they do
+    // on the other two -- one dirtiness, one revert, one save.
+    //
+    // Over the socket they travel as ONE value under `menu-entries` (the
+    // grammar include/ConfigProtocol.h froze), which is why value() and
+    // divergentKeys() answer for that key even though the form does not
+    // "manage" it in configFileManagedKeys()'s sense.
+
+    // What the page is showing right now.
+    const std::vector<AppEntry>& menuEntries() const { return m_menuCurrent; }
+
+    // Replace the whole list -- what Add, Edit and Remove each do, because the
+    // protocol replaces wholesale and a per-row protocol would need a row
+    // identity for the two ends to keep in sync. False for a list that is
+    // already what the form shows.
+    bool setMenuEntries(const std::vector<AppEntry>& entries);
+
+    // Would a save rewrite the menu-entry block? False means the writer must be
+    // told NOT to touch those lines, so a file whose entries the user never
+    // opened passes through byte for byte.
+    bool menuEntriesChanged() const { return m_menuDirty; }
+
+    // Replace the effective list -- what a connected window manager reports,
+    // or what a reload notice brought (D-08). An UNTOUCHED list follows the new
+    // one; a list the user has edited keeps the edit and stays dirty, exactly
+    // as adoptEffective() treats a single setting.
+    void adoptEffectiveMenuEntries(const std::vector<AppEntry>& entries);
+
+    // Ask for the manual entries to be REMOVED from the user file on the next
+    // save (D-13's Reset applied to this page's one "setting").
+    void requestMenuReset();
+
+    // D-13's per-page half, built from the per-setting reset so there is one
+    // meaning of reset and one code path. Returns the keys whose value moved,
+    // which is what the window must send back to the running desktop.
+    std::vector<std::string> requestResetAll(const std::vector<std::string>& keys);
 
 private:
     FormField* mutableField(const std::string& key);
 
     std::vector<FormField> m_fields;
+
+    std::vector<AppEntry> m_menuEffective;   // what is in force
+    std::vector<AppEntry> m_menuBelowUser;   // what removing the lines produces
+    std::vector<AppEntry> m_menuCurrent;     // what the page is showing
+    bool m_menuDirty = false;
+    bool m_menuResetRequested = false;
 };
+
+
+// True when the two lists are the same rows in the same order. Compared field
+// by field rather than through the rendered value, because two entries that
+// render alike (a command with runs of spaces in it, say) ARE the same entry
+// and a rendered comparison would be the weaker of the two.
+bool menuEntriesEqual(const std::vector<AppEntry>& a,
+                      const std::vector<AppEntry>& b);
 
 
 // The effective value of one key in `config`, spelled the way the config file

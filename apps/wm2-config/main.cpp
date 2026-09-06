@@ -43,6 +43,7 @@
 #include "BehaviourPage.h"
 #include "ConnectionState.h"
 #include "FormState.h"
+#include "MenuPage.h"
 #include "ProtocolClient.h"
 
 #include "Config.h"
@@ -144,12 +145,14 @@ private:
                                  m_behaviour->widget(),
                                  gtk_label_new("Behaviour"));
 
-        // D-09's last page is still an empty page so the window's shape is
-        // fixed and the next change fills it in. An empty page a user can see
-        // is more honest than a window that changes shape between releases.
+        m_menu.reset(new MenuPage(
+            m_form,
+            [this](const std::string& key, const std::string& value) {
+                applyLive(key, value);
+            },
+            [this](const std::string& message) { status(message); }));
         gtk_notebook_append_page(GTK_NOTEBOOK(m_notebook),
-                                 placeholder("Your own root-menu entries "
-                                             "arrive here."),
+                                 m_menu->widget(),
                                  gtk_label_new("Menu"));
 
         // --- The bottom bar ---
@@ -198,15 +201,6 @@ private:
         gtk_widget_show_all(m_window);
     }
 
-    static GtkWidget* placeholder(const char* text)
-    {
-        GtkWidget* label = gtk_label_new(text);
-        gtk_widget_set_halign(label, GTK_ALIGN_CENTER);
-        gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
-        gtk_widget_set_sensitive(label, FALSE);
-        return label;
-    }
-
     // --- The socket ------------------------------------------------------
 
     void connectToWindowManager()
@@ -231,6 +225,7 @@ private:
         m_state = ConnectionState::Connected;
         attachSocketSource();
         readEffectiveValuesFromWindowManager();
+        readMenuCategoriesFromWindowManager();
     }
 
     void attachSocketSource()
@@ -281,10 +276,38 @@ private:
                 refreshPages();
             });
         }
+
+        // The manual entries, which travel as ONE value under their own key and
+        // are not one of configFileManagedKeys() -- the writer emits them as a
+        // three-key block rather than as an edit (D-12).
+        m_client.sendGet(kMenuEntriesKey, [this](const ConfigMessage& reply) {
+            if (reply.type != ConfigMessageType::Value) return;
+            std::vector<AppEntry> entries;
+            std::string reason;
+            if (!parseMenuEntriesValue(reply.value, entries, reason)) return;
+            m_form.adoptEffectiveMenuEntries(entries);
+            refreshPages();
+        });
+    }
+
+    // D-12's dropdown: the categories the running root menu shows, asked for
+    // rather than recomputed. Read-only, and the window manager is the only
+    // thing that knows the answer -- it is discovery plus the entry list, and
+    // this process has no business running discovery a second time.
+    void readMenuCategoriesFromWindowManager()
+    {
+        m_client.sendGet(kMenuCategoriesKey, [this](const ConfigMessage& reply) {
+            if (reply.type != ConfigMessageType::Value) return;
+            if (m_menu) {
+                m_menu->setCategoriesFromWindowManager(
+                    menuCategoriesFromValue(reply.value));
+            }
+        });
     }
 
     void onReloadNotice()
     {
+        readMenuCategoriesFromWindowManager();
         // D-08: the window manager re-read its files, so every effective value
         // may have moved under this window. Unsaved edits are KEPT and stay
         // marked; only untouched fields follow.
@@ -310,7 +333,11 @@ private:
     void save()
     {
         const std::vector<ConfigEdit> edits = m_form.edits();
-        if (edits.empty()) {
+        // Asked of the MODEL, not of the edit list: the menu-entry block is
+        // dirty without producing a single ConfigEdit, because the writer
+        // rewrites it as a block rather than as an edit. Testing edits.empty()
+        // here made a Menu-page-only change save nothing at all.
+        if (!m_form.dirty()) {
             // NOT a call to the writer with an empty edit set: that would
             // rewrite the file byte-identically and still move its
             // modification time, which is a surprise nobody asked a Save they
@@ -320,8 +347,13 @@ private:
         }
 
         std::string error;
+        // The menu-entry block is rewritten only when the Menu page moved it.
+        // Passing true unconditionally would rewrite those lines on every save,
+        // which for a file the user hand-wrote them into is a change they did
+        // not ask for (D-02).
         const ConfigWriteResult result =
-            configFileWrite(m_layers.userFilePath, edits, {}, false, error);
+            configFileWrite(m_layers.userFilePath, edits, m_form.menuEntries(),
+                            m_form.menuEntriesChanged(), error);
         if (result != ConfigWriteResult::Ok) {
             status("Could not save: " + error);
             return;
@@ -371,6 +403,10 @@ private:
             m_state = ConnectionState::FileOnlyNoSocket;
         }
 
+        // D-12's file-only arm: with nothing to ask, the category dropdown
+        // falls back to what the file already uses and says why.
+        if (m_menu && m_state != ConnectionState::Connected) m_menu->setFileOnly();
+
         const std::string text = connectionBannerText(m_state, m_client.reason());
         if (m_banner) {
             char* markup = g_markup_printf_escaped(
@@ -395,6 +431,7 @@ private:
     {
         if (m_appearance) m_appearance->refreshFromForm();
         if (m_behaviour)  m_behaviour->refreshFromForm();
+        if (m_menu)       m_menu->refreshFromForm();
     }
 
     void status(const std::string& message)
@@ -462,6 +499,7 @@ private:
 
     std::unique_ptr<AppearancePage> m_appearance;
     std::unique_ptr<BehaviourPage>  m_behaviour;
+    std::unique_ptr<MenuPage>       m_menu;
 };
 
 

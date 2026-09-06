@@ -98,6 +98,15 @@ void FormState::seedFromLayers(const ConfigLayers& layers)
 
         m_fields.push_back(field);
     }
+
+    // The menu entries, from the same two layered reads (D-12). Not a field:
+    // the file spells them as an ordered group and the writer rewrites them as
+    // a block, so they carry their own current/effective/belowUser triple.
+    m_menuEffective = layers.withUser.manualMenuEntries;
+    m_menuBelowUser = layers.belowUser.manualMenuEntries;
+    m_menuCurrent = m_menuEffective;
+    m_menuDirty = false;
+    m_menuResetRequested = false;
 }
 
 
@@ -145,6 +154,16 @@ FormField* FormState::mutableField(const std::string& key)
 
 std::string FormState::value(const std::string& key) const
 {
+    // The menu entries answer for their own key even though they are not a
+    // FormField: over the socket they ARE one value, and every caller that
+    // wants "what should I send for this key" -- live apply, revert, the
+    // discard path -- then needs no special case for the Menu page.
+    if (key == kMenuEntriesKey) {
+        Config rendered;
+        rendered.manualMenuEntries = m_menuCurrent;
+        return configMenuEntriesValue(rendered);
+    }
+
     const FormField* f = field(key);
     return f ? f->current : std::string();
 }
@@ -195,7 +214,7 @@ bool FormState::dirty() const
     for (const FormField& f : m_fields) {
         if (f.dirty) return true;
     }
-    return false;
+    return m_menuDirty;
 }
 
 
@@ -219,6 +238,15 @@ std::vector<ConfigEdit> FormState::edits() const
 
 void FormState::markSaved()
 {
+    if (m_menuDirty) {
+        // A reset removed the menu-entry lines, so what is in force now is what
+        // the layers below produce; an ordinary edit becomes the effective list.
+        m_menuEffective = m_menuResetRequested ? m_menuBelowUser : m_menuCurrent;
+        m_menuCurrent = m_menuEffective;
+        m_menuDirty = false;
+        m_menuResetRequested = false;
+    }
+
     for (FormField& f : m_fields) {
         if (!f.dirty) continue;
         if (f.resetRequested) {
@@ -246,6 +274,9 @@ void FormState::revert()
         f.dirty = false;
         f.resetRequested = false;
     }
+    m_menuCurrent = m_menuEffective;
+    m_menuDirty = false;
+    m_menuResetRequested = false;
 }
 
 
@@ -255,5 +286,85 @@ std::vector<std::string> FormState::divergentKeys() const
     for (const FormField& f : m_fields) {
         if (f.current != f.effective) out.push_back(f.key);
     }
+    if (!menuEntriesEqual(m_menuCurrent, m_menuEffective)) {
+        out.push_back(kMenuEntriesKey);
+    }
     return out;
+}
+
+
+// =============================================================================
+// The manual menu entries (D-12)
+// =============================================================================
+
+bool menuEntriesEqual(const std::vector<AppEntry>& a,
+                      const std::vector<AppEntry>& b)
+{
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i].name != b[i].name) return false;
+        if (a[i].category != b[i].category) return false;
+        if (a[i].execArgv != b[i].execArgv) return false;
+    }
+    return true;
+}
+
+
+bool FormState::setMenuEntries(const std::vector<AppEntry>& entries)
+{
+    // A reset and an ordinary edit are contradictory requests and the last one
+    // expressed wins -- the same rule setValue() applies to a single setting,
+    // and tested in the same order, so editing a row after "reset this page"
+    // cancels the removal rather than leaving it silently in place.
+    const bool cancelsReset = m_menuResetRequested;
+    if (!cancelsReset && menuEntriesEqual(m_menuCurrent, entries)) return false;
+
+    m_menuResetRequested = false;
+    m_menuCurrent = entries;
+    m_menuDirty = !menuEntriesEqual(m_menuCurrent, m_menuEffective);
+    return true;
+}
+
+
+void FormState::adoptEffectiveMenuEntries(const std::vector<AppEntry>& entries)
+{
+    m_menuEffective = entries;
+    // D-08's prohibition, in the one line that keeps it: a list the user has
+    // been editing is NOT replaced by what arrived. The window marks the
+    // difference instead.
+    if (!m_menuDirty) m_menuCurrent = entries;
+}
+
+
+void FormState::requestMenuReset()
+{
+    m_menuResetRequested = true;
+    m_menuDirty = true;
+    // What removal will ACTUALLY produce: the entries the layers below the user
+    // file define, which on a host with a system-wide configuration is not the
+    // empty list.
+    m_menuCurrent = m_menuBelowUser;
+}
+
+
+std::vector<std::string> FormState::requestResetAll(const std::vector<std::string>& keys)
+{
+    // D-13's per-page half, built from the per-setting reset rather than beside
+    // it: one meaning of reset, one code path, and a page that adds a control
+    // gets it covered without touching this.
+    std::vector<std::string> moved;
+    for (const std::string& key : keys) {
+        if (key == kMenuEntriesKey) {
+            const std::vector<AppEntry> before = m_menuCurrent;
+            requestMenuReset();
+            if (!menuEntriesEqual(before, m_menuCurrent)) moved.push_back(key);
+            continue;
+        }
+        const FormField* f = field(key);
+        if (!f) continue;
+        const std::string before = f->current;
+        if (!requestReset(key)) continue;
+        if (value(key) != before) moved.push_back(key);
+    }
+    return moved;
 }

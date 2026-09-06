@@ -245,6 +245,18 @@ private:
     // file would put it.
     void rebuildAppCategoriesFromConfig();
 
+    // The categories the NEXT root menu will show, ';'-separated in the menu's
+    // own order, for the read-only `menu-categories` key the settings window's
+    // dropdown reads (plan 09-07, D-12).
+    //
+    // Computed from m_autoApps plus the EFFECTIVE configuration's manual
+    // entries rather than read out of m_appCategories, because those two differ
+    // for exactly as long as a menu is held open across a change: m_appCategories
+    // is deliberately not rebuilt under a modal loop that holds a pointer into
+    // it. "What the next menu will show" is the question the dropdown is
+    // asking, and it is the one this answers.
+    std::string menuCategoriesValue() const;
+
     // A root menu is open right now, and its modal loop is holding a pointer
     // INTO m_appCategories (the submenu's entry vector). Rebuilding that list
     // underneath it is the defect class plans 08-13 and 08-14 already fixed

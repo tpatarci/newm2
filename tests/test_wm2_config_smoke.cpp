@@ -704,38 +704,6 @@ void closeRootMenu(Display* d, XTestDriver& driver)
 }
 
 
-// The manual menu entries the window manager currently holds, and the
-// categories it says its root menu shows.
-std::vector<AppEntry> wmMenuEntries(ProtocolClient& client)
-{
-    std::vector<AppEntry> out;
-    std::string ignored;
-    parseMenuEntriesValue(wmValue(client, kMenuEntriesKey), out, ignored);
-    return out;
-}
-
-// Send the whole list, wholesale, exactly as the page's Add / Edit / Remove do.
-std::string commitMenuEntries(ProtocolClient& client,
-                              const std::vector<AppEntry>& entries)
-{
-    Config rendered;
-    rendered.manualMenuEntries = entries;
-    const std::string value = configMenuEntriesValue(rendered);
-
-    bool acked = false;
-    std::string refusal;
-    if (!client.sendSet(kMenuEntriesKey, value, [&](const ConfigMessage& reply) {
-            if (reply.type == ConfigMessageType::Ack) acked = true;
-            if (reply.type == ConfigMessageType::Error) refusal = reply.reason;
-        })) {
-        return "the client refused to send";
-    }
-    if (!client.pumpUntil([&]() { return acked || !refusal.empty(); }, 15000)) {
-        return "the window manager did not answer";
-    }
-    return refusal;
-}
-
 
 // ---------------------------------------------------------------------------
 // Committing through the GUI's own two halves
@@ -803,6 +771,39 @@ std::string differentValueFor(const std::string& key, const std::string& current
         return current == "/bin/true" ? "/bin/echo" : "/bin/true";
     }
     return std::string();
+}
+
+
+// The manual menu entries the window manager currently holds, and the
+// categories it says its root menu shows.
+std::vector<AppEntry> wmMenuEntries(ProtocolClient& client)
+{
+    std::vector<AppEntry> out;
+    std::string ignored;
+    parseMenuEntriesValue(wmValue(client, kMenuEntriesKey), out, ignored);
+    return out;
+}
+
+// Send the whole list, wholesale, exactly as the page's Add / Edit / Remove do.
+std::string commitMenuEntries(ProtocolClient& client,
+                              const std::vector<AppEntry>& entries)
+{
+    Config rendered;
+    rendered.manualMenuEntries = entries;
+    const std::string value = configMenuEntriesValue(rendered);
+
+    bool acked = false;
+    std::string refusal;
+    if (!client.sendSet(kMenuEntriesKey, value, [&](const ConfigMessage& reply) {
+            if (reply.type == ConfigMessageType::Ack) acked = true;
+            if (reply.type == ConfigMessageType::Error) refusal = reply.reason;
+        })) {
+        return "the client refused to send";
+    }
+    if (!client.pumpUntil([&]() { return acked || !refusal.empty(); }, 15000)) {
+        return "the window manager did not answer";
+    }
+    return refusal;
 }
 
 }  // namespace
@@ -1947,16 +1948,23 @@ TEST_CASE("the Menu page asks the window manager for its categories rather than 
 {
     const std::string page = sourceOf("apps/wm2-config/MenuPage.cpp");
     REQUIRE_FALSE(page.empty());
+    // The ASK lives where the socket client lives, which is the window; the
+    // page is handed the answer. Both halves are checked, because either one
+    // alone would let the other quietly grow a scan of its own.
+    const std::string window = sourceOf("apps/wm2-config/main.cpp");
+    REQUIRE_FALSE(window.empty());
 
     // The categories the root menu shows are the window manager's answer. A
     // second implementation of the discovery scan in the GUI would be a second
     // answer, and the two would disagree the first time a .desktop file
     // changed.
-    CHECK(page.find("kMenuCategoriesKey") != std::string::npos);
+    CHECK(window.find("kMenuCategoriesKey") != std::string::npos);
     CHECK(page.find("menuCategoriesFrom(") != std::string::npos);   // the fallback
-    CHECK(page.find("DesktopEntry") == std::string::npos);
-    CHECK(page.find("scanAll") == std::string::npos);
-    CHECK(page.find("AppCache") == std::string::npos);
+    for (const std::string& source : {page, window}) {
+        CHECK(source.find("DesktopEntry") == std::string::npos);
+        CHECK(source.find("scanAll") == std::string::npos);
+        CHECK(source.find("AppCache") == std::string::npos);
+    }
 
     // And it carries no single setting: D-09 puts every one of those on the
     // other two pages.
