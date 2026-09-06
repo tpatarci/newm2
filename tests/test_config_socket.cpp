@@ -670,3 +670,125 @@ TEST_CASE("A broadcast from inside a handler does not disturb the connection "
 
     server.close();
 }
+
+
+// -----------------------------------------------------------------------------
+// The socket DIRECTORY is not followed through a symlink (CR-03)
+// -----------------------------------------------------------------------------
+//
+// The socket NODE's handling has always been careful about exactly this class
+// of trick: configSocketStaleVerdict() lstats, requires S_ISSOCK, and refuses to
+// unlink anything this process did not create (T-9-17). The directory's was
+// not. mkdir() on an existing symlink-to-directory returns EEXIST, and chmod()
+// and stat() both FOLLOW symlinks -- so every check inspected the link's
+// target rather than the path the socket would live under.
+//
+// D-16's documented fallback is /tmp/wm2-born-again-<uid>: a name in a
+// world-writable directory, predictable from the uid, and the ordinary state
+// under `su`, a bare startx, and the minimal VNC session scripts this project
+// targets. An attacker who plants that name as a symlink to a directory the
+// victim owns gets an attacker-directed `chmod 0700` on it, plus a socket node
+// inside it.
+//
+// The case drives the XDG_RUNTIME_DIR route rather than the /tmp one, and that
+// costs nothing: listen() resolves ONE directory string and applies ONE
+// sequence of checks to it whichever branch configSocketDirectory() took, so
+// the code under test is identical and no internal lever has to be invented to
+// reach it.
+
+TEST_CASE("A socket directory that is a symlink is refused, and its target is "
+          "left alone",
+          "[config_socket][directory]")
+{
+    RuntimeDirEnv guard;
+    TempDir home;
+    REQUIRE(home.valid());
+    RuntimeDirEnv::set(home.path());
+
+    // The victim: a directory this user owns, with a mode the window manager
+    // has no business changing.
+    const std::string victim = home.path() + "/victim";
+    REQUIRE(::mkdir(victim.c_str(), 0755) == 0);
+    REQUIRE(::chmod(victim.c_str(), 0755) == 0);
+
+    // The plant, at exactly the name the window manager is about to use.
+    const std::string planted = configSocketDirectory();
+    REQUIRE(planted == home.path() + "/wm2-born-again");
+    REQUIRE(::symlink(victim.c_str(), planted.c_str()) == 0);
+
+    {
+        ConfigSocketServer server;
+        CHECK_FALSE(server.listen(":symlink"));
+        CHECK_FALSE(server.isListening());
+    }
+
+    // The refusal is only worth anything if nothing happened on the way to it.
+    struct stat vst;
+    REQUIRE(::lstat(victim.c_str(), &vst) == 0);
+    CHECK(S_ISDIR(vst.st_mode));
+    CHECK((vst.st_mode & 07777) == 0755);   // NOT chmod'ed to 0700 through the link
+
+    // And no socket node was planted inside the victim's directory.
+    struct stat sst;
+    CHECK(::lstat((victim + "/socket_symlink").c_str(), &sst) != 0);
+
+    // The link itself is still a link -- nothing replaced it either.
+    struct stat pst;
+    REQUIRE(::lstat(planted.c_str(), &pst) == 0);
+    CHECK(S_ISLNK(pst.st_mode));
+
+    ::unlink((victim + "/socket_symlink").c_str());
+    ::unlink(planted.c_str());
+    ::rmdir(victim.c_str());
+}
+
+
+TEST_CASE("A directory owned by somebody else is refused",
+          "[config_socket][directory]")
+{
+    // The ownership half of the same check, driven where it can be driven
+    // without becoming another user: /tmp itself is a directory this process
+    // does not own and whose mode is not 0700, and pointing the resolver at a
+    // path whose FINAL component is one of those is enough to reach the
+    // refusal. (`/` is chosen over `/tmp` so the name the server would use is
+    // "/wm2-born-again", which does not exist and cannot be created -- the
+    // mkdir refusal and the ownership refusal are both correct outcomes and
+    // both are "no socket".)
+    RuntimeDirEnv guard;
+    RuntimeDirEnv::set("/");
+
+    ConfigSocketServer server;
+    CHECK_FALSE(server.listen(":notmine"));
+    CHECK_FALSE(server.isListening());
+}
+
+
+TEST_CASE("An ordinary directory is still accepted and its mode corrected",
+          "[config_socket][directory]")
+{
+    // The other side of the refusal: the guard must not have made the ordinary
+    // path unreachable, and it must still be what SETS the mode when the
+    // directory was created by something with a looser umask.
+    RuntimeDirEnv guard;
+    TempDir home;
+    REQUIRE(home.valid());
+    RuntimeDirEnv::set(home.path());
+
+    const std::string directory = configSocketDirectory();
+    REQUIRE(::mkdir(directory.c_str(), 0755) == 0);
+    REQUIRE(::chmod(directory.c_str(), 0755) == 0);
+
+    {
+        ConfigSocketServer server;
+        REQUIRE(server.listen(":ordinary"));
+        CHECK(server.isListening());
+        server.close();
+    }
+
+    struct stat st;
+    REQUIRE(::lstat(directory.c_str(), &st) == 0);
+    CHECK(S_ISDIR(st.st_mode));
+    CHECK((st.st_mode & 07777) == 0700);
+
+    ::rmdir(directory.c_str());
+}

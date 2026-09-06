@@ -211,27 +211,59 @@ bool ConfigSocketServer::listen(const char* displayName)
     // the umask, so the mode is set explicitly afterwards; an existing
     // directory is checked, because a directory this process did not create is
     // a directory whose mode it does not know.
+    //
+    // NOTHING BELOW OPERATES ON THE DIRECTORY BY NAME AFTER THE mkdir (CR-03).
+    // mkdir() on an existing symlink-to-directory returns EEXIST, and chmod()
+    // and stat() both FOLLOW symlinks -- so a by-name sequence inspects and
+    // modifies the LINK'S TARGET rather than the path the socket will live
+    // under. D-16's documented fallback is /tmp/wm2-born-again-<uid>: a
+    // predictable name in a world-writable directory, and the ordinary state
+    // under `su`, a bare startx and the minimal VNC session scripts this
+    // project targets. An attacker who plants that name as a symlink to a
+    // directory the victim owns would otherwise get an attacker-directed
+    // `chmod 0700` on it and a socket node inside it.
+    //
+    // So: open the final component with O_NOFOLLOW and work through the
+    // descriptor. The ELOOP that O_NOFOLLOW produces IS the symlink refusal;
+    // the socket NODE's handling has always been this careful
+    // (configSocketStaleVerdict's lstat + S_ISSOCK, T-9-17), and the asymmetry
+    // between the two is what made this a defect rather than an accepted risk.
     if (::mkdir(m_directory.c_str(), 0700) != 0 && errno != EEXIST) {
         std::fprintf(stderr, "wm2: warning: cannot create %s (%s), "
                              "no configuration socket\n",
                      m_directory.c_str(), std::strerror(errno));
         return false;
     }
-    if (::chmod(m_directory.c_str(), 0700) != 0) {
-        std::fprintf(stderr, "wm2: warning: cannot set mode 0700 on %s (%s), "
-                             "no configuration socket\n",
+
+    const int dirFd = ::open(m_directory.c_str(),
+                             O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dirFd < 0) {
+        std::fprintf(stderr, "wm2: warning: %s is not a directory this process "
+                             "may use (%s), no configuration socket\n",
                      m_directory.c_str(), std::strerror(errno));
         return false;
     }
 
     struct stat dst;
-    if (::stat(m_directory.c_str(), &dst) != 0 || !S_ISDIR(dst.st_mode) ||
-        dst.st_uid != ::geteuid() || (dst.st_mode & 07777) != 0700) {
-        std::fprintf(stderr, "wm2: warning: %s is not a mode-0700 directory "
-                             "owned by this user, no configuration socket\n",
+    if (::fstat(dirFd, &dst) != 0 || !S_ISDIR(dst.st_mode) ||
+        dst.st_uid != ::geteuid()) {
+        std::fprintf(stderr, "wm2: warning: %s is not a directory owned by this "
+                             "user, no configuration socket\n",
                      m_directory.c_str());
+        ::close(dirFd);
         return false;
     }
+
+    // Corrected only when it is wrong, and through the descriptor that has
+    // already been proved to name a directory this user owns.
+    if ((dst.st_mode & 07777) != 0700 && ::fchmod(dirFd, 0700) != 0) {
+        std::fprintf(stderr, "wm2: warning: cannot set mode 0700 on %s (%s), "
+                             "no configuration socket\n",
+                     m_directory.c_str(), std::strerror(errno));
+        ::close(dirFd);
+        return false;
+    }
+    ::close(dirFd);
 
     // A predecessor's socket. Reclaimed only when nothing answers on it.
     switch (configSocketStaleVerdict(m_path)) {
