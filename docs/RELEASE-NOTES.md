@@ -928,4 +928,15 @@ There is exactly one parser, and the socket uses it: no value can reach the
 window manager's state by this route that the file route would have rejected.
 
 If the socket cannot be created the window manager says so on stderr and carries
-on managing windows normally; only the configuration connection is lost.
+on managing windows normally; only the configuration connection is lost. In that
+case the property is not published, and any stale one a previous window manager
+left on the root window is removed — so its presence keeps meaning what it says:
+there is a socket at that path, right now.
+
+The same holds when the socket goes away. On a clean exit the window manager
+unlinks the socket and deletes the property together, and if the listening
+descriptor ever fails while the window manager is running it says so on stderr,
+shuts the socket down and deletes the property then. A client that finds no
+`_WM2_CONFIG_SOCKET` on the root window has its answer without connecting;
+a client holding a path from earlier should re-read the property rather than
+assume it is still current.
