@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=wm2-born-again
+Comment=Minimal X11 window manager with sideways tabs
+Exec=wm2-born-again
+TryExec=wm2-born-again
+Icon=preferences-system-windows
+X-LightDM-DesktopName=wm2-born-again
+DesktopNames=wm2-born-again
+Keywords=window manager;wm2;

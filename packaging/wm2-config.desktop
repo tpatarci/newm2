@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=wm2 Settings
+GenericName=Window Manager Settings
+Comment=Change how wm2-born-again looks and behaves
+Exec=wm2-config
+TryExec=wm2-config
+Icon=preferences-desktop
+Terminal=false
+Categories=Settings;DesktopSettings;
+Keywords=window manager;wm2;settings;configuration;
