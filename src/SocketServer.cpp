@@ -163,11 +163,37 @@ StaleVerdict configSocketStaleVerdict(const std::string& path)
     struct sockaddr_un addr;
     if (!fillAddress(path, addr)) return StaleVerdict::Live;
 
-    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    // NON-BLOCKING, AND BOUNDED (WR-08). connect() on an AF_UNIX stream socket
+    // BLOCKS when the peer's listen backlog is full, and this runs inside
+    // ConfigSocketServer::listen() -- before the event loop or the root window
+    // exist. A same-uid process that binds the socket path, calls listen(fd, 1)
+    // and never accepts would otherwise hold the window manager here
+    // indefinitely: it never starts, and prints nothing.
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (fd < 0) return StaleVerdict::Live;   // cannot prove stale; do not unlink
 
-    const int rc = ::connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
-    const int err = errno;
+    int rc  = ::connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+    int err = errno;
+
+    if (rc < 0 && (err == EINPROGRESS || err == EAGAIN || err == EWOULDBLOCK)) {
+        struct pollfd p;
+        p.fd      = fd;
+        p.events  = POLLOUT;
+        p.revents = 0;
+        if (::poll(&p, 1, kConfigSocketStaleProbeMs) <= 0) {
+            // Nobody said no in the time allowed. Conservative: a path this
+            // process cannot prove is dead is never unlinked.
+            ::close(fd);
+            return StaleVerdict::Live;
+        }
+        socklen_t len = sizeof(err);
+        if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) != 0) {
+            ::close(fd);
+            return StaleVerdict::Live;
+        }
+        rc = (err == 0) ? 0 : -1;
+    }
+
     ::close(fd);
 
     if (rc == 0) return StaleVerdict::Live;                 // somebody answered

@@ -35,6 +35,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -946,4 +947,68 @@ TEST_CASE("past the remembered bound the log gives up rather than repeating",
 
     // And the memory is still bounded: it is not itself a growth lever.
     CHECK(warned.size() == kConfigSocketMaxWarnedUids);
+}
+
+
+// -----------------------------------------------------------------------------
+// The stale probe never blocks the window manager's startup (WR-08)
+// -----------------------------------------------------------------------------
+
+TEST_CASE("a socket whose backlog is full is Live, and answering that is bounded",
+          "[config_socket][stale]")
+{
+    TempDir dir;
+    REQUIRE(dir.valid());
+
+    const std::string path = dir.child("wedged");
+
+    // A peer that binds, listens with a backlog of one, and never accepts.
+    // Same uid, so nothing in D-16 keeps it away from the path; this is a
+    // program that crashed mid-accept, or one written badly.
+    const int wedged = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    REQUIRE(wedged >= 0);
+    {
+        struct sockaddr_un addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        std::memcpy(addr.sun_path, path.c_str(), path.size());
+        REQUIRE(::bind(wedged, reinterpret_cast<struct sockaddr*>(&addr),
+                       sizeof(addr)) == 0);
+        REQUIRE(::listen(wedged, 1) == 0);
+    }
+
+    // Fill the backlog. Non-blocking, so filling it cannot itself hang the
+    // case; whatever is queued after this loop is enough to make a BLOCKING
+    // connect wait, which is the whole exposure.
+    std::vector<int> queued;
+    for (int i = 0; i < 8; ++i) {
+        const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+        if (fd < 0) break;
+        struct sockaddr_un addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        std::memcpy(addr.sun_path, path.c_str(), path.size());
+        ::connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+        queued.push_back(fd);
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    const StaleVerdict verdict = configSocketStaleVerdict(path);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started).count();
+
+    for (int fd : queued) ::close(fd);
+    ::close(wedged);
+    ::unlink(path.c_str());
+
+    INFO("verdict " << static_cast<int>(verdict) << " after " << elapsed << " ms");
+
+    // Live, and the file is NOT reclaimed: a path this process cannot prove is
+    // dead is never unlinked (T-9-17).
+    CHECK(verdict == StaleVerdict::Live);
+
+    // AND IT CAME BACK. This probe runs inside listen(), before the event loop
+    // or the root window exist, so a blocking connect() here is a window
+    // manager that never starts and prints nothing.
+    CHECK(elapsed < kConfigSocketStaleProbeMs * 8);
 }

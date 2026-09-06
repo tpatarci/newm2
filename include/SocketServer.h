@@ -192,6 +192,13 @@ enum class StaleVerdict {
 };
 
 
+// How long the stale probe waits for an answer, in milliseconds. The probe runs
+// inside listen(), before the event loop exists, so it has to be bounded: a
+// same-uid process holding a full listen backlog on the socket path would
+// otherwise keep the window manager from ever starting (WR-08).
+inline constexpr int kConfigSocketStaleProbeMs = 250;
+
+
 // Decided the way this project already decides "is another instance running?"
 // -- by asking, not by assuming. The _WM2_RUNNING selection check in
 // src/Manager.cpp asks the server who owns the selection; this asks the kernel
