@@ -139,6 +139,29 @@ void FormState::adoptEffective(const std::string& key, const std::string& value,
 }
 
 
+void FormState::refreshLowerLayers(const ConfigLayers& layers)
+{
+    for (FormField& f : m_fields) {
+        const std::string below = formValueForKey(layers.belowUser, f.key);
+        if (below == f.belowUser) continue;
+        f.belowUser = below;
+
+        // A pending reset is DISPLAYING what removal will produce, and removal
+        // now produces something else. Updated rather than preserved, because
+        // that value was derived by requestReset() and not typed by anybody --
+        // the D-08 prohibition is about not discarding somebody's typing, and
+        // there is none here to discard. An ordinary edit is left exactly as it
+        // was, mark and all.
+        if (f.resetRequested) f.current = below;
+    }
+
+    // The menu entries carry the same triple for the same reason (D-12), so
+    // they are refreshed by the same rule rather than beside it.
+    m_menuBelowUser = layers.belowUser.manualMenuEntries;
+    if (m_menuResetRequested) m_menuCurrent = m_menuBelowUser;
+}
+
+
 bool FormState::manages(const std::string& key) const
 {
     return field(key) != nullptr;

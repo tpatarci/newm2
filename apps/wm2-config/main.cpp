@@ -420,6 +420,11 @@ private:
         // may have moved under this window. Unsaved edits are KEPT and stay
         // marked; only untouched fields follow.
         m_layers = configLayersFromDisk();
+        // The lower layers moved too, and they are what Reset shows and applies
+        // (D-13). Asking the window manager for every key below updates only
+        // `effective`, so without this a Reset pressed afterwards would offer
+        // the value the system file used to hold.
+        m_form.refreshLowerLayers(m_layers);
         readEffectiveValuesFromWindowManager();
         notice("The window manager re-read its configuration files. Anything "
                "you changed here and have not saved is still here, and is "
@@ -471,6 +476,10 @@ private:
 
         m_form.markSaved();
         m_layers = configLayersFromDisk();
+        // Same reason as in onReloadNotice(): this re-read is the model's only
+        // chance to notice a system file that changed since the window opened,
+        // and Reset is the control that would otherwise show the old value.
+        m_form.refreshLowerLayers(m_layers);
         refreshPages();
         status("Saved to " + m_layers.userFilePath);
     }

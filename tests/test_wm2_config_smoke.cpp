@@ -2377,6 +2377,70 @@ TEST_CASE("an unsaved edit that a reload made agree with the file is no longer m
     CHECK_FALSE(field->staleUnderEdit);
 }
 
+TEST_CASE("a file re-read moves what Reset will produce, and keeps the edits it finds",
+          "[wm2_config_smoke]")
+{
+    // D-08's other half, and the one a reload notice used to miss. Re-reading
+    // the files updates each field's EFFECTIVE value, because the window
+    // manager is asked for every key straight afterwards -- but `belowUser`,
+    // the value D-13's Reset shows and live-applies, is a snapshot taken at
+    // seed time and nothing was refreshing it. A system file that changed under
+    // an open settings window therefore left Reset offering, and applying, the
+    // value that file used to hold.
+    const std::string tree = makeTree("rereadbelow");
+    const std::string systemFile = tree + "/system/wm2-born-again/config";
+    const std::string userFile   = tree + "/user/wm2-born-again/config";
+    writeFile(systemFile, "frame-thickness=9\n");
+    writeFile(userFile,   "frame-thickness=23\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+    REQUIRE(form.value("frame-thickness") == "23");
+    const FormField* seeded = form.field("frame-thickness");
+    REQUIRE(seeded != nullptr);
+    REQUIRE(seeded->belowUser == "9");
+
+    // Somebody is halfway through an unsaved edit on a different setting, which
+    // the refresh must not disturb -- the same prohibition adoptEffective()
+    // carries.
+    REQUIRE(form.setValue("tab-background", "#FF0000"));
+
+    // The system file changes on disk and the window manager re-reads it. This
+    // is exactly what onReloadNotice() does: a fresh layered read, then a `get`
+    // for every key.
+    writeFile(systemFile, "frame-thickness=13\n");
+    const ConfigLayers reread = configLayersFromDisk();
+    form.refreshLowerLayers(reread);
+    form.adoptEffective("frame-thickness", "23", ValueSource::WindowManager, "");
+
+    // Reset removes the key from the USER file, so what it shows -- and what it
+    // live-applies to the desktop -- is the layer below, which the re-read just
+    // moved from 9 to 13.
+    REQUIRE(form.requestReset("frame-thickness"));
+    CHECK(form.value("frame-thickness") == "13");
+    CHECK(form.value("frame-thickness") != std::to_string(Config().frameThickness));
+
+    // ...and the unsaved edit elsewhere came through the refresh untouched.
+    const FormField* edited = form.field("tab-background");
+    REQUIRE(edited != nullptr);
+    CHECK(edited->current == "#FF0000");
+    CHECK(edited->dirty);
+
+    // The wiring, asserted where a display-free case can reach it: the window's
+    // reload path performs the refresh. Without this the model could be correct
+    // and the window still stale, which is the shape the defect had.
+    const std::string windowSource = sourceOf("apps/wm2-config/main.cpp");
+    REQUIRE_FALSE(windowSource.empty());
+    const std::size_t at = windowSource.find("void onReloadNotice()");
+    REQUIRE(at != std::string::npos);
+    const std::size_t end = windowSource.find("\n    }\n", at);
+    REQUIRE(end != std::string::npos);
+    const std::string body = withoutLineComments(windowSource.substr(at, end - at));
+    INFO("onReloadNotice, comments stripped:\n" << body);
+    CHECK(body.find("refreshLowerLayers") != std::string::npos);
+}
+
 TEST_CASE("Reset all on a page removes that page's keys from the user file and writes no defaults",
           "[wm2_config_smoke]")
 {

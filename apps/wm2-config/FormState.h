@@ -115,6 +115,23 @@ public:
     void adoptEffective(const std::string& key, const std::string& value,
                         ValueSource source, const std::string& sourceDetail);
 
+    // Re-take every field's `belowUser` snapshot -- and the menu entries' one --
+    // from a FRESH layered read (D-08).
+    //
+    // seedFromLayers() takes those snapshots once, and they are what D-13's
+    // Reset shows and live-applies. When a system file changes while this
+    // window is open, the window manager re-reads it and reports new EFFECTIVE
+    // values, which adoptEffective() takes -- but nothing was moving the lower
+    // layers underneath them, so Reset went on offering the value that file used
+    // to hold. Nothing else is touched: an edit stays dirty, its stale mark
+    // stays up, and `effective` remains the reporter's business.
+    //
+    // The one value that DOES follow is a field with a reset already pending,
+    // because what such a field shows is derived -- "what removing this key will
+    // produce" -- rather than typed, and removing it now produces something
+    // else.
+    void refreshLowerLayers(const ConfigLayers& layers);
+
     // True for a key this form manages.
     bool manages(const std::string& key) const;
 
