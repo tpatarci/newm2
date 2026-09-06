@@ -563,6 +563,24 @@ their place, their spelling and the comments around them. Resetting a setting
 *removes* its key from your file rather than writing the built-in default into
 it, so whatever the system-wide file said shows through again.
 
+**A save it cannot do safely, it refuses rather than guesses.** Four cases, each
+reported in the window rather than left to be discovered later:
+
+- **The file is a symbolic link.** If `~/.config/wm2-born-again/config` is a link
+  into a dotfiles repository, saving would replace the *link* with a regular file
+  and every later edit would go somewhere the repository could not see. The save
+  is refused and says so; edit the file the link points at.
+- **The file exists but could not be read.** A permission, a name that is too
+  long, a link loop — anything that stops the save reading what is there is a
+  read failure, never treated as "there is no file here". Nothing is replaced.
+- **A value begins or ends with a space.** The configuration file trims values as
+  it reads them, so ` xterm` would come back as `xterm` and the file and the
+  running desktop would quietly disagree. Spaces *inside* a value are fine.
+- **Somebody else is saving at the same time.** Two settings windows, or one
+  window and a hand edit through another program, no longer overwrite each
+  other: a save waits for the one in progress and then re-reads, so both sets of
+  edits survive.
+
 **How to open it.** When `wm2-config` is installed and on the window manager's
 `PATH` at the moment the window manager starts, the root menu carries a
 `Configure...` entry at the bottom of its top level. Install it afterwards and
@@ -630,10 +648,9 @@ Exit codes, so a shell script can tell the cases apart:
 situation as "not running", and a script that treats them alike will do the
 wrong thing in one of them.
 
-**Which settings apply live: all of them.** There is no list of exceptions here
-because there are none. Every setting `wm2-ctl --help` names changes the desktop
-you are looking at, at the moment you set it, with no window closing and no
-restart:
+**Which settings apply live: all of them.** There is no setting here that waits
+for a restart. Every setting `wm2-ctl --help` names changes the desktop you are
+looking at, at the moment you set it, with no window closing and no restart:
 
 | Setting | What moves |
 |---|---|
@@ -649,7 +666,26 @@ restart:
 A value the running window manager cannot use — a colour the X server will not
 parse, a font pattern with no usable face — is **refused**, and everything keeps
 the value it had. You cannot leave the window manager without a colour or
-without a face by mistyping one.
+without a face by mistyping one. A file that changes *two* fonts and gets one of
+them wrong is refused whole: neither face is swapped, so `wm2-ctl get tab-font`
+never names a face that is not what you are looking at.
+
+**Three settings say "not now" while a menu is open or a window is being
+dragged.** `tab-font`, `menu-font` and `frame-thickness` move geometry that an
+open root menu or a move/resize drag has already measured — the menu's row
+height, the tab's width, the frame's thickness — so setting one of them mid-grab
+would leave the menu highlighting a different row from the one it activates, or
+the dragged window jumping sideways. They are refused with
+*"a menu or a drag is in progress; try again in a moment"* (`wm2-ctl` exit code
+`1`), and the same request succeeds the moment you let go. Every other setting
+applies under a grab exactly as it does at rest.
+
+**A notice never looks like a refusal.** Because a reload notice and the reply
+to your own `wm2-ctl reload` are the same kind of message, a reload triggered by
+something else — a settings window pressing *Re-read files*, a second
+`wm2-ctl reload` — can arrive on your connection ahead of your own reply.
+`wm2-ctl` skips it and waits for the answer to the request it made, so a `set`
+that succeeded always exits `0`.
 
 **The manual menu entries travel as one value.** `wm2-ctl get menu-entries`
 prints your whole list in the config file's own key order, with `;` between
