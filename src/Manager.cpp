@@ -2050,7 +2050,17 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
         (next.tabFont        != previous.tabFont ||
          next.menuFont       != previous.menuFont ||
          next.frameThickness != previous.frameThickness)) {
-        reasonOut = "a menu or a drag is in progress; try again in a moment";
+        // NAMES WHAT WAS REFUSED (I-01). applyConfig() is reached by a `set` of
+        // one key and by a `reload` of a whole file, and the bare sentence
+        // under-described the second: a file that moves frame-thickness AND six
+        // colours, reloaded while the root menu is open, applies none of the
+        // six. That is deliberate -- refusing whole is the only outcome that
+        // cannot leave the file and the screen half-agreeing -- but a client
+        // told only "try again in a moment" cannot tell how much did not
+        // happen.
+        reasonOut = "a menu or a drag is in progress; try again in a moment. "
+                    "Only tab-font, menu-font and frame-thickness are affected, "
+                    "and a reload that moves any of them is refused whole";
         return false;
     }
 

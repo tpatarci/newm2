@@ -681,9 +681,18 @@ open root menu or a move/resize drag has already measured — the menu's row
 height, the tab's width, the frame's thickness — so setting one of them mid-grab
 would leave the menu highlighting a different row from the one it activates, or
 the dragged window jumping sideways. They are refused with
-*"a menu or a drag is in progress; try again in a moment"* (`wm2-ctl` exit code
-`1`), and the same request succeeds the moment you let go. Every other setting
-applies under a grab exactly as it does at rest.
+*"a menu or a drag is in progress; try again in a moment. Only `tab-font`,
+`menu-font` and `frame-thickness` are affected, and a reload that moves any of
+them is refused whole"* (`wm2-ctl` exit code `1`), and the same request succeeds
+the moment you let go. Every other setting applies under a grab exactly as it
+does at rest.
+
+The last clause is worth reading twice, because it is the one surprise here: a
+**reload** applies a whole configuration file, so if the file moves one of those
+three while a menu is open, the reload is refused **entirely** — the six colours
+it also changed are not applied either. Nothing is half-applied, which is the
+point; run `wm2-ctl reload` again once the menu is closed and the whole file goes
+in at once.
 
 **A notice never looks like a refusal.** Because a reload notice and the reply
 to your own `wm2-ctl reload` are the same kind of message, a reload triggered by
