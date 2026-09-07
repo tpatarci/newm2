@@ -44,6 +44,28 @@ static bool parseBool(const std::string& value) {
     return (lower == "true" || lower == "1");
 }
 
+// Helper: a manual menu entry value the RENDERER cannot express.
+//
+// configMenuEntriesValue() renders the manual entries as ';'-separated
+// records and parseMenuEntriesValue() splits on ';' to read them back, so a
+// ';' inside a name, a command or a category is not a character the round
+// trip survives: `get menu-entries` would print a value `set menu-entries`
+// refuses, and the two halves of one protocol would disagree about a list
+// neither of them mistyped.
+//
+// REFUSED AT THE SOURCE rather than escaped in the renderer, because the wire
+// parser already cannot PRODUCE such an entry -- it splits the value on ';'
+// before any of it reaches the accumulator -- so the file was the only route
+// that could store one, and refusing it there is what makes "everything
+// stored is renderable" true of the whole program rather than of one function.
+static bool menuEntryValueIsRenderable(const char* key, const std::string& value) {
+    if (value.find(';') == std::string::npos) return true;
+    std::fprintf(stderr,
+                 "wm2: warning: %s: ';' separates menu entries and cannot appear "
+                 "in a value; entry skipped\n", key);
+    return false;
+}
+
 // =============================================================================
 // XDG path resolution
 // =============================================================================
@@ -207,6 +229,14 @@ void Config::applyKeyValue(const std::string& key, const std::string& value,
     // accumulator pattern avoids numbered keys (menu-entry-1-name=) --
     // each menu-entry-name= opens a new "currently open entry".
     if (key == "menu-entry-name") {
+        // Skipped WHOLE, so no entry is opened: a name that cannot be rendered
+        // must not become a stored entry, and a half-formed entry carrying the
+        // command and category lines that follow would be worse than none. The
+        // consequence is stated rather than hidden -- those following lines
+        // then attach to the previous entry, or warn about having no name to
+        // attach to, which is the behaviour any other unusable name already has.
+        if (!menuEntryValueIsRenderable("menu-entry-name", value)) return;
+
         AppEntry entry;
         entry.name = value;
         entry.category = "Custom";  // D-07 default, applied at creation time
@@ -229,6 +259,7 @@ void Config::applyKeyValue(const std::string& key, const std::string& value,
         // settings window's menu-entry dialog has to produce the same argument
         // vector this line produces, and "the same way" is only true of one
         // function with two callers.
+        if (!menuEntryValueIsRenderable("menu-entry-command", value)) return;
         manualMenuEntries.back().execArgv = configTokeniseCommand(value);
         return;
     }
@@ -238,6 +269,7 @@ void Config::applyKeyValue(const std::string& key, const std::string& value,
             std::fprintf(stderr, "wm2: warning: menu-entry-category with no preceding menu-entry-name\n");
             return;
         }
+        if (!menuEntryValueIsRenderable("menu-entry-category", value)) return;
         manualMenuEntries.back().category = value;
         return;
     }

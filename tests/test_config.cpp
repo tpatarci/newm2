@@ -1064,6 +1064,102 @@ TEST_CASE("menu-entry-category with no preceding menu-entry-name is a no-op", "[
     REQUIRE(cfg.manualMenuEntries.empty());
 }
 
+// Test 41: a ';' in any of the three accumulator values is refused, because a
+// stored ';' makes `get menu-entries` unreadable by `set menu-entries`
+// (CodeRabbit F1, 2026-09-07)
+TEST_CASE("a menu-entry value containing a semicolon is refused by the file parser",
+          "[config]") {
+    // WHY THE FILE PARSER AND NOT THE WIRE PARSER. configMenuEntriesValue()
+    // renders the manual entries as ';'-separated records and
+    // parseMenuEntriesValue() splits on ';' to read them back, so the WIRE
+    // parser cannot produce an entry whose name, command or category contains
+    // a ';'. The config FILE accumulator could -- and the value rendered from
+    // one could not be read back by the parser that is supposed to read it, so
+    // a `set` of exactly what `get` had just printed was refused.
+    //
+    // All THREE keys are exercised in one file, because the renderer emits all
+    // three and a fix that guarded only the name would leave the same defect
+    // reachable through the other two.
+    std::string path = writeTempConfig(
+        "menu-entry-name = a;b\n"
+        "menu-entry-name = Mail\n"
+        "menu-entry-command = mutt;rm -rf\n"
+        "menu-entry-category = Inter;net\n"
+    );
+
+    Config cfg;
+    cfg.applyFile(path);
+    removeTempFile(path);
+
+    const std::string rendered = configMenuEntriesValue(cfg);
+    std::vector<AppEntry> readBack;
+    std::string reason;
+    const bool reRead = parseMenuEntriesValue(rendered, readBack, reason);
+
+    INFO("rendered: " << rendered);
+    INFO("re-read refusal: " << reason);
+    INFO("stored entries: " << cfg.manualMenuEntries.size());
+
+    // THE DEFECT. What `get` prints must be a value `set` accepts, and it must
+    // mean the same list.
+    CHECK(reRead);
+    CHECK(readBack.size() == cfg.manualMenuEntries.size());
+
+    // The refused NAME opened no entry at all, so the well-formed one is the
+    // only entry stored.
+    REQUIRE(cfg.manualMenuEntries.size() == 1);
+    CHECK(cfg.manualMenuEntries[0].name == "Mail");
+
+    // ...and the refused COMMAND and CATEGORY were skipped rather than written
+    // into the entry that was open, which is what keeps the ';' out of the
+    // rendered value by every route into it.
+    CHECK(cfg.manualMenuEntries[0].execArgv.empty());
+    CHECK(cfg.manualMenuEntries[0].category == "Custom");
+
+    // The round trip agrees field by field, not merely in length.
+    if (reRead && readBack.size() == cfg.manualMenuEntries.size()) {
+        for (std::size_t i = 0; i < readBack.size(); ++i) {
+            CHECK(readBack[i].name     == cfg.manualMenuEntries[i].name);
+            CHECK(readBack[i].category == cfg.manualMenuEntries[i].category);
+            CHECK(readBack[i].execArgv == cfg.manualMenuEntries[i].execArgv);
+        }
+    }
+}
+
+// Test 42: an entry the file parser DOES accept still round-trips, so Test 41
+// cannot pass by refusing everything
+TEST_CASE("menu entries with no semicolon round-trip through the rendered value",
+          "[config]") {
+    std::string path = writeTempConfig(
+        "menu-entry-name = Mail\n"
+        "menu-entry-command = mutt -f inbox\n"
+        "menu-entry-category = Internet\n"
+        "menu-entry-name = Editor\n"
+        "menu-entry-command = vi\n"
+    );
+
+    Config cfg;
+    cfg.applyFile(path);
+    removeTempFile(path);
+
+    REQUIRE(cfg.manualMenuEntries.size() == 2);
+
+    const std::string rendered = configMenuEntriesValue(cfg);
+    std::vector<AppEntry> readBack;
+    std::string reason;
+    INFO("rendered: " << rendered);
+    INFO("re-read refusal: " << reason);
+    REQUIRE(parseMenuEntriesValue(rendered, readBack, reason));
+
+    REQUIRE(readBack.size() == 2);
+    CHECK(readBack[0].name     == "Mail");
+    CHECK(readBack[0].execArgv == (std::vector<std::string>{"mutt", "-f", "inbox"}));
+    CHECK(readBack[0].category == "Internet");
+    CHECK(readBack[1].name     == "Editor");
+    CHECK(readBack[1].execArgv == std::vector<std::string>{"vi"});
+    CHECK(readBack[1].category == "Custom");
+}
+
 // =============================================================================
 // Font settings (plan 09-01): tab-font
 //
