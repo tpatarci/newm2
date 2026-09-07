@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 26
+open_count: 28
 waived_count: 8
 fixed_count: 9
-total_count: 43
-last_updated: 2026-09-07T00:00:00.000Z
+total_count: 45
+last_updated: 2026-09-07T03:29:59.365Z
 ---
 
 # Broken Windows Ledger
@@ -58,6 +58,8 @@ last_updated: 2026-09-07T00:00:00.000Z
 | 41 | 09 | unrun-verify | apps/wm2-config/FormState.cpp |  | Codex PR-review pass 2, P2 lower-layer fix (commit e981cdd): FormState::refreshLowerLayers is driven RED-first for a single setting through the reload path ([wm2_config_smoke] "a file re-read moves what Reset will produce, and keeps the edits it finds"), and the window wiring is asserted by a comment-stripped source guard on onReloadNotice() rather than by a driven GTK reload -- the same precedent row 21 records for the entry-dialog case. Two arms have no case: the MENU-ENTRIES half (m_menuBelowUser, and a pending menu reset following the new lower layer), and the SAVE path, which re-reads the layers for the same reason and now refreshes them the same way. Both are the same three lines of the same function as the covered arm. | open |  | 2026-09-06T22:51:09.093Z |  |
 | 42 | 09 | unrun-verify | src/Manager.cpp |  | Codex PR-review pass 3, P2 socket-property fix (commit d58e17a): the SHUTDOWN arm is driven RED-first ([wm_socket] "The published socket path is withdrawn when the window manager exits" -- the fixture's X server outlives the window manager, so the root window is still there to be asked after a clean SIGTERM exit; red on CHECK(withdrawn) with _WM2_CONFIG_SOCKET still naming the unlinked node). The STARTUP arm -- setupEwmhProperties()'s new else, which deletes a PREDECESSOR's stale property when this start could not bind -- has no case. It needs a property planted on root BEFORE the window manager publishes, and WmFixture spawns the window manager inside its own constructor with no hook to run anything first; a second window manager cannot be started on a fixture's display either (the display dies with the fixture, and _WM2_RUNNING makes one owner per display). The nearest driven case, "A socket path too long for the address structure is named, not truncated", asserts the property is absent after a no-listener start but cannot distinguish the else branch from the old no-else code, because nothing stale was there to remove. Verified by reading: the else is one XDeleteProperty through the same helper release() uses, and that helper is exercised. | open |  | 2026-09-07T00:00:00.000Z |  |
 | 43 | 09 | unrun-verify | src/Events.cpp |  | Codex PR-review pass 3, P2 failed-listener fix (commit 8df55d8): the TRANSPORT half is driven RED-first ([config_socket] "a listener that poll() reports as failed shuts the server down" -- POLLNVAL injected into the listener's revents by hand; red on isListening(), on the next poll set being non-empty, on the connection count and on the socket node still existing). The WINDOW MANAGER half -- serviceConfigSocket() reading the isListening() transition and withdrawing _WM2_CONFIG_SOCKET when a live listener dies mid-session -- has no case. Nothing outside the process can make the real binary's listening descriptor report POLLERR/POLLHUP/POLLNVAL: the descriptor is private to the window manager, and there is no lever to close or corrupt it (the WM2_FORCE_* levers are all read once at startup). Verified by reading: the transition is a two-line guard around the same unpublishConfigSocketPath() that release() calls, and that call is exercised by [wm_socket] "The published socket path is withdrawn when the window manager exits". | open |  | 2026-09-07T00:00:00.000Z |  |
+| 44 | 09 | unrun-verify | src/Events.cpp |  | CodeRabbit src-review F2 (commit ea40f1d): a bounded modalWait() no longer reports Timeout at the socket's clamped poll expiry instead of at the caller's deadline. The fix has NO externally observable consequence in this build, so no behavioural case could be red at the round base, and the red-first evidence is a SOURCE-level guard ([wm_socket][source][modalwait] 'modalWait reports Timeout from its deadline check and nowhere else' -- red at two Timeout returns, green at one). Every bounded caller today already absorbs an early timeout: Border.cpp's tab-button hold MEASURES each wait rather than assuming it lasted its bound (the WR-14 consumer-side fix), and Client.cpp's move and resize drags simply loop on Timeout; the two remaining callers pass -1. The behavioural companion ('a bounded modal wait that crosses a silent connection's deadline still takes its full delay') drives the hold across the moment a pre-hello connection's 10 s deadline expires, which is the only moment the clamp bites, and is green both before and after -- it guards the fix's own risk (a bounded wait that never times out), not the defect. The arm that has no case is a caller that trusts the bound WITHOUT measuring, because no such caller exists yet. | open |  | 2026-09-07T03:29:48.782Z |  |
+| 45 | 09 | unrun-verify | src/Manager.cpp |  | CodeRabbit src-review F3 (commit 4018ef4): applyConfig() applying a frame-thickness and a tab-font together now walks the frames through relayoutFrameForFont (the thickness path PLUS the label repaint) instead of through relayoutFrame, which deliberately does not repaint the label. The red-first evidence is a SOURCE-level guard ([wm_socket][source] 'applying a thickness and a tab font together walks the frames once, through the path that repaints the label' -- red on the font walk being conditioned on the thickness having stayed put, and on the thickness walk not standing down). It could not be driven behaviourally, and the reason was MEASURED rather than assumed: the reshape the thickness path performs moves the tab's stair-stepped clip region, the server sends Expose for every region that comes back inside it (13 of them, counted from the test by selecting ExposureMask on the window manager's own tab), and Border::expose() -> drawLabel() repaints the label in the NEW face within one turn of the event loop. So no capture taken after a settle can see the stale glyphs on this X server. The behavioural case ('a thickness and a tab font applied together leave a tab that was already open looking like one opened afterwards') is green both before and after and asserts the combined application produces a correct tab at all. The arm with no case is the one the fix is FOR: a server with backing store -- a VNC session, which is this project's stated deployment -- restores a shrinking window's contents rather than asking for them back and sends no Expose, so the stale label would survive. Reproducing it needs an X server started with backing store enabled, which the shared Xvfb fixture does not provide. | open |  | 2026-09-07T03:29:59.365Z |  |
 
 ````json
 [
@@ -575,6 +577,30 @@ last_updated: 2026-09-07T00:00:00.000Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-07T00:00:00.000Z",
+    "resolved_at": null
+  },
+  {
+    "id": 44,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "src/Events.cpp",
+    "line": null,
+    "description": "CodeRabbit src-review F2 (commit ea40f1d): a bounded modalWait() no longer reports Timeout at the socket's clamped poll expiry instead of at the caller's deadline. The fix has NO externally observable consequence in this build, so no behavioural case could be red at the round base, and the red-first evidence is a SOURCE-level guard ([wm_socket][source][modalwait] 'modalWait reports Timeout from its deadline check and nowhere else' -- red at two Timeout returns, green at one). Every bounded caller today already absorbs an early timeout: Border.cpp's tab-button hold MEASURES each wait rather than assuming it lasted its bound (the WR-14 consumer-side fix), and Client.cpp's move and resize drags simply loop on Timeout; the two remaining callers pass -1. The behavioural companion ('a bounded modal wait that crosses a silent connection's deadline still takes its full delay') drives the hold across the moment a pre-hello connection's 10 s deadline expires, which is the only moment the clamp bites, and is green both before and after -- it guards the fix's own risk (a bounded wait that never times out), not the defect. The arm that has no case is a caller that trusts the bound WITHOUT measuring, because no such caller exists yet.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-07T03:29:48.782Z",
+    "resolved_at": null
+  },
+  {
+    "id": 45,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "src/Manager.cpp",
+    "line": null,
+    "description": "CodeRabbit src-review F3 (commit 4018ef4): applyConfig() applying a frame-thickness and a tab-font together now walks the frames through relayoutFrameForFont (the thickness path PLUS the label repaint) instead of through relayoutFrame, which deliberately does not repaint the label. The red-first evidence is a SOURCE-level guard ([wm_socket][source] 'applying a thickness and a tab font together walks the frames once, through the path that repaints the label' -- red on the font walk being conditioned on the thickness having stayed put, and on the thickness walk not standing down). It could not be driven behaviourally, and the reason was MEASURED rather than assumed: the reshape the thickness path performs moves the tab's stair-stepped clip region, the server sends Expose for every region that comes back inside it (13 of them, counted from the test by selecting ExposureMask on the window manager's own tab), and Border::expose() -> drawLabel() repaints the label in the NEW face within one turn of the event loop. So no capture taken after a settle can see the stale glyphs on this X server. The behavioural case ('a thickness and a tab font applied together leave a tab that was already open looking like one opened afterwards') is green both before and after and asserts the combined application produces a correct tab at all. The arm with no case is the one the fix is FOR: a server with backing store -- a VNC session, which is this project's stated deployment -- restores a shrinking window's contents rather than asking for them back and sends no Expose, so the stale label would survive. Reproducing it needs an X server started with backing store enabled, which the shared Xvfb fixture does not provide.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-07T03:29:59.365Z",
     "resolved_at": null
   }
 ]

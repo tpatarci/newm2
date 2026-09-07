@@ -670,6 +670,11 @@ looking at, at the moment you set it, with no window closing and no restart:
 | `new-window-command`, `exec-using-shell` | what the menu's **New** entry runs next time you choose it |
 | the manual root-menu entries | what the next root menu you open contains; a menu that is already open is left alone and picks the change up the next time |
 
+**A reload that moves several of these at once applies all of them.** A file
+that changes `frame-thickness` *and* `tab-font` together re-lays every open frame
+out once and redraws its tab label in the new face — not the new thickness
+wearing the old glyphs.
+
 **A window that is fullscreen at the time keeps up too.** A fullscreen window has
 no frame on the screen to change — its decoration is taken away for as long as it
 is fullscreen — so a colour or a `frame-thickness` set while it is fullscreen has
@@ -722,9 +727,16 @@ wm2-ctl set menu-entries \
 
 An empty value removes every manual entry. It is one value rather than a
 command per row because the entries are an ordered list — to change one, read
-the list, change that record, and send it back. A `;` inside a command has no
-escape; write that entry into the config file instead, where each key is its own
-line.
+the list, change that record, and send it back.
+
+**A `;` cannot appear inside a name, a command or a category.** It is what
+separates one record from the next and there is no escape for it, on the socket
+or in the config file: an entry whose value contains one is refused, with a
+warning naming the key, and the rest of the file is read as usual. That rule is
+what makes the round trip safe — the list `wm2-ctl get menu-entries` prints is
+always a list `wm2-ctl set menu-entries` will take back unchanged. If a program
+you want on the menu needs a `;` on its command line, put the command in a shell
+script and name the script here.
 
 In the config file the same list is three keys per entry, in the same
 begins-a-new-record shape the rule keys use:
@@ -737,9 +749,10 @@ menu-entry-category = Custom
 
 `menu-entry-name` opens a new entry; `menu-entry-command` is the program it
 runs, split on whitespace with **no** shell evaluation and no quote handling, so
-a semicolon or a `&&` you type is one literal argument rather than the start of
-a second command; `menu-entry-category` is the submenu it appears under, and
-defaults to `Custom` when you leave it out. There are no `--menu-entry-*`
+an `&&` or a pipe you type is one literal argument rather than the start of a
+second command (a semicolon is the one character that is refused outright, for
+the reason just given); `menu-entry-category` is the submenu it appears under,
+and defaults to `Custom` when you leave it out. There are no `--menu-entry-*`
 command-line flags, for the same reason there are no `--rule-*` ones.
 
 **One key is readable and not settable: `menu-categories`.** `wm2-ctl get
