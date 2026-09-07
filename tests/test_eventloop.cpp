@@ -5,7 +5,9 @@
 #include <X11/Xatom.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <chrono>
 #include <poll.h>
+#include <cerrno>
 #include <csignal>
 #include <cstring>
 #include <ctime>
@@ -111,14 +113,58 @@ TEST_CASE("Self-pipe can be created and used", "[eventloop][pipe]")
 // returns -1 whenever no focus timer is armed). That is exactly what turns the
 // bounded reproduction below into an unbounded hang in the real loop. A test
 // must never do it: a failure has to be REPORTED, not hung on.
+// HOW LONG TO WAIT FOR A DESCRIPTOR THAT MUST BECOME READABLE.
+//
+// A PRECONDITION, NOT A MEASUREMENT. Both callers below have asked the server
+// for something and are waiting for the answer to arrive before the case can
+// begin; neither asserts anything about how long that takes. So the bound
+// only has to be longer than any answer this host will ever be late by, and a
+// case that reaches it is a case where the answer never came at all.
+//
+// It was 2000, and that is short enough to lose a race with the machine
+// rather than with the code: measured on a workstation carrying a load
+// average of 10.8, the error-reply case below failed 18 times in 40 runs at
+// 2000 ms and 0 times at this bound. The failure looked exactly like a real
+// defect -- one case, one gate run, passing on a re-run -- which is the most
+// expensive kind of flake there is.
+static constexpr int kReadableWaitMs = 30000;
+
 static bool waitReadable(int fd, int timeoutMs)
 {
-    struct pollfd p;
-    p.fd = fd;
-    p.events = POLLIN;
-    p.revents = 0;
-    int r = poll(&p, 1, timeoutMs);
-    return r > 0 && (p.revents & POLLIN) != 0;
+    // RESUMED AFTER AN INTERRUPTION, with what is left of the bound. A single
+    // poll() returning -1/EINTR used to be reported as "not readable", so any
+    // signal delivered to the process during the wait failed the case
+    // INSTANTLY -- with a 30-second bound on the clock and a verdict in
+    // microseconds. That is the shape the surviving flake had: one case in
+    // forty runs, failing far too fast to have waited for anything.
+    //
+    // A failure bit is still a false, and deliberately: these callers wait for
+    // an answer on a connection that is supposed to be healthy, so POLLERR or
+    // POLLHUP means the case cannot be run, not that it should wait longer.
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeoutMs);
+    for (;;) {
+        struct pollfd p;
+        p.fd = fd;
+        p.events = POLLIN;
+        p.revents = 0;
+
+        const auto left = deadline - std::chrono::steady_clock::now();
+        if (left <= std::chrono::steady_clock::duration::zero()) {
+            // The bound is spent. One last non-blocking look, so a descriptor
+            // that became readable in the final instant is not missed.
+            return poll(&p, 1, 0) > 0 && (p.revents & POLLIN) != 0;
+        }
+
+        const int r = poll(&p, 1,
+            static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(left).count()));
+        if (r < 0) {
+            if (errno == EINTR) continue;   // resumed with what is left
+            return false;
+        }
+        if (r == 0) return false;           // the bound expired inside poll()
+        return (p.revents & POLLIN) != 0;
+    }
 }
 
 static bool fdReadable(Display *d)
@@ -154,7 +200,7 @@ TEST_CASE("pump-reports-what-is-available: the pump must not report zero "
     XFlush(B);
 
     // The bytes are on their way; wait for them rather than for a duration.
-    REQUIRE(waitReadable(ConnectionNumber(A), 2000));
+    REQUIRE(waitReadable(ConnectionNumber(A), kReadableWaitMs));
 
     // This is src/Events.cpp:195 as it was: the queue is empty, so the
     // early-return branch is NOT taken.
@@ -243,7 +289,7 @@ TEST_CASE("readable-is-not-deliverable: a readable descriptor carrying a "
                     (unsigned char *)"y", 1);
     XFlush(D);
 
-    REQUIRE(waitReadable(ConnectionNumber(D), 2000));
+    REQUIRE(waitReadable(ConnectionNumber(D), kReadableWaitMs));
 
     // The state src/Events.cpp:235 would see: descriptor readable, no
     // ordinary event available.
