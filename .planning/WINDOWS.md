@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 28
+open_count: 31
 waived_count: 8
 fixed_count: 9
-total_count: 45
-last_updated: 2026-09-07T03:29:59.365Z
+total_count: 48
+last_updated: 2026-09-07T04:21:06.736Z
 ---
 
 # Broken Windows Ledger
@@ -60,6 +60,9 @@ last_updated: 2026-09-07T03:29:59.365Z
 | 43 | 09 | unrun-verify | src/Events.cpp |  | Codex PR-review pass 3, P2 failed-listener fix (commit 8df55d8): the TRANSPORT half is driven RED-first ([config_socket] "a listener that poll() reports as failed shuts the server down" -- POLLNVAL injected into the listener's revents by hand; red on isListening(), on the next poll set being non-empty, on the connection count and on the socket node still existing). The WINDOW MANAGER half -- serviceConfigSocket() reading the isListening() transition and withdrawing _WM2_CONFIG_SOCKET when a live listener dies mid-session -- has no case. Nothing outside the process can make the real binary's listening descriptor report POLLERR/POLLHUP/POLLNVAL: the descriptor is private to the window manager, and there is no lever to close or corrupt it (the WM2_FORCE_* levers are all read once at startup). Verified by reading: the transition is a two-line guard around the same unpublishConfigSocketPath() that release() calls, and that call is exercised by [wm_socket] "The published socket path is withdrawn when the window manager exits". | open |  | 2026-09-07T00:00:00.000Z |  |
 | 44 | 09 | unrun-verify | src/Events.cpp |  | CodeRabbit src-review F2 (commit ea40f1d): a bounded modalWait() no longer reports Timeout at the socket's clamped poll expiry instead of at the caller's deadline. The fix has NO externally observable consequence in this build, so no behavioural case could be red at the round base, and the red-first evidence is a SOURCE-level guard ([wm_socket][source][modalwait] 'modalWait reports Timeout from its deadline check and nowhere else' -- red at two Timeout returns, green at one). Every bounded caller today already absorbs an early timeout: Border.cpp's tab-button hold MEASURES each wait rather than assuming it lasted its bound (the WR-14 consumer-side fix), and Client.cpp's move and resize drags simply loop on Timeout; the two remaining callers pass -1. The behavioural companion ('a bounded modal wait that crosses a silent connection's deadline still takes its full delay') drives the hold across the moment a pre-hello connection's 10 s deadline expires, which is the only moment the clamp bites, and is green both before and after -- it guards the fix's own risk (a bounded wait that never times out), not the defect. The arm that has no case is a caller that trusts the bound WITHOUT measuring, because no such caller exists yet. | open |  | 2026-09-07T03:29:48.782Z |  |
 | 45 | 09 | unrun-verify | src/Manager.cpp |  | CodeRabbit src-review F3 (commit 4018ef4): applyConfig() applying a frame-thickness and a tab-font together now walks the frames through relayoutFrameForFont (the thickness path PLUS the label repaint) instead of through relayoutFrame, which deliberately does not repaint the label. The red-first evidence is a SOURCE-level guard ([wm_socket][source] 'applying a thickness and a tab font together walks the frames once, through the path that repaints the label' -- red on the font walk being conditioned on the thickness having stayed put, and on the thickness walk not standing down). It could not be driven behaviourally, and the reason was MEASURED rather than assumed: the reshape the thickness path performs moves the tab's stair-stepped clip region, the server sends Expose for every region that comes back inside it (13 of them, counted from the test by selecting ExposureMask on the window manager's own tab), and Border::expose() -> drawLabel() repaints the label in the NEW face within one turn of the event loop. So no capture taken after a settle can see the stale glyphs on this X server. The behavioural case ('a thickness and a tab font applied together leave a tab that was already open looking like one opened afterwards') is green both before and after and asserts the combined application produces a correct tab at all. The arm with no case is the one the fix is FOR: a server with backing store -- a VNC session, which is this project's stated deployment -- restores a shrinking window's contents rather than asking for them back and sends no Expose, so the stale label would survive. Reproducing it needs an X server started with backing store enabled, which the shared Xvfb fixture does not provide. | open |  | 2026-09-07T03:29:59.365Z |  |
+| 46 | 09 | unrun-verify | apps/wm2-config/BehaviourPage.cpp |  | CodeRabbit apps-chunk A1 (commit e12c0d2): BehaviourPage::addDelayRow's fallback range for a key configKeySpecFor() does not name is now the range the option table gives the other delay keys on the page (and an int-wide range if the table knows neither), rather than the degenerate lo == hi == 1 that was there. The red-first evidence is a SOURCE-level guard, added to the existing '[wm2_config_smoke] the delay controls are built from the parser's own bounds, not from a third copy' case -- red on 'spec->maxValue : 1' still being present and on the table-read fallback being absent, green after. It could not be driven behaviourally: the artifact is a gtk_spin_button range, tests/test_wm2_config_smoke.cpp links Catch2 and X11 with no GTK by design (that is what makes its display-free half honest), and the arm is unreachable in a correct build anyway -- every key this page passes to addDelayRow is one the option table declares, which the 'the Behaviour page carries what D-09 assigns to it and nothing else' case already asserts. The arm with no case is a build in which the option table has lost a delay key. | open |  | 2026-09-07T04:20:55.359Z |  |
+| 47 | 09 | unrun-verify | apps/wm2-config/AppearancePage.cpp |  | CodeRabbit apps-chunk A3 (commit d51143f): AppearancePage::renderRow now APPENDS DISC-08's origin line to the thickness slider's own tooltip (Row::baseTooltip) instead of replacing it with gtk_widget_set_tooltip_text. The red-first evidence is a SOURCE-level guard ('[wm2_config_smoke] the thickness slider keeps its own tooltip when the origin line is added' -- red on baseTooltip being absent from both addThicknessRow and renderRow and on the bare replacement still being present, green after). It could not be driven behaviourally: reading a GTK tooltip needs a GTK build and a display, and tests/test_wm2_config_smoke.cpp links Catch2 and X11 with no GTK by design. The arm with no case is a user hovering the slider and reading two sentences instead of one; the smoke half spawns the real wm2-config but asserts only that its window maps. | open |  | 2026-09-07T04:21:06.542Z |  |
+| 48 | 09 | unrun-verify | apps/wm2-config/MenuPage.cpp |  | Codex pass-4 C4 (commit 1a8d3d2): MenuPage::edit now finds the row it began on through menuEntryReplacementIndex(), which prefers the captured index and falls back to identity. All three outcomes of that rule ARE driven display-free in tests/test_wm2_config_smoke.cpp ('editing the second of two identical rows replaces the second, not the first'), and the page's use of it is a comment-stripped source guard. What is NOT driven is the live arm: selecting the second of two identical rows in the real GTK list, editing it through gtk_dialog_run(), and observing that the second row changed -- reaching it means synthesising input into a modal GTK dialog, which is the same limit row 21 records for the reload-during-dialog case. | open |  | 2026-09-07T04:21:06.736Z |  |
 
 ````json
 [
@@ -601,6 +604,42 @@ last_updated: 2026-09-07T03:29:59.365Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-07T03:29:59.365Z",
+    "resolved_at": null
+  },
+  {
+    "id": 46,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "apps/wm2-config/BehaviourPage.cpp",
+    "line": null,
+    "description": "CodeRabbit apps-chunk A1 (commit e12c0d2): BehaviourPage::addDelayRow's fallback range for a key configKeySpecFor() does not name is now the range the option table gives the other delay keys on the page (and an int-wide range if the table knows neither), rather than the degenerate lo == hi == 1 that was there. The red-first evidence is a SOURCE-level guard, added to the existing '[wm2_config_smoke] the delay controls are built from the parser's own bounds, not from a third copy' case -- red on 'spec->maxValue : 1' still being present and on the table-read fallback being absent, green after. It could not be driven behaviourally: the artifact is a gtk_spin_button range, tests/test_wm2_config_smoke.cpp links Catch2 and X11 with no GTK by design (that is what makes its display-free half honest), and the arm is unreachable in a correct build anyway -- every key this page passes to addDelayRow is one the option table declares, which the 'the Behaviour page carries what D-09 assigns to it and nothing else' case already asserts. The arm with no case is a build in which the option table has lost a delay key.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-07T04:20:55.359Z",
+    "resolved_at": null
+  },
+  {
+    "id": 47,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "apps/wm2-config/AppearancePage.cpp",
+    "line": null,
+    "description": "CodeRabbit apps-chunk A3 (commit d51143f): AppearancePage::renderRow now APPENDS DISC-08's origin line to the thickness slider's own tooltip (Row::baseTooltip) instead of replacing it with gtk_widget_set_tooltip_text. The red-first evidence is a SOURCE-level guard ('[wm2_config_smoke] the thickness slider keeps its own tooltip when the origin line is added' -- red on baseTooltip being absent from both addThicknessRow and renderRow and on the bare replacement still being present, green after). It could not be driven behaviourally: reading a GTK tooltip needs a GTK build and a display, and tests/test_wm2_config_smoke.cpp links Catch2 and X11 with no GTK by design. The arm with no case is a user hovering the slider and reading two sentences instead of one; the smoke half spawns the real wm2-config but asserts only that its window maps.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-07T04:21:06.542Z",
+    "resolved_at": null
+  },
+  {
+    "id": 48,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "apps/wm2-config/MenuPage.cpp",
+    "line": null,
+    "description": "Codex pass-4 C4 (commit 1a8d3d2): MenuPage::edit now finds the row it began on through menuEntryReplacementIndex(), which prefers the captured index and falls back to identity. All three outcomes of that rule ARE driven display-free in tests/test_wm2_config_smoke.cpp ('editing the second of two identical rows replaces the second, not the first'), and the page's use of it is a comment-stripped source guard. What is NOT driven is the live arm: selecting the second of two identical rows in the real GTK list, editing it through gtk_dialog_run(), and observing that the second row changed -- reaching it means synthesising input into a modal GTK dialog, which is the same limit row 21 records for the reload-during-dialog case.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-07T04:21:06.736Z",
     "resolved_at": null
   }
 ]
