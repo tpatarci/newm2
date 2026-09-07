@@ -152,6 +152,28 @@ inline constexpr const char* kConfigProtocolWindowManagerProgram = "wm2-born-aga
 // never author a config line the protocol cannot carry.
 inline constexpr std::size_t kConfigProtocolMaxLine = 4096;
 
+// THE SAME BOUND, SEEN FROM THE CONFIG FILE, and the reply it protects is the
+// `value` line the window manager sends in answer to `get menu-entries`.
+//
+// Every other value on the wire is a SINGLE setting, and every single setting
+// is already bounded by the config file's own 256-byte per-value guard
+// (kConfigFileMaxValueBytes). `menu-entries` is not: the whole manual entry
+// list travels as ONE value under that key (include/Config.h), and a
+// configuration file may hold an arbitrary number of individually valid
+// `menu-entry-*` groups. A file with enough of them therefore loaded
+// perfectly, and then made `get menu-entries` produce a reply BOTH clients
+// reject as TooLong -- so wm2-config disconnected during its opening read of a
+// file the window manager was entirely happy with.
+//
+// The bound is enforced where the list is BUILT, by Config::applyFile(), which
+// drops entries from the END and says how many and why. Named here, beside the
+// line bound it is derived from and equal to it, because the two must never
+// drift apart -- and named at all, rather than spelled as
+// kConfigProtocolMaxLine at the use site, so a reader of src/Config.cpp can
+// see which reply that arithmetic is about.
+inline constexpr std::size_t kConfigProtocolMaxMenuEntriesReply =
+    kConfigProtocolMaxLine;
+
 
 // -----------------------------------------------------------------------------
 // X11 INTEROPERABILITY GUARD -- not part of the contract, required by it
@@ -426,6 +448,26 @@ inline std::string configProtocolEncode(const ConfigMessage& message) {
 
     out += "}\n";
     return out;
+}
+
+
+// How many bytes a `value` reply carrying `value` under `key` occupies on the
+// wire, INCLUDING its terminating newline.
+//
+// Measured through the encoder rather than counted by hand, because the JSON
+// wrapper, the key and the escaping are all part of what has to fit inside
+// kConfigProtocolMaxLine, and an estimate made from the raw value's length
+// would pass a list the decoder then rejects. The same measurement
+// apps/wm2-config/MenuModel.h's menuEntriesValueFits() makes for a `set`; this
+// is the window manager's half, used by Config::applyFile() to keep what the
+// window manager HOLDS inside what the wire can carry.
+inline std::size_t configProtocolValueReplyLength(const std::string& key,
+                                                  const std::string& value) {
+    ConfigMessage probe;
+    probe.type  = ConfigMessageType::Value;
+    probe.key   = key;
+    probe.value = value;
+    return configProtocolEncode(probe).size();
 }
 
 

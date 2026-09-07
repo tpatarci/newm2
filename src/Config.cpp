@@ -3,6 +3,7 @@
 #endif
 
 #include "Config.h"
+#include "ConfigProtocol.h"   // the one-line bound the accumulated entry list has to fit inside
 
 #include <getopt.h>
 #include <cstdlib>
@@ -65,6 +66,58 @@ static bool menuEntryValueIsRenderable(const char* key, const std::string& value
                  "in a value; entry skipped\n", key);
     return false;
 }
+
+// Helper: keep the accumulated manual entry list inside ONE protocol reply.
+//
+// C2. The whole list travels as one value under `menu-entries`, so a file with
+// enough individually valid `menu-entry-*` groups in it loads perfectly and
+// then makes `get menu-entries` produce a reply both clients reject as
+// TooLong -- and wm2-config disconnects during its opening read of a file this
+// parser was entirely happy with. The bound is applied HERE, where the list is
+// built, so what the window manager HOLDS is always what the wire can carry.
+//
+// Entries are dropped from the END, so the file's own order decides which
+// survive, and the drop is announced rather than silent.
+//
+// The longest prefix that fits is found by BISECTION rather than by popping one
+// entry at a time and re-rendering: a pathological file with tens of thousands
+// of groups in it would make the naive loop quadratic in the number of entries,
+// and a config parser is not a place to leave that. Rendering is monotonic in
+// the prefix length -- every entry adds bytes and none removes any -- which is
+// what makes the bisection exact rather than approximate.
+static void boundMenuEntriesToOneReply(Config& config) {
+    if (config.manualMenuEntries.empty()) return;
+
+    const auto fits = [&config](std::size_t count) {
+        Config scratch;
+        scratch.manualMenuEntries.assign(
+            config.manualMenuEntries.begin(),
+            config.manualMenuEntries.begin() + static_cast<std::ptrdiff_t>(count));
+        return configProtocolValueReplyLength(kMenuEntriesKey,
+                                              configMenuEntriesValue(scratch)) <=
+               kConfigProtocolMaxMenuEntriesReply;
+    };
+
+    const std::size_t total = config.manualMenuEntries.size();
+    if (fits(total)) return;
+
+    std::size_t lo = 0, hi = total;
+    while (lo < hi) {
+        const std::size_t mid = lo + (hi - lo + 1) / 2;   // always >= lo + 1
+        if (fits(mid)) lo = mid;
+        else           hi = mid - 1;
+    }
+
+    const std::size_t dropped = total - lo;
+    config.manualMenuEntries.resize(lo);
+    std::fprintf(stderr,
+                 "wm2: warning: %zu menu %s dropped: the whole menu entry list "
+                 "is sent to a settings client as one line and only the first "
+                 "%zu of %zu fit in %zu bytes\n",
+                 dropped, dropped == 1 ? "entry" : "entries", lo, total,
+                 kConfigProtocolMaxMenuEntriesReply);
+}
+
 
 // =============================================================================
 // XDG path resolution
@@ -156,6 +209,11 @@ void Config::applyFile(const std::string& path) {
 
         applyKeyValue(key, value, ruleState);
     }
+
+    // Applied per FILE, after the accumulator has seen every line of it. The
+    // entry list appends across layers, so checking here bounds the running
+    // total after each layer rather than each layer in isolation.
+    boundMenuEntriesToOneReply(*this);
 }
 
 // =============================================================================
