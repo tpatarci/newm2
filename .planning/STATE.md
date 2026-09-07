@@ -28,79 +28,29 @@ See: .planning/PROJECT.md (updated 2026-05-06)
 
 ## Current Position
 
-Phase: 09 (Config GUI + IPC) — EXECUTING
-Plan: 9 of 9
-Status: Phase complete — ready for verification
-Progress: [████████░░] 81% (7/9 phases complete)
+**Phase:** 09 COMPLETE — merged to main
+**Milestone:** Phase 10 (a toolkit-free Xlib settings tool) is planned and not started.
 
-**Position as of 2026-09-05 (evening).** On 2026-09-05 the operator instructed the
-delegated project lead to finish everything planned without stopping for
-per-item confirmation; every decision below was taken under that standing
-instruction and is recorded in those terms so it can be reversed as a recorded
-decision.
+Phase 9 shipped as PR #7, merged 2026-09-07, merge commit e79f9d1. Nine plans
+executed, one quick task (the tab label's clearance), and a review round that
+ran until it stopped finding things: two local passes, a security audit, seven
+Codex passes and five CodeRabbit CLI runs, every finding either fixed with a
+failing test first or declined with a recorded reason. The suite grew from 406
+cases to 614, and all four gates (debug, asan, nogtk, release) are green at the
+merged commit.
 
-1. **08.5-10 Task 3 checkpoint RULED**: Attribution outcome `ATTRIBUTED`,
-   terminal disposition `FIX-PLAN`, recorded in `evidence/gates/wakeup/README.md`
-   and appended to `evidence/gates/attribution/README.md` (commit `e05f07f`).
-   The FIX-PLAN is 08.5-11 (already executed).
-2. **08.5-11: complete** (summary `3f098a6`). **08.5-12: complete** (fix
-   `57d5581`, record `a9ae0cd`, summary `fb33506`; Task 5 Decision A — 08.5-07
-   SUPERSEDED, 08.5-08 and 08.5-05 RELEASED; Decision B — the ruling in item 1).
-   **08.5-13: complete.**
-3. **WINDOWS.md ledger closed**: `open_count` 0 (6 fixed, 8 waived with reasons).
-4. **PR #5 MERGED** — `main` = `8c060fd`, 2026-09-05 11:59Z, on the local
-   CodeRabbit CLI gate; the CodeRabbit GitHub App is not installed on this
-   repository. This is the single current state of PR #5. Codex's four findings
-   on it were fixed in this worktree (frameless managed path, issue #3;
-   submenu overflow; frameless reflow; skip-taskbar=false) and re-reviewed
-   through six Codex passes ending clean (`evidence/gates/review-fixes/README.md`).
-5. **Ten-run measurement**: ten consecutive green `build-all.sh debug` runs at
-   `5ffee20` (330 tests), at `70fbd8f` (335 tests) and at the final capture commit
-   `39de548` (337 tests, 10 of 10 green, 17:09-17:49Z), `evidence/gates/fix-measurement/`.
-6. **08.5-08: complete** (`08.5-08-SUMMARY.md`). Six captures: `8e29d6d`
-   (static analysis red on five cppcheck findings in the modal loops; the smoke
-   transcript showed the window manager's own name one byte short), `2a94cbb`
-   (one new release warning, the signal handler's ignored `write()` result),
-   `d08b6e5` and `f54de6e` (all green, each superseded when a review pass changed
-   `src/` or `tests/`), `2781664` (the first full compile; four pre-existing
-   release warnings in a test's shell-outs), and the final bundle at `39de548`. Each stopped capture and what it
-   found: `evidence/gates/capture-attempts/README.md`.
-7. **Branch reviews before the PR**: CodeRabbit CLI (8 findings: one real
-   defect — a hide-or-kill of the client on a signal during a tab-button press —
-   two test-helper hardenings, five documentation corrections) and Codex over
-   the whole diff (2 findings: an uninitialised event read on gesture
-   interruption; frameless maximize one pixel short) and a second Codex pass on
-   that fix (a managed client has no X border on the frameless path either). All
-   fixed; `evidence/gates/review-fixes/README.md`.
-8. **08.5-05: complete** (`08.5-05-SUMMARY.md`, executed by a subagent, every
-   verify command re-run by the lead): gate rows repointed at this phase's
-   bundle, test-surface row recomputed by its own commands, interaction rows
-   cite the table row by row (13 open boxes file-wide, 7 in User Interaction, 0
-   in Release Evidence), `evidence/README.md` written.
-9. **Phase verification** re-run by gsd-verifier at `e244492` and re-checked by
-   the lead at `39de548` and after the third ten-run series: 7/7, status
-   `human_needed` (`08.5-VERIFICATION.md`). The two items are the operator's:
-   ratify or reverse the two `blocking-human` rulings the delegated lead took
-   (08.5-10 ATTRIBUTED, 08.5-12 Decision A), and confirm row 23's label.
-10. **Shipped 2026-09-05T18:05Z**: the worktree branch was pushed onto
-   `modernize/wm2-born-again` (`afd3ec2..58d549f`, fast-forward, 44 commits) and
-   **PR #6** merged into `main` as merge commit `0fec5db`; issue #3 closed by it.
-   Final review passes before the push: Codex `--commit 39de548` (one chronology
-   finding, already resolved by the capture at that commit) and CodeRabbit CLI
-   over the last delta (one wording finding, fixed). No bot reviewer is installed
-   on the repository, so the PR had zero review threads; the local CLIs are the
-   recorded gate (PR #6 comment, 2026-09-05). The formal `/gsd-ship` preflight
-   would have blocked on two gates and is recorded here rather than bypassed
-   silently: verification `human_needed` (item 9) and `workflow.security_enforcement`
-   with no `08.5-SECURITY.md`. The merge was taken under the operator's standing
-   "carry the PR through to merge" instruction, as PR #5 was.
-11. **Security review done** (`08.5-SECURITY.md`, 2026-09-05): 40 register rows
-   from ten plans' threat models, 23 high, 0 open; read-only auditor verdict
-   SECURED, every high citation re-read by the lead. The second ship gate is now
-   green; the first (verification `human_needed`) remains the operator's.
-12. **Next**: Phase 9 (Config GUI + IPC) — no plans exist yet; discuss, plan,
-   execute. Operator reminder on file: they want a visual refresh of the WM's
-   look once all planned work is done (screenshots in chat, they approve).
+**What is still the operator's to decide**, recorded in 09-UAT.md:
+
+1. The seven screenshots under evidence/wm2-config/ want a look.
+2. The remote-desktop pass wants a real viewer, not a headless one.
+3. The eight Behaviour settings want driving from the window itself.
+4. The tab is 25 px rather than the 16 px it was; the knob is
+   kTabFrameClearance if that is too much.
+
+Also open, from earlier phases: the two Phase 8.5 rulings, whether to rewrite
+the history that carries this workstation's hostname before 823a253, and
+whether to rotate the ten environment variable names exposed in the local
+commit purged on 2026-09-06.
 
 ## History (superseded 2026-09-05)
 
