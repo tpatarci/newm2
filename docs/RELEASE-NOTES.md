@@ -587,15 +587,27 @@ desktop from coming up the next time.
 
 **A change the window manager refuses is taken back out of the form.** If the
 running desktop rejects something you set — a colour the X server will not
-allocate, a value outside its range — the field goes back to the value actually
-in force rather than sitting there looking accepted, so a save can never write a
-setting the desktop has already turned down.
+allocate, a value outside its range — the field goes back to the value that was
+in force when the change was sent, rather than sitting there looking accepted,
+so a save can never write a setting the desktop has already turned down.
+
+**A save waits for the desktop to answer.** The window manager's answer to a
+change comes back a moment after the change is sent, so a Save pressed in that
+moment would write a value nothing had accepted yet — and if the answer were a
+refusal, the refused value would already be in your file with nothing left to
+put it back to. Save therefore waits for the last answer to arrive and then
+runs, saying so on the status line while it waits. In practice that is a
+fraction of a second and you will not see it; when the desktop has gone away
+entirely the save runs anyway, against your file alone.
 
 **A setting's tooltip names the file it is set in, not the file whose value it
 happens to match.** A key you set in your own file to the same value the
 system-wide file already gave it is still *your* setting, and says so; after a
 save, an edited setting names your file and a reset one names whichever layer is
-now supplying the value.
+now supplying the value. Where there is more than one system-wide configuration
+directory, the file named is the one that actually sets that setting — not
+simply the last directory on the list — so following the tooltip takes you to a
+file that mentions what you were looking at.
 
 **A save it cannot do safely, it refuses rather than guesses.** Four cases, each
 reported in the window rather than left to be discovered later:
@@ -730,15 +742,20 @@ without a face by mistyping one. A file that changes *two* fonts and gets one of
 them wrong is refused whole: neither face is swapped, so `wm2-ctl get tab-font`
 never names a face that is not what you are looking at.
 
-**A reload that cannot look at your configuration file is refused.** A file that
+**A reload that cannot look at a configuration file is refused.** A file that
 is simply not there is the ordinary state of a machine nobody has configured,
-and a reload on such a machine loads the system-wide settings and succeeds. A
-file that cannot be *examined* is a different thing: a directory above it whose
-permissions were changed, a symbolic link pointing round in a circle, a disk
-going bad. Rather than read that as "there is no file here" — which would apply
-the layers below and report success, silently dropping every setting you own —
-the reload is refused, naming the file and what the system said about it, and
-the desktop keeps what it had.
+and a reload on such a machine loads whatever the other layers say and succeeds.
+A file that cannot be *examined* is a different thing: a directory above it
+whose permissions were changed, a symbolic link pointing round in a circle, a
+disk going bad. Rather than read that as "there is no file here" — which would
+apply the remaining layers and report success, silently dropping every setting
+that file owns — the reload is refused, naming the file and what the system said
+about it, and the desktop keeps what it had.
+
+This covers **every** file the reload would read, not only your own: the
+system-wide files are checked by the same rule, so a system-wide configuration
+that was in force at startup and has since become unreachable stops the reload
+instead of vanishing from it.
 
 **Three settings say "not now" while a menu is open or a window is being
 dragged.** `tab-font`, `menu-font` and `frame-thickness` move geometry that an
