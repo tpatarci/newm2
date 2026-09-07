@@ -65,6 +65,15 @@ private:
         GtkWidget*  reset = nullptr;
         GtkWidget*  label = nullptr;     // marked when a reload moved the file
         std::string labelText;
+        // The control's OWN sentence, for a row that has no raw field.
+        //
+        // DISC-08's origin line goes onto the raw field when there is one, and
+        // onto the control itself when there is not -- and
+        // gtk_widget_set_tooltip_text() REPLACES, so the sentence the row was
+        // built with was gone the first time the row was rendered (A3). Stored
+        // once, where it is set, and appended to by renderRow(). Empty for a
+        // row whose control carries no sentence of its own.
+        std::string baseTooltip;
         AppearancePage* owner = nullptr; // for the static callbacks
     };
 

@@ -381,10 +381,13 @@ void AppearancePage::addThicknessRow(GtkWidget* grid, int line,
     gtk_scale_set_draw_value(GTK_SCALE(row->chooser), TRUE);
     gtk_scale_set_value_pos(GTK_SCALE(row->chooser), GTK_POS_RIGHT);
     gtk_widget_set_hexpand(row->chooser, TRUE);
-    gtk_widget_set_tooltip_text(row->chooser,
-                                "How thick a window's frame is, in pixels. "
-                                "Released, the change reaches a running desktop "
-                                "at once and every open window is re-framed.");
+    // Stored as well as set, because renderRow() appends the origin line to it
+    // and would otherwise replace it (A3).
+    row->baseTooltip =
+        "How thick a window's frame is, in pixels. "
+        "Released, the change reaches a running desktop "
+        "at once and every open window is re-framed.";
+    gtk_widget_set_tooltip_text(row->chooser, row->baseTooltip.c_str());
 
     row->reset = addResetButton(row);
 
@@ -468,7 +471,14 @@ void AppearancePage::renderRow(Row& row)
             "and it is the same as choosing it.\n" + origin;
         gtk_widget_set_tooltip_text(row.raw, tip.c_str());
     } else {
-        gtk_widget_set_tooltip_text(row.chooser, origin.c_str());
+        // APPENDED, not substituted: this control carries its own sentence and
+        // gtk_widget_set_tooltip_text() replaces whatever is there, so the row
+        // lost the explanation it was built with the first time it rendered
+        // (A3).
+        const std::string tip = row.baseTooltip.empty()
+                                    ? origin
+                                    : row.baseTooltip + "\n" + origin;
+        gtk_widget_set_tooltip_text(row.chooser, tip.c_str());
     }
 
     markRow(row, field->staleUnderEdit);

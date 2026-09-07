@@ -1306,6 +1306,48 @@ TEST_CASE("the font value is read through the chooser interface, not the depreca
     CHECK(page.find("gtk_color_button_get_rgba") == std::string::npos);
 }
 
+TEST_CASE("the thickness slider keeps its own tooltip when the origin line is added",
+          "[wm2_config_smoke]")
+{
+    // A3 (CodeRabbit, apps chunk). Every Appearance row but one has a RAW
+    // field, and DISC-08's origin line is appended to that field's own
+    // sentence. The thickness row has no raw field, so the origin line went
+    // onto the slider itself -- with gtk_widget_set_tooltip_text(), which
+    // REPLACES -- and the sentence addThicknessRow() had put there ("How thick
+    // a window's frame is, in pixels...") was gone the first time the row was
+    // rendered, which is before the window is ever shown.
+    //
+    // A GTK tooltip cannot be read on a host with no toolkit, so the guard is
+    // on the source, comment-stripped, in the shape this file already uses for
+    // the reload path.
+    const std::string page = sourceOf("apps/wm2-config/AppearancePage.cpp");
+    REQUIRE_FALSE(page.empty());
+
+    // The row's own sentence is STORED where it is set, so there is one copy of
+    // it rather than one in the constructor and another in the renderer.
+    const std::size_t addAt = page.find("void AppearancePage::addThicknessRow(");
+    REQUIRE(addAt != std::string::npos);
+    const std::size_t addEnd = page.find("\n}\n", addAt);
+    REQUIRE(addEnd != std::string::npos);
+    const std::string addBody = withoutLineComments(page.substr(addAt, addEnd - addAt));
+    INFO("addThicknessRow, comments stripped:\n" << addBody);
+    CHECK(addBody.find("baseTooltip") != std::string::npos);
+
+    // ...and the renderer APPENDS the origin to it rather than replacing it.
+    const std::size_t renderAt = page.find("void AppearancePage::renderRow(");
+    REQUIRE(renderAt != std::string::npos);
+    const std::size_t renderEnd = page.find("\n}\n", renderAt);
+    REQUIRE(renderEnd != std::string::npos);
+    const std::string renderBody =
+        withoutLineComments(page.substr(renderAt, renderEnd - renderAt));
+    INFO("renderRow, comments stripped:\n" << renderBody);
+    CHECK(renderBody.find("baseTooltip") != std::string::npos);
+    // The bare replacement is named explicitly, so the loser is part of the
+    // assertion rather than merely absent from it.
+    CHECK(renderBody.find("gtk_widget_set_tooltip_text(row.chooser, origin.c_str())") ==
+          std::string::npos);
+}
+
 TEST_CASE("the Appearance page carries what D-09 assigns to it and nothing else",
           "[wm2_config_smoke]")
 {
