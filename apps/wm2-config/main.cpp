@@ -535,7 +535,15 @@ private:
             if (reply.type == ConfigMessageType::Error) {
                 status("The window manager refused to re-read its files: " +
                        reply.reason);
+                return;
             }
+            // The server leaves the REQUESTER out of the `reloaded` broadcast
+            // and answers it here instead, so this window is the one window
+            // the notice path will not reach on its own. Walk that path by
+            // hand: it re-reads the layers, refreshes what Reset would
+            // produce, re-fetches every effective value and keeps unsaved
+            // edits (Codex pass 6, P2).
+            onReloadNotice();
         });
     }
 

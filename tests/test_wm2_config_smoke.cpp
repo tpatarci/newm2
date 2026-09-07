@@ -1537,6 +1537,34 @@ TEST_CASE("a colour reaches the form canonicalised, and a refused one is put bac
 }
 
 
+TEST_CASE("the window's own reload request refreshes the window that made it",
+          "[wm2_config_smoke]")
+{
+    // The server leaves the REQUESTER out of the `reloaded` broadcast and
+    // answers it directly instead, and ProtocolClient hands that answer to the
+    // request's own callback rather than to the notice path. So the one
+    // window that asked for the re-read is the one window that would not hear
+    // about it: a callback that handles only the error arm leaves every field
+    // showing what the files said before the click (Codex pass 6, P2).
+    const std::string window = sourceOf("apps/wm2-config/main.cpp");
+    REQUIRE_FALSE(window.empty());
+
+    const std::size_t at = window.find("void reloadWindowManager(");
+    REQUIRE(at != std::string::npos);
+    const std::size_t end = window.find("\n    }\n", at);
+    REQUIRE(end != std::string::npos);
+    const std::string body = withoutLineComments(window.substr(at, end - at));
+    INFO("reloadWindowManager, comments stripped:\n" << body);
+
+    // The error arm stays...
+    CHECK(body.find("ConfigMessageType::Error") != std::string::npos);
+    // ...and the success arm walks the same path a notice from another
+    // window's reload walks, which is the one that re-reads the layers and
+    // re-fetches every effective value.
+    CHECK(body.find("onReloadNotice()") != std::string::npos);
+}
+
+
 TEST_CASE("the Appearance page carries what D-09 assigns to it and nothing else",
           "[wm2_config_smoke]")
 {
