@@ -30,7 +30,9 @@ enum class RootMenuSlot {
     Create,         // the "New" entry, always row 0
     HiddenClient,   // one of the iconified clients
     Category,       // one of the application-category rows (opens a submenu)
-    ConfigureGui,   // D-11's Configure entry, present only when the GUI is
+    ConfigureGui,   // D-11's Configure entry, present only when
+                    // RootMenuLayout::hasConfigureGui is set -- that is, when
+                    // the settings window was found on PATH at startup
     Exit            // the "[Exit wm2]" row, present only on a corner press
 };
 
