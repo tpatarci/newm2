@@ -439,8 +439,34 @@ private:
         m_client.sendSet(k, value, [this, k](const ConfigMessage& reply) {
             if (reply.type == ConfigMessageType::Error) {
                 status("The window manager refused " + k + ": " + reply.reason);
+                restoreRefused(k);
             }
         });
+    }
+
+    // A LIVE `set` THE WINDOW MANAGER REFUSED IS NOT A VALUE THIS FORM MAY KEEP
+    // (X1).
+    //
+    // Saying so in the status line and leaving the value in the control was the
+    // whole of the response, so the refused value stayed dirty and the next Save
+    // wrote it into the user's file. For most keys that is merely a file
+    // disagreeing with the desktop. For a TAB COLOUR it is worse than that: the
+    // window manager refuses a colour the X server cannot allocate, and
+    // Border::allocateXftColors() calls fatal() on the same colour at the next
+    // startup -- so a value refused here, and saved anyway, is a desktop that
+    // will not come up.
+    //
+    // "Put back" means the value in force, through the model's own setValue,
+    // which clears `dirty` exactly when current == effective. Applied to every
+    // managed key rather than to colours alone: nothing the desktop has
+    // rejected should survive into a Save, and setValue answers false for a key
+    // the form does not manage, which leaves the Menu page's block alone.
+    void restoreRefused(const std::string& key)
+    {
+        const FormField* f = m_form.field(key);
+        if (!f) return;
+        if (!m_form.setValue(key, f->effective)) return;
+        refreshPages();
     }
 
     // --- The buttons -----------------------------------------------------

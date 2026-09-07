@@ -134,6 +134,23 @@ std::string configColourFromRgba(const GdkRGBA& rgba);
 // from "the user meant black".
 bool rgbaFromConfigColour(const std::string& spelling, GdkRGBA& out);
 
+// THE GATE BETWEEN THE TWO GRAMMARS (X1). One spelling in, the X11 spelling of
+// the same colour out; false, with `out` untouched, for a spelling the toolkit
+// cannot parse at all.
+//
+// The two grammars are NOT the same grammar. GDK accepts CSS -- rgb(200,202,204),
+// rgba(...), and more -- and XParseColor accepts none of it, so a value that got
+// past a GDK-only check was refused by the running window manager, kept by the
+// form anyway, written to the user's file by Save, and then handed at the next
+// startup to Border::allocateXftColors(), which calls fatal() on a tab colour
+// the server cannot parse. A typed colour could stop the desktop from starting.
+//
+// Everything is therefore canonicalised, NAMES INCLUDED. Deciding that a name is
+// safe to keep as a name would mean asking XParseColor, and XParseColor needs a
+// display this program has no reason to open; the conversion is exact either way,
+// because a name resolves to the same 8-bit channels on both sides.
+bool configCanonicalColour(const std::string& spelling, std::string& out);
+
 
 // The OTHER pair of vocabularies, converted in ONE place.
 //

@@ -883,12 +883,13 @@ if(BUILD_TESTS)
             WM2_BINARY_PATH="$<TARGET_FILE:wm2-born-again>"
             WM2_LSAN_SUPPRESSIONS="${CMAKE_SOURCE_DIR}/tests/lsan.supp"
             WM2_TEST_WORKDIR="${WM_PROCESS_WORKDIR}"
-            # The Appearance page cannot be linked into a display-free binary,
-            # so the two guards that matter about it -- that the font value is
+            # No WIDGET on the Appearance page can be exercised without a
+            # screen, so the guards about its wiring -- that the font value is
             # read through the chooser INTERFACE rather than the getter
-            # deprecated since GTK 3.22, and that no key D-09 puts on another
-            # page has wandered onto this one -- read its source instead. The
-            # [wm_socket] suite already guards D-14's ceiling this way.
+            # deprecated since GTK 3.22, that no key D-09 puts on another page
+            # has wandered onto this one, and that a refused live `set` puts the
+            # form back -- read its source instead. The [wm_socket] suite
+            # already guards D-14's ceiling this way.
             WM2_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
         )
         add_dependencies(test_wm2_config_smoke wm2-born-again)
@@ -897,6 +898,25 @@ if(BUILD_TESTS)
                 WM2_CONFIG_PATH="$<TARGET_FILE:wm2-config>"
             )
             add_dependencies(test_wm2_config_smoke wm2-config)
+
+            # ...but the page's COLOUR VOCABULARY is not a widget and needs no
+            # screen (X1). gdk_rgba_parse() is a string parser: it opens no
+            # display, and the canonicaliser that decides which spelling ever
+            # reaches the form and the user's file is a pure function over it.
+            # That decision is the one standing between a CSS colour GDK accepts
+            # and a startup the window manager refuses to complete, so it is
+            # tested by CALLING it rather than by reading the source around it.
+            #
+            # THE SECOND REFERENCE TO THE GTK IMPORTED TARGET IN THIS FILE, and
+            # the only one outside the wm2-config target itself. It is confined
+            # to this branch: with BUILD_CONFIG_GUI=OFF the page is not compiled
+            # in, the cases that call into it SKIP with a reason (which is what
+            # keeps the nogtk tree's same-suite accounting satisfied), and this
+            # test binary links no toolkit at all.
+            target_sources(test_wm2_config_smoke PRIVATE
+                apps/wm2-config/AppearancePage.cpp
+            )
+            target_link_libraries(test_wm2_config_smoke PRIVATE PkgConfig::GTK3)
         endif()
 
         # ADD_TAGS_AS_LABELS is required by D-33, or [wm2_config_smoke] is not

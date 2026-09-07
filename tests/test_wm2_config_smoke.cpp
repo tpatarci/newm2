@@ -40,6 +40,15 @@
 #include "../apps/wm2-config/MenuModel.h"
 #include "../apps/wm2-config/ProtocolClient.h"
 
+// The Appearance page's COLOUR VOCABULARY, compiled into this binary only where
+// the GUI itself was built (X1). Nothing here opens a display: gdk_rgba_parse()
+// is a string parser, and the canonicaliser over it is a pure function. Every
+// case that names it says so with a SKIP where the toolkit is absent, so the
+// nogtk tree registers the same suite this one does.
+#ifdef WM2_CONFIG_PATH
+#include "../apps/wm2-config/AppearancePage.h"
+#endif
+
 #include "Config.h"
 #include "ConfigFileWriter.h"
 #include "ConfigProtocol.h"
@@ -1048,6 +1057,50 @@ TEST_CASE("typing a value after a reset cancels the reset", "[wm2_config_smoke]"
     CHECK(edits[0].value == "9");
 }
 
+TEST_CASE("putting a refused value back leaves nothing for a save to write",
+          "[wm2_config_smoke]")
+{
+    // X1's second half, at the level where it is decidable without a screen.
+    //
+    // A live `set` the window manager REFUSES used to write a line into the
+    // status bar and change nothing else, so the refused value stayed in the
+    // form, stayed dirty, and the next Save wrote it into the user's file. For
+    // a tab colour that is not a file disagreeing with a desktop: the window
+    // manager refuses a colour the X server cannot allocate, and
+    // Border::allocateXftColors() calls fatal() on the same colour at the next
+    // startup, so the refusal-then-save produced a desktop that would not come
+    // up.
+    //
+    // The window's answer is to put the field back to the value IN FORCE, which
+    // is setValue(key, effective). This is the property that makes that work:
+    // the model's own dirty rule is "a save would write something", so putting
+    // a field back to the effective value leaves the edit list EMPTY -- there is
+    // then nothing for a save to write, whatever the user typed a moment ago.
+    const std::string tree = makeTree("refusedputback");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+
+    const FormField* field = form.field("tab-background");
+    REQUIRE(field != nullptr);
+    const std::string inForce = field->effective;
+
+    // The user types something. It is dirty, and a save would write it -- which
+    // is exactly the state the window manager's refusal arrives in.
+    REQUIRE(form.setValue("tab-background", "#010203"));
+    REQUIRE(form.field("tab-background")->dirty);
+    REQUIRE(form.edits().size() == 1);
+
+    // ...and the refusal puts it back.
+    REQUIRE(form.setValue("tab-background", inForce));
+    CHECK(form.value("tab-background") == inForce);
+    CHECK_FALSE(form.field("tab-background")->dirty);
+    CHECK(form.edits().empty());
+    CHECK_FALSE(form.dirty());
+}
+
+
 TEST_CASE("a saved field's tooltip names the file it is now set in",
           "[wm2_config_smoke]")
 {
@@ -1284,6 +1337,84 @@ TEST_CASE("the frame-thickness control is built from the parser's own bounds",
     CHECK(spec->maxValue == 50);
 }
 
+TEST_CASE("a colour is canonicalised to the X11 spelling before it enters the form",
+          "[wm2_config_smoke]")
+{
+#ifndef WM2_CONFIG_PATH
+    SKIP(kGuiNotBuilt);
+#else
+    // X1 (Codex pass 5). The raw field accepted any spelling gdk_rgba_parse()
+    // accepted and then committed it AS TYPED. GDK's grammar is not
+    // XParseColor's: it takes CSS -- rgb(200,202,204), rgba(...) and more --
+    // and the X server takes none of it. So a CSS colour was accepted by the
+    // form, refused by the running window manager (whose refusal only wrote a
+    // line into the status bar), kept by the form regardless, written to the
+    // user's file by Save, and then handed at the next startup to
+    // Border::allocateXftColors(), which calls fatal() on a tab colour the
+    // server cannot parse. A colour somebody typed could stop the desktop from
+    // starting at all.
+    //
+    // The gate is a pure function, which is why this case can call it on a host
+    // with no X server: string in, the X11 spelling of the same colour out.
+
+    struct Case { const char* typed; const char* canonical; };
+
+    // CSS, which is the whole point: GDK reads it and XParseColor never will.
+    // 200/202/204 are exactly 0xC8/0xCA/0xCC, so the expected answer is
+    // arithmetic rather than a value read off a run.
+    const Case accepted[] = {
+        {"rgb(200,202,204)", "#C8CACC"},
+        // Already the right SHAPE, but lower case; canonicalising means one
+        // spelling of one colour, so the form and the file cannot disagree
+        // about a value neither of them changed.
+        {"#c8cacc",          "#C8CACC"},
+        // The three-digit form XParseColor reads as 4-bit channels: #abc is
+        // #AABBCC, not #0A0B0C.
+        {"#abc",             "#AABBCC"},
+        // A NAME. Deciding a name is safe to keep as a name would mean asking
+        // XParseColor, which needs a display this program has no reason to
+        // open -- so names are canonicalised too. The conversion is exact:
+        // SteelBlue is 70/130/180 in rgb.txt, and 0x46/0x82/0xB4 is the same
+        // colour.
+        {"SteelBlue",        "#4682B4"},
+        // ...and one whose channels are equal, so a transposition in the
+        // formatter could not hide behind them.
+        {"gray20",           "#333333"},
+    };
+
+    for (const Case& c : accepted) {
+        INFO("typed: " << c.typed);
+        std::string canonical;
+        REQUIRE(configCanonicalColour(c.typed, canonical));
+        CHECK(canonical == c.canonical);
+
+        // AND IT IS A FIXED POINT. Committing a colour, reading it back and
+        // committing it again must not walk the value anywhere.
+        std::string again;
+        REQUIRE(configCanonicalColour(canonical, again));
+        CHECK(again == canonical);
+    }
+
+    // A spelling neither grammar knows is refused, and `out` is left alone --
+    // the raw field tells "the user is mid-word" from "the user meant black"
+    // by exactly that.
+    for (const char* rejected : {"not a colour", "", "#gg0000", "rgb(200,202"}) {
+        INFO("typed: '" << rejected << "'");
+        std::string out = "untouched";
+        CHECK_FALSE(configCanonicalColour(rejected, out));
+        CHECK(out == "untouched");
+    }
+
+    // The chooser's own path already spelled its answer this way, and the two
+    // paths must agree or the button and the field would write different files
+    // for the same colour.
+    GdkRGBA picked;
+    REQUIRE(rgbaFromConfigColour("rgb(200,202,204)", picked));
+    CHECK(configColourFromRgba(picked) == "#C8CACC");
+#endif
+}
+
+
 TEST_CASE("the font value is read through the chooser interface, not the deprecated getter",
           "[wm2_config_smoke]")
 {
@@ -1347,6 +1478,64 @@ TEST_CASE("the thickness slider keeps its own tooltip when the origin line is ad
     CHECK(renderBody.find("gtk_widget_set_tooltip_text(row.chooser, origin.c_str())") ==
           std::string::npos);
 }
+
+TEST_CASE("a colour reaches the form canonicalised, and a refused one is put back",
+          "[wm2_config_smoke]")
+{
+    // X1's OTHER HALF, which is GTK wiring rather than a value, and so is
+    // guarded on the source in the shape this file already uses for the
+    // thickness tooltip. Comment-stripped, because a comment that quotes the
+    // token a grep-shaped guard forbids defeats the guard (D-33).
+    const std::string page = sourceOf("apps/wm2-config/AppearancePage.cpp");
+    REQUIRE_FALSE(page.empty());
+
+    const std::size_t commitAt = page.find("void AppearancePage::commitRawField(");
+    REQUIRE(commitAt != std::string::npos);
+    const std::size_t commitEnd = page.find("\n}\n", commitAt);
+    REQUIRE(commitEnd != std::string::npos);
+    const std::string commitBody =
+        withoutLineComments(page.substr(commitAt, commitEnd - commitAt));
+    INFO("commitRawField, comments stripped:\n" << commitBody);
+
+    // A TYPED COLOUR GOES THROUGH THE GATE...
+    CHECK(commitBody.find("configCanonicalColour(") != std::string::npos);
+    // ...and the value that reaches the form is the canonical one. The loser is
+    // named explicitly, so it is part of the assertion rather than merely
+    // absent from it: `commit(*row, typed)` on the colour arm is exactly what
+    // let a CSS spelling through.
+    CHECK(commitBody.find("commit(*row, canonical)") != std::string::npos);
+
+    // The window's own half: a live `set` the window manager REFUSED must put
+    // the form back to what is actually in force, or Save would write a value
+    // the desktop has already rejected -- and for a tab colour that is a
+    // desktop that will not start next time.
+    const std::string window = sourceOf("apps/wm2-config/main.cpp");
+    REQUIRE_FALSE(window.empty());
+
+    const std::size_t applyAt = window.find("void applyLive(");
+    REQUIRE(applyAt != std::string::npos);
+    const std::size_t applyEnd = window.find("\n    }\n", applyAt);
+    REQUIRE(applyEnd != std::string::npos);
+    const std::string applyBody =
+        withoutLineComments(window.substr(applyAt, applyEnd - applyAt));
+    INFO("applyLive, comments stripped:\n" << applyBody);
+
+    CHECK(applyBody.find("restoreRefused(") != std::string::npos);
+
+    // ...and what "put back" means is the value in force, through the model's
+    // own setValue, which clears `dirty` exactly when current == effective.
+    const std::size_t restoreAt = window.find("void restoreRefused(");
+    REQUIRE(restoreAt != std::string::npos);
+    const std::size_t restoreEnd = window.find("\n    }\n", restoreAt);
+    REQUIRE(restoreEnd != std::string::npos);
+    const std::string restoreBody =
+        withoutLineComments(window.substr(restoreAt, restoreEnd - restoreAt));
+    INFO("restoreRefused, comments stripped:\n" << restoreBody);
+
+    CHECK(restoreBody.find("->effective") != std::string::npos);
+    CHECK(restoreBody.find("refreshPages()") != std::string::npos);
+}
+
 
 TEST_CASE("the Appearance page carries what D-09 assigns to it and nothing else",
           "[wm2_config_smoke]")

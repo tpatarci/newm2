@@ -34,6 +34,22 @@ bool rgbaFromConfigColour(const std::string& spelling, GdkRGBA& out)
 }
 
 
+bool configCanonicalColour(const std::string& spelling, std::string& out)
+{
+    // THE COMPOSITION IS THE POINT (X1). Parse with the toolkit's grammar,
+    // which is the broader of the two, and then spell the result with the
+    // config file's -- so every colour that reaches the form, the running
+    // window manager and the user's file is one XParseColor can read, whatever
+    // the user typed. The two halves are the same two functions the chooser
+    // path uses, in the same order, which is what keeps the button and the raw
+    // field from writing different files for the same colour.
+    GdkRGBA rgba;
+    if (!rgbaFromConfigColour(spelling, rgba)) return false;
+    out = configColourFromRgba(rgba);
+    return true;
+}
+
+
 // =============================================================================
 // The font vocabularies
 // =============================================================================
@@ -558,8 +574,8 @@ void AppearancePage::commitRawField(GtkWidget* entry)
     const std::string typed = gtk_entry_get_text(GTK_ENTRY(entry));
 
     if (row->kind == Kind::Colour) {
-        GdkRGBA rgba;
-        if (!rgbaFromConfigColour(typed, rgba)) {
+        std::string canonical;
+        if (!configCanonicalColour(typed, canonical)) {
             // Put back what is actually in force rather than leaving a value on
             // screen that nothing is drawn in. The window manager would refuse
             // this too; refusing it here means the desktop never even flickers.
@@ -570,6 +586,17 @@ void AppearancePage::commitRawField(GtkWidget* entry)
             renderRow(*row);
             return;
         }
+        // A COLOUR IS THE ONE KIND COMMITTED RE-SPELLED (X1), and the exception
+        // to the rule stated below. The toolkit's grammar is broader than
+        // XParseColor's -- it reads CSS, and the X server reads none of it --
+        // so a value taken as typed here could be one the running window
+        // manager refuses, the form keeps anyway, and Save writes into the
+        // user's file, where the next startup hands it to
+        // Border::allocateXftColors() and the desktop does not come up.
+        // Canonicalising means the form, the desktop and the file always hold a
+        // spelling the server can parse, and always the same one.
+        commit(*row, canonical);
+        return;
     } else if (row->kind == Kind::Font) {
         if (typed.empty()) {
             if (m_onStatus) m_onStatus("A font pattern cannot be empty.");
@@ -584,9 +611,9 @@ void AppearancePage::commitRawField(GtkWidget* entry)
     }
 
     // The value is sent AS TYPED, not as the chooser would re-spell it: a user
-    // who wrote a colour name, or a fallback chain of four families, meant
-    // exactly that, and re-spelling it would make their file disagree with what
-    // they entered.
+    // who wrote a fallback chain of four families meant exactly that, and
+    // re-spelling it would make their file disagree with what they entered.
+    // The colour arm above is the one exception, and says why.
     commit(*row, typed);
 }
 
