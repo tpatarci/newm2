@@ -565,6 +565,21 @@ it, so whatever the system-wide file said shows through again — including a
 system-wide file that changed since you opened the window, which the settings
 window re-reads whenever the window manager does.
 
+**A save writes your own menu entries and nobody else's.** Manual root-menu
+entries add up across the layers — a system-wide file's entries come first, then
+yours — and the Menu page shows you the whole list, because that is what the
+running desktop has. What a save writes into *your* file is only the part your
+file owns, so a system-wide entry is never copied into your file and never
+appears twice on the menu afterwards. Resetting the page removes your entries
+and leaves the system-wide ones showing through, which is what resetting means
+everywhere else in this window.
+
+**A setting's tooltip names the file it is set in, not the file whose value it
+happens to match.** A key you set in your own file to the same value the
+system-wide file already gave it is still *your* setting, and says so; after a
+save, an edited setting names your file and a reset one names whichever layer is
+now supplying the value.
+
 **A save it cannot do safely, it refuses rather than guesses.** Four cases, each
 reported in the window rather than left to be discovered later:
 
@@ -641,6 +656,13 @@ route into the window manager's state — but where the file clamps a
 value is out of range and changes nothing. A file is read once by somebody who
 can look at the warning; a command has somebody waiting for an answer, and
 answering "yes" to a request nobody made is worse than saying no.
+
+The same applies to the text settings. The config file trims the spaces off both
+ends of a value and drops one longer than 256 characters, so `wm2-ctl set` does
+the same: a value with surrounding spaces is accepted and stored trimmed —
+`wm2-ctl get` afterwards shows you what a file would have read back, not the
+bytes you sent — and a value over the limit is refused, naming it. Nothing
+reaches the running desktop by this route that a file could not have carried.
 
 Exit codes, so a shell script can tell the cases apart:
 
@@ -737,6 +759,16 @@ what makes the round trip safe — the list `wm2-ctl get menu-entries` prints is
 always a list `wm2-ctl set menu-entries` will take back unchanged. If a program
 you want on the menu needs a `;` on its command line, put the command in a shell
 script and name the script here.
+
+**The whole list has to fit in one message.** Because it travels as a single
+value, there is a limit on the total — a few dozen entries with ordinary names
+and commands — and the limit is applied where the list is *built*: a config file
+with more entries than will fit is read up to that point, the rest are dropped
+from the end in file order, and a warning on stderr says how many went and why.
+That way what the window manager is holding is always something it can tell a
+settings window about, rather than a list it loads happily and then cannot
+describe. The settings window refuses to send an over-long list for the same
+reason, with a sentence naming the limit.
 
 In the config file the same list is three keys per entry, in the same
 begins-a-new-record shape the rule keys use:
