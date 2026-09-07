@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 31
+open_count: 34
 waived_count: 8
 fixed_count: 9
-total_count: 48
-last_updated: 2026-09-07T04:21:06.736Z
+total_count: 51
+last_updated: 2026-09-07T07:55:24.029Z
 ---
 
 # Broken Windows Ledger
@@ -63,6 +63,9 @@ last_updated: 2026-09-07T04:21:06.736Z
 | 46 | 09 | unrun-verify | apps/wm2-config/BehaviourPage.cpp |  | CodeRabbit apps-chunk A1 (commit e12c0d2): BehaviourPage::addDelayRow's fallback range for a key configKeySpecFor() does not name is now the range the option table gives the other delay keys on the page (and an int-wide range if the table knows neither), rather than the degenerate lo == hi == 1 that was there. The red-first evidence is a SOURCE-level guard, added to the existing '[wm2_config_smoke] the delay controls are built from the parser's own bounds, not from a third copy' case -- red on 'spec->maxValue : 1' still being present and on the table-read fallback being absent, green after. It could not be driven behaviourally: the artifact is a gtk_spin_button range, tests/test_wm2_config_smoke.cpp links Catch2 and X11 with no GTK by design (that is what makes its display-free half honest), and the arm is unreachable in a correct build anyway -- every key this page passes to addDelayRow is one the option table declares, which the 'the Behaviour page carries what D-09 assigns to it and nothing else' case already asserts. The arm with no case is a build in which the option table has lost a delay key. | open |  | 2026-09-07T04:20:55.359Z |  |
 | 47 | 09 | unrun-verify | apps/wm2-config/AppearancePage.cpp |  | CodeRabbit apps-chunk A3 (commit d51143f): AppearancePage::renderRow now APPENDS DISC-08's origin line to the thickness slider's own tooltip (Row::baseTooltip) instead of replacing it with gtk_widget_set_tooltip_text. The red-first evidence is a SOURCE-level guard ('[wm2_config_smoke] the thickness slider keeps its own tooltip when the origin line is added' -- red on baseTooltip being absent from both addThicknessRow and renderRow and on the bare replacement still being present, green after). It could not be driven behaviourally: reading a GTK tooltip needs a GTK build and a display, and tests/test_wm2_config_smoke.cpp links Catch2 and X11 with no GTK by design. The arm with no case is a user hovering the slider and reading two sentences instead of one; the smoke half spawns the real wm2-config but asserts only that its window maps. | open |  | 2026-09-07T04:21:06.542Z |  |
 | 48 | 09 | unrun-verify | apps/wm2-config/MenuPage.cpp |  | Codex pass-4 C4 (commit 1a8d3d2): MenuPage::edit now finds the row it began on through menuEntryReplacementIndex(), which prefers the captured index and falls back to identity. All three outcomes of that rule ARE driven display-free in tests/test_wm2_config_smoke.cpp ('editing the second of two identical rows replaces the second, not the first'), and the page's use of it is a comment-stripped source guard. What is NOT driven is the live arm: selecting the second of two identical rows in the real GTK list, editing it through gtk_dialog_run(), and observing that the second row changed -- reaching it means synthesising input into a modal GTK dialog, which is the same limit row 21 records for the reload-during-dialog case. | open |  | 2026-09-07T04:21:06.736Z |  |
+| 49 | 09 | unrun-verify | apps/wm2-config/main.cpp |  | Codex pass-5 X1 (commit 90501ff): a live set the window manager refuses now puts the form back to the value in force (ConfigWindow::restoreRefused), so a refusal can never be saved. The RULE is driven display-free ('[wm2_config_smoke] putting a refused value back leaves nothing for a save to write': the field is dirty and yields one edit, and setting it back to effective empties the edit list). What is NOT driven is the live arm -- a running window manager refusing a set while a real settings window is open, and the field observed snapping back -- because it needs a GTK main loop and widget inspection, the same limit rows 33 and 48 record. The GTK wiring itself is a comment-stripped source guard on applyLive and restoreRefused. | open |  | 2026-09-07T07:55:11.134Z |  |
+| 50 | 09 | unrun-verify | apps/wm2-config/AppearancePage.cpp |  | Codex pass-5 X1 (commit 90501ff): configCanonicalColour converts every accepted colour to the hexadecimal form on the argument that XParseColor always reads it. The conversion is driven against GDK's parser display-free (rgb(200,202,204), #c8cacc, #abc, SteelBlue, gray20, each also a fixed point), but its OUTPUT is never handed to XParseColor on a live server in the same case -- the claim that closes the loop rests on the X11 protocol's definition of the hexadecimal form rather than on a run. The server side is covered separately ('[wm_config_live] a colour the X server cannot parse is refused and the screen is unchanged') and the startup fatal by '[wm_fallbacks] An unparseable colour setting exits non-zero and names the offending setting', but no single case walks a CSS spelling all the way through to an allocated pixel. | open |  | 2026-09-07T07:55:18.749Z |  |
+| 51 | 09 | unrun-verify | src/Manager.cpp |  | Codex pass-5 X3 (commit 081d6a0): reloadConfigFromDisk now refuses when access(F_OK) fails with an errno other than ENOENT or ENOTDIR. The refusing branch IS driven over the socket with EACCES (a config directory chmod'd to 000 after the window manager has read frame-thickness=11 out of it, skipped as root). The other two errnos the fix names are not: ELOOP would need a symlink loop staged at the config path, and EIO a failing disk. One non-ENOENT errno proves the branch, so the residue is the enumeration rather than the behaviour. | open |  | 2026-09-07T07:55:24.029Z |  |
 
 ````json
 [
@@ -640,6 +643,42 @@ last_updated: 2026-09-07T04:21:06.736Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-07T04:21:06.736Z",
+    "resolved_at": null
+  },
+  {
+    "id": 49,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "apps/wm2-config/main.cpp",
+    "line": null,
+    "description": "Codex pass-5 X1 (commit 90501ff): a live set the window manager refuses now puts the form back to the value in force (ConfigWindow::restoreRefused), so a refusal can never be saved. The RULE is driven display-free ('[wm2_config_smoke] putting a refused value back leaves nothing for a save to write': the field is dirty and yields one edit, and setting it back to effective empties the edit list). What is NOT driven is the live arm -- a running window manager refusing a set while a real settings window is open, and the field observed snapping back -- because it needs a GTK main loop and widget inspection, the same limit rows 33 and 48 record. The GTK wiring itself is a comment-stripped source guard on applyLive and restoreRefused.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-07T07:55:11.134Z",
+    "resolved_at": null
+  },
+  {
+    "id": 50,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "apps/wm2-config/AppearancePage.cpp",
+    "line": null,
+    "description": "Codex pass-5 X1 (commit 90501ff): configCanonicalColour converts every accepted colour to the hexadecimal form on the argument that XParseColor always reads it. The conversion is driven against GDK's parser display-free (rgb(200,202,204), #c8cacc, #abc, SteelBlue, gray20, each also a fixed point), but its OUTPUT is never handed to XParseColor on a live server in the same case -- the claim that closes the loop rests on the X11 protocol's definition of the hexadecimal form rather than on a run. The server side is covered separately ('[wm_config_live] a colour the X server cannot parse is refused and the screen is unchanged') and the startup fatal by '[wm_fallbacks] An unparseable colour setting exits non-zero and names the offending setting', but no single case walks a CSS spelling all the way through to an allocated pixel.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-07T07:55:18.749Z",
+    "resolved_at": null
+  },
+  {
+    "id": 51,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "src/Manager.cpp",
+    "line": null,
+    "description": "Codex pass-5 X3 (commit 081d6a0): reloadConfigFromDisk now refuses when access(F_OK) fails with an errno other than ENOENT or ENOTDIR. The refusing branch IS driven over the socket with EACCES (a config directory chmod'd to 000 after the window manager has read frame-thickness=11 out of it, skipped as root). The other two errnos the fix names are not: ELOOP would need a symlink loop staged at the config path, and EIO a failing disk. One non-ENOENT errno proves the branch, so the residue is the enumeration rather than the behaviour.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-07T07:55:24.029Z",
     "resolved_at": null
   }
 ]
