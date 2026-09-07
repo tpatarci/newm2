@@ -1,0 +1,15 @@
+### Reddening 1 -- an undocumented key added to the option table
+== keys the binary accepts that docs/RELEASE-NOTES.md does not document ==
+wm2: doc-keys: the binary accepts 'throwaway-setting' and docs/RELEASE-NOTES.md never presents it as a setting
+
+== keys docs/RELEASE-NOTES.md presents that the binary does not accept ==
+  (none)
+
+wm2: doc-keys FAILED with 1 problem(s):
+wm2:   - the binary accepts 'throwaway-setting' and docs/RELEASE-NOTES.md never presents it as a setting
+exit=1
+
+### reverted; gate is green again
+
+doc-keys OK: 36 accepted keys, every one documented, and docs/RELEASE-NOTES.md presents no key the binary refuses
+exit=0

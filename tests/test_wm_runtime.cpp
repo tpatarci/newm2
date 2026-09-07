@@ -1305,6 +1305,114 @@ TEST_CASE("Frame thickness changes the measured frame geometry in both direction
     CHECK(thick.horizontal - shipped.horizontal == 20 - kDefaultFrameThickness);
 }
 
+TEST_CASE("tab-font changes the thickness of the tab a real frame is built with",
+          "[wm_config_runtime]")
+{
+    // Two frame sub-window readings, both parent-relative geometry taken from
+    // the server, and both an exact function of Border::m_tabWidth -- which is
+    // derived from whatever face Border::loadTabFont() actually resolved:
+    //
+    //   button square   buttonDrawSize() == m_tabWidth - TAB_TOP_HEIGHT * 2 - 4
+    //   client inset    xIndent()        == m_tabWidth + FRAME_WIDTH + 1
+    //
+    // Frame thickness is left at the shipped default in both runs, so FRAME_WIDTH
+    // cancels out of the difference and the two readings must move together by
+    // exactly the same amount. That internal agreement is what makes this a
+    // measurement of the TAB rather than of the frame around it.
+    //
+    // Nothing here asks Xft or fontconfig anything, on purpose. A case that asked
+    // the font library what it would load for a pattern would pass just as
+    // happily with the configured value dropped on the floor before it ever
+    // reached loadTabFont() -- which is precisely the class of dead-config defect
+    // this whole tag group exists to catch.
+    struct Measured { int buttonSize = 0; int horizontal = 0; };
+
+    auto measure = [](const std::vector<std::string>& args) {
+        WmFixture fixture(cleanFixture(args));
+        x11::DisplayPtr dp = fixture.openDisplay();
+        REQUIRE(dp != nullptr);
+        Display* d = dp.get();
+        parkPointer(d);
+
+        Window win = None;
+        Window frame = mapClientAndAwaitFrame(d, 200, 150, 300, 220, win, "tabfont");
+        REQUIRE(frame != None);
+        settleWm(d);
+
+        Window button = findFrameChild(d, frame, win, true);
+        REQUIRE(button != None);
+
+        Rect buttonRect{};
+        REQUIRE(localRect(d, button, buttonRect));
+
+        const Rect frameRect  = rectOf(d, frame);
+        const Rect clientRect = rectOf(d, win);
+
+        // Bound BEFORE the assertions that may fail, so a failure reports the
+        // window manager's own account of the run rather than an empty string
+        // (the guard-ordering defect recorded in 08.5-06).
+        const std::string stderrText = fixture.wmStderr();
+
+        INFO("button " << describe(buttonRect) << " frame " << describe(frameRect)
+             << " client " << describe(clientRect));
+        INFO("wm stderr:\n" << stderrText);
+        CHECK(joined(xProtocolErrorsExceptBadWindow(stderrText)).empty());
+
+        Measured m;
+        m.buttonSize = buttonRect.w;
+        m.horizontal = clientRect.x - frameRect.x;
+        return m;
+    };
+
+    // The shipped pattern is size 12 (include/Config.h). Size 32 of the SAME
+    // family chain is used rather than a different family: it is resolvable
+    // wherever the default is resolvable, so this case cannot fail for the
+    // uninteresting reason that a test host lacks some particular font.
+    const Measured shipped = measure({});
+    const Measured large   =
+        measure({"--tab-font=Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=32"});
+
+    INFO("shipped button=" << shipped.buttonSize << " inset=" << shipped.horizontal);
+    INFO("large   button=" << large.buttonSize   << " inset=" << large.horizontal);
+
+    // The claim the setting makes: a larger face builds a thicker tab.
+    CHECK(large.buttonSize > shipped.buttonSize);
+    CHECK(large.horizontal > shipped.horizontal);
+
+    // ...and both independent readings moved by the same amount, so what changed
+    // is the tab's thickness and nothing else about the frame.
+    CHECK(large.buttonSize - shipped.buttonSize ==
+          large.horizontal - shipped.horizontal);
+}
+
+TEST_CASE("An unresolvable tab-font still leaves the window manager framing windows",
+          "[wm_config_runtime]")
+{
+    // T-9-01. Border::loadTabFont()'s four-rung ladder may not terminate the
+    // process (XDIS-04/XDIS-05), and `tab-font` is the first user-supplied string
+    // ever to reach its top rung. fontconfig substitutes rather than fails for an
+    // unknown family, so the expected outcome is a substituted face rather than a
+    // walk down the ladder -- but the property that matters is that the window
+    // manager is still alive and still framing, and that is asserted rather than
+    // assumed.
+    WmFixture fixture(cleanFixture(
+        {"--tab-font=NoSuchFontFamilyAnywhere12345:bold:size=12"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window win = None;
+    Window frame = mapClientAndAwaitFrame(d, 200, 150, 300, 220, win, "nonsense-font");
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+
+    CHECK(fixture.wmAlive());
+    REQUIRE(frame != None);
+    CHECK(joined(xProtocolErrorsExceptBadWindow(stderrText)).empty());
+}
+
 TEST_CASE("Tab foreground and background colours reach the rendered tab",
           "[wm_config_runtime]")
 {
@@ -1491,6 +1599,85 @@ TEST_CASE("Menu background colour reaches the menu opened by a real root click",
     CHECK(dominantPixel(shipped) == shippedWanted);
     CHECK(dominantPixel(shipped) != dominantPixel(configured));
     CHECK(countOf(shipped, configuredWanted) == 0);
+}
+
+TEST_CASE("menu-font changes the height of the root menu a real click opens",
+          "[wm_config_runtime]")
+{
+    // WindowManager::menu() computes entryHeight = ascent + descent + 4 and
+    // outerH = entryHeight * n + 13. Nothing clamps that height -- only the
+    // menu's POSITION is pushed back on screen -- so with the same entry count
+    // in both runs the mapped menu's height is a strictly monotonic function of
+    // the face m_menuFont resolved to.
+    //
+    // The height is read from the server, off the menu window the WM actually
+    // mapped. Both runs use cleanFixture with no client mapped and identical
+    // environment, so n is identical and the only free variable is the font.
+    auto measure = [](const std::vector<std::string>& args) {
+        WmFixture fixture(cleanFixture(args));
+        x11::DisplayPtr dp = fixture.openDisplay();
+        REQUIRE(dp != nullptr);
+        Display* d = dp.get();
+        parkPointer(d);
+
+        XTestDriver driver(fixture.display());
+        driver.moveTo(kParkX, kParkY);
+
+        Window menu = None;
+        Rect menuRect{};
+        const bool opened =
+            openRootMenu(d, driver, kMenuPressX, kMenuPressY, menu, menuRect);
+
+        // Bound before the assertion that may fail (08.5-06 guard ordering).
+        const std::string stderrText = fixture.wmStderr();
+
+        INFO("menu rect " << describe(menuRect));
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE(opened);
+
+        dismissMenu(d, driver);
+        CHECK(joined(xProtocolErrorsExceptBadWindow(stderrText)).empty());
+
+        return menuRect.h;
+    };
+
+    // Size 32 of the shipped family chain, for the same reason the tab-font case
+    // uses it: resolvable wherever the default is, so the case cannot fail
+    // because a host lacks some particular family.
+    const int shipped = measure({});
+    const int large   =
+        measure({"--menu-font=Ubuntu,Noto Sans,DejaVu Sans,Sans:size=32"});
+
+    INFO("shipped menu height=" << shipped << " large menu height=" << large);
+    CHECK(shipped > 0);
+    CHECK(large > shipped);
+}
+
+TEST_CASE("An unresolvable menu-font still lets the window manager start",
+          "[wm_config_runtime]")
+{
+    // T-9-02. The menu font load keeps its generic-sans second rung and its
+    // fatal() on total failure: the menu measures every row against this font,
+    // so there is no "carry on without it" the way there is for the tab. This
+    // plan does not change that contract, and this case is what says so -- only
+    // a host with no sans font AT ALL reaches the fatal, which is exactly the
+    // condition that already ended startup before `menu-font` existed.
+    WmFixture fixture(cleanFixture(
+        {"--menu-font=NoSuchFontFamilyAnywhere12345:size=12"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window win = None;
+    Window frame = mapClientAndAwaitFrame(d, 200, 150, 300, 220, win, "nonsense-menu-font");
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+
+    CHECK(fixture.wmAlive());
+    REQUIRE(frame != None);
+    CHECK(joined(xProtocolErrorsExceptBadWindow(stderrText)).empty());
 }
 
 TEST_CASE("destroy-window-delay decides whether a tab-button press hides or deletes",
@@ -2018,22 +2205,13 @@ TEST_CASE("An unrecognised flag exits non-zero and its advice names a flag that 
 
 namespace {
 
-// Resident set size in kilobytes, from /proc/<pid>/statm field 2 (resident
-// pages). Chosen over VmSize because virtual size says nothing about what is
-// actually held -- ASan alone reserves an enormous virtual mapping.
-bool residentKb(pid_t pid, long& out)
-{
-    if (pid <= 0) return false;
-    const std::string path = "/proc/" + std::to_string(pid) + "/statm";
-    FILE* f = std::fopen(path.c_str(), "rb");
-    if (!f) return false;
-    long total = 0, resident = 0;
-    const int n = std::fscanf(f, "%ld %ld", &total, &resident);
-    std::fclose(f);
-    if (n != 2) return false;
-    out = resident * (::sysconf(_SC_PAGESIZE) / 1024);
-    return true;
-}
+// The resident-set reader moved to tests/support/WmFixture.h in plan 09-09,
+// which is also where test_wm_resource.cpp's copy went. This file had the THIRD
+// copy; leaving it here made every call ambiguous the moment the shared one
+// arrived, because `using namespace wm2test` at the top of this file puts both
+// in scope. Three readers of one /proc field, in one suite, measuring one
+// 512 MB budget, was never right -- and it is what the plan that added the
+// settings window's own budget case set out to avoid.
 
 // Zombie children of `parent`. The WM double-forks so its grandchildren are
 // orphaned to init and can never be zombies; what this counts is the
@@ -2659,8 +2837,23 @@ TEST_CASE("A long title on a short window is shortened to fit its tab, still leg
     //    up and left the stub tab would fail here -- which is exactly what the
     //    unfixed loop does, because it measures the wrong axis and concludes the
     //    label already fits after a single trim.
-    INFO("tab length " << shortObs.tabLength << " -> " << longObs.tabLength);
-    CHECK(longObs.tabLength > shortObs.tabLength * 2);
+    //
+    //    Measured against the ROOM, not as a ratio of the two tab lengths. The
+    //    tab window is m_tabHeight + 2 + m_tabWidth tall and m_tabHeight itself
+    //    carries another m_tabWidth, so a ratio of two lengths is really a ratio
+    //    of two constants plus two titles, and it moves whenever the tab
+    //    THICKNESS changes for reasons that have nothing to do with the title.
+    //    MEASURED in quick task 260906-ldw, which widened the strip to clear the
+    //    descenders: the tab grew perfectly well from 70 px to 115 px in a 129 px
+    //    frame -- 89% of the room -- and `longObs.tabLength > shortObs.tabLength
+    //    * 2` read 115 > 140 and called that a failure. Against the frame the
+    //    same two readings are 89% and 54%, which is the claim this case makes
+    //    and is stable across tab thicknesses.
+    INFO("tab length " << shortObs.tabLength << " -> " << longObs.tabLength
+         << " in a frame " << frameRect.h << " px tall");
+    CHECK(longObs.tabLength > shortObs.tabLength);
+    CHECK(longObs.tabLength * 10 >= frameRect.h * 8);
+    CHECK(shortObs.tabLength * 10 < frameRect.h * 8);   // the stub tab does not
 
     // 2. AND IT DID NOT OVERFLOW THE WINDOW. This is the whole point of the
     //    loop: the tab must be bounded by the frame it decorates. Getting (1)
@@ -2687,6 +2880,248 @@ TEST_CASE("A long title on a short window is shortened to fit its tab, still leg
     CHECK_FALSE(contains(errs, "RenderBadPicture"));
 }
 
+
+
+// ===========================================================================
+// [wm_tablabel] -- the label's clearance from the tab's two long edges
+//
+// Quick task 260906-ldw. The sideways tab reads bottom to top, so for the
+// 90-degree rotated face the BASELINE side of every glyph faces the frame and
+// the ascender side faces the outside of the window.
+//
+// MEASURED on this host, rotated face at the shipped pattern, size 12,
+// XftTextExtentsUtf8 (ink spans [origin.x - x, origin.x - x + width)):
+//
+//     sample             width      x   above baseline   below baseline
+//     "M"                   12     12               12                0
+//     "g"                   12      9                9                3
+//     "Mg"                  15     12               12                3
+//     "gjpqy settings"      16     13               13                3
+//     "MMMMM settings"      16     13               13                3
+//     "Hello"               14     14               14                0
+//     printable ASCII       18     14               14                4
+//
+// So `width` is the across-strip thickness, `x` is the distance from the draw
+// origin to the ASCENDER edge, and `width - x` is the descender depth on the
+// FRAME side. The tab was sized from "M" + 4 -- a sample with no descender at
+// all -- and drawn at `2 + width of the label itself`, so (a) every descender
+// ran into the frame line and (b) the baseline moved with the title.
+//
+// This case asserts the two clearances and the baseline's independence from the
+// title. It is a PIXEL case because the defect is invisible to geometry: the
+// tab window's rectangle is identical either way, only the ink inside it moves.
+// ===========================================================================
+
+namespace {
+
+// Clearances the quick task asks for, in tab columns.
+constexpr int kOuterClearance = 2;   // ascender side, away from the frame
+constexpr int kFrameClearance = 5;   // baseline side, against the frame line
+
+// A pair chosen so that the ONLY across-strip difference between them is the
+// descenders. What fixes the ascender column is the TALLEST glyph in the string,
+// and both of these top out on the dot of an "i" -- MEASURED at 13 px above the
+// baseline for each, against 3 px below for the first and 0 for the second. A
+// baseline that is a property of the FONT therefore puts their first ink on the
+// same column; a baseline computed from the label's own extents, as it was, puts
+// them 3 columns apart, because that is how much thicker the descender title is.
+//
+// "MMMMM settings" would NOT do as the second title, tempting as the symmetry
+// is: it also ends in "settings", so its across-strip extent is identical to the
+// first's and the old title-dependent baseline would land on the same column by
+// coincidence -- the case would go green against the defect it exists to catch.
+const char* const kDescenderTitle = "gjpqy settings";
+const char* const kNoDescenderTitle = "static routines";
+
+// How many pixels of a given colour each COLUMN across the tab strip carries.
+// Read from root, at screen coordinates, for the reason captureRoot() gives:
+// the tab is shaped and XGetImage outside a bounding shape is undefined.
+std::vector<long> inkColumnCounts(Display* d, const Rect& r, unsigned long ink)
+{
+    std::vector<long> cols;
+    if (r.w <= 0 || r.h <= 0) return cols;
+
+    const int x = std::max(0, r.x);
+    const int y = std::max(0, r.y);
+    const int w = std::min(r.w, kScreenW - x);
+    const int h = std::min(r.h, kScreenH - y);
+    if (w <= 0 || h <= 0) return cols;
+
+    XImage* img = XGetImage(d, DefaultRootWindow(d), x, y,
+                            static_cast<unsigned>(w), static_cast<unsigned>(h),
+                            AllPlanes, ZPixmap);
+    if (!img) return cols;
+
+    cols.assign(static_cast<std::size_t>(w), 0);
+    for (int iy = 0; iy < h; ++iy) {
+        for (int ix = 0; ix < w; ++ix) {
+            if (XGetPixel(img, ix, iy) == ink) ++cols[static_cast<std::size_t>(ix)];
+        }
+    }
+    XDestroyImage(img);
+    return cols;
+}
+
+struct TabInk {
+    int tabWidth  = -1;          // Border::m_tabWidth, derived from the client inset
+    int tabHeight = -1;          // Border::m_tabHeight, derived from the tab window
+    std::vector<long> columns;   // ink per column, index 0 == the OUTER edge
+    int  firstInk = -1;          // ascender edge of the drawn label
+    int  lastInk  = -1;          // baseline edge of the drawn label
+    long total    = 0;
+};
+
+// Retitle -- as the cases above do, and for the same reason: two windows differ
+// in stacking and in active state, and the active client is decorated
+// differently, so a two-window comparison of the BASELINE would be confounded by
+// something other than the title.
+TabInk observeTabInk(Display* d, Window frame, Window client, unsigned long ink,
+                     const char* title, int frameThickness)
+{
+    TabInk obs;
+
+    XStoreName(d, client, title);
+    XSync(d, False);
+    settleWm(d);
+
+    // Border::xIndent() == m_tabWidth + FRAME_WIDTH + 1, and the client sits at
+    // that offset inside its frame. Derived from live geometry rather than
+    // hardcoded: m_tabWidth is whatever the resolved face measures.
+    const Rect frameRect  = rectOf(d, frame);
+    const Rect clientRect = rectOf(d, client);
+    obs.tabWidth = (clientRect.x - frameRect.x) - frameThickness - 1;
+    if (obs.tabWidth <= 0) return obs;
+
+    const Window tab = findFrameChild(d, frame, client, false);
+    if (tab == None) return obs;
+
+    Rect local;
+    if (!localRect(d, tab, local)) return obs;
+    // Border::configure() makes the tab window m_tabHeight + 2 + m_tabWidth tall.
+    obs.tabHeight = local.h - 2 - obs.tabWidth;
+
+    Rect abs;
+    if (!serverRect(d, tab, abs)) return obs;
+
+    // Restrict to the label's own run down the straight column: below the square
+    // button that occupies the top of the tab, above the row where the shaped
+    // diagonal foot begins (Border::drawBevel() names that row m_tabHeight).
+    const int rowLo = obs.tabWidth + 2;
+    const int rowHi = obs.tabHeight - 1;
+    if (rowHi <= rowLo) return obs;
+
+    Rect strip;
+    strip.x = abs.x;
+    strip.y = abs.y + rowLo;
+    strip.w = obs.tabWidth;
+    strip.h = rowHi - rowLo;
+
+    obs.columns = inkColumnCounts(d, strip, ink);
+    for (std::size_t i = 0; i < obs.columns.size(); ++i) {
+        obs.total += obs.columns[i];
+        if (obs.columns[i] > 0) {
+            if (obs.firstInk < 0) obs.firstInk = static_cast<int>(i);
+            obs.lastInk = static_cast<int>(i);
+        }
+    }
+    return obs;
+}
+
+std::string describeColumns(const TabInk& obs)
+{
+    std::string s;
+    for (std::size_t i = 0; i < obs.columns.size(); ++i) {
+        s += std::to_string(i) + ":" + std::to_string(obs.columns[i]) + " ";
+    }
+    return s;
+}
+
+}  // namespace
+
+TEST_CASE("Descenders in the tab label stop short of the frame, and the baseline "
+          "does not move with the title",
+          "[wm_tablabel]")
+{
+    // Explicit colours so the ink test is ABSOLUTE: the count is of the pixel
+    // the server resolves the configured tab-foreground NAME to. Anti-aliased
+    // fringe pixels are blends and are deliberately NOT counted -- what is
+    // asserted is that no SOLID label pixel reaches either edge.
+    WmFixture fixture(cleanFixture({"--tab-background=blue",
+                                    "--tab-foreground=red"}));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const unsigned long ink = namedPixel(d, "red");
+    REQUIRE(ink != ~0UL);
+
+    Window client = None;
+    const Window frame = mapClientAndAwaitFrame(d, 40, 40, 240, kTallWindowH,
+                                                client, kDescenderTitle);
+    REQUIRE(frame != None);
+    settleWm(d);
+
+    const TabInk desc =
+        observeTabInk(d, frame, client, ink, kDescenderTitle, kDefaultFrameThickness);
+    const TabInk plain =
+        observeTabInk(d, frame, client, ink, kNoDescenderTitle, kDefaultFrameThickness);
+
+    std::printf("[wm2 tabclear] tab width %d px, tab height %d px\n"
+                "[wm2 tabclear]   \"%s\"  ink %5ld px, columns %d..%d\n"
+                "[wm2 tabclear]   \"%s\"  ink %5ld px, columns %d..%d\n",
+                desc.tabWidth, desc.tabHeight,
+                kDescenderTitle, desc.total, desc.firstInk, desc.lastInk,
+                kNoDescenderTitle, plain.total, plain.firstInk, plain.lastInk);
+    std::fflush(stdout);
+
+    REQUIRE(desc.tabWidth > kOuterClearance + kFrameClearance);
+    REQUIRE(desc.tabHeight > 0);
+    REQUIRE(plain.tabWidth == desc.tabWidth);
+
+    // (a) POSITIVE CONTROL. Every clearance assertion below is satisfied
+    //     vacuously by a tab with no label on it at all, which is precisely the
+    //     failure mode plan 08-14 found last time something moved on this axis.
+    INFO("descender-title ink: " << desc.total << " px");
+    REQUIRE(desc.total > 0);
+    INFO("plain-title ink: " << plain.total << " px");
+    REQUIRE(plain.total > 0);
+
+    // (b) THE FRAME SIDE. The deepest descender must stop kFrameClearance
+    //     columns short of the frame edge. Before this change the tab was sized
+    //     from "M", which has no descender, and every descender ran to the tab's
+    //     clipping edge -- the operator measured it on the 09-06 screenshot.
+    INFO("columns (descender title): " << describeColumns(desc));
+    INFO("last ink column " << desc.lastInk << " of tab width " << desc.tabWidth);
+    CHECK(desc.lastInk <= desc.tabWidth - 1 - kFrameClearance);
+    INFO("columns (plain title): " << describeColumns(plain));
+    CHECK(plain.lastInk <= plain.tabWidth - 1 - kFrameClearance);
+
+    // (c) THE OUTER SIDE. The ascender tops must stay kOuterClearance columns
+    //     inside the tab's outer edge -- a "fix" that bought frame-side room by
+    //     sliding the whole label outwards would fail here.
+    INFO("first ink column " << desc.firstInk);
+    CHECK(desc.firstInk >= kOuterClearance);
+    INFO("first ink column (plain) " << plain.firstInk);
+    CHECK(plain.firstInk >= kOuterClearance);
+
+    // (d) THE BASELINE IS A PROPERTY OF THE FONT, NOT OF THE TITLE. Both titles
+    //     end in "settings", so the tallest ascender in each is the same glyph;
+    //     a baseline computed from the label's own extents -- as it was --
+    //     shifts the whole label whenever the title's thickness changes.
+    INFO("ascender column " << desc.firstInk << " vs " << plain.firstInk);
+    CHECK(plain.firstInk == desc.firstInk);
+
+    // (e) No protocol error. The tab width feeds shapeTab()'s rectangle list,
+    //     which 08-13 found silently rejected whole at some thicknesses -- logged
+    //     and invisible to every assertion about windows and geometry.
+    const std::string errs = fixture.wmStderr();
+    INFO("WM stderr:\n" << errs);
+    CHECK_FALSE(contains(errs, "BadMatch"));
+    CHECK_FALSE(contains(errs, "BadValue"));
+    CHECK_FALSE(contains(errs, "BadDrawable"));
+    CHECK_FALSE(contains(errs, "RenderBadPicture"));
+}
 
 // ===========================================================================
 // [wm_tablabel] -- the title the WM reads is the one the client advertises
@@ -3929,10 +4364,23 @@ TEST_CASE("The window button answers across the whole tab-top square while "
         return hidden;
     };
 
-    // The painted square is unchanged: the same 8x8 at the same inset. Read off
-    // the BOUNDING shape, because the window is deliberately larger than what it
-    // paints; an unshaped button reports its whole rectangle, so this reads
-    // correctly against either build.
+    // Everything below is expressed against the TAB WIDTH, measured live.
+    // Border::buttonDrawSize() is m_tabWidth - TAB_TOP_HEIGHT * 2 - 4 and
+    // buttonHitSize() is m_tabWidth itself, so every offset in this case is a
+    // function of a number that depends on whatever face fontconfig resolves.
+    // It used to be written out as the literals that number produced on this
+    // host (8, 12, 13, 15), which quietly turned a case about the BUTTON into a
+    // case about the tab font: quick task 260906-ldw widened the strip from
+    // 16 px to 25 px to clear the label's descenders and every one of those
+    // literals became wrong, none of them because anything about the button had
+    // changed. Derived from the client's inset in the frame, which is
+    // Border::xIndent() == m_tabWidth + FRAME_WIDTH + 1.
+    int tabWidth = 0;
+
+    // The painted square is unchanged: still buttonDrawSize() at the same inset.
+    // Read off the BOUNDING shape, because the window is deliberately larger
+    // than what it paints; an unshaped button reports its whole rectangle, so
+    // this reads correctly against either build.
     {
         Window win = createClient(d, 200, 200, 300, 200, "buttondraw");
         XMapWindow(d, win);
@@ -3940,6 +4388,10 @@ TEST_CASE("The window button answers across the whole tab-top square while "
         Window frame = awaitFrameFor(d, win);
         REQUIRE(frame != None);
         settleWm(d);
+
+        tabWidth = (rectOf(d, win).x - rectOf(d, frame).x) - kDefaultFrameThickness - 1;
+        INFO("measured tab width " << tabWidth);
+        REQUIRE(tabWidth > 8);
 
         Window button = findFrameChild(d, frame, win, true);
         REQUIRE(button != None);
@@ -3960,11 +4412,11 @@ TEST_CASE("The window button answers across the whole tab-top square while "
         XFree(rects);
 
         INFO("painted square at frame (" << drawnX << "," << drawnY << ") "
-             << drawnW << "x" << drawnH);
-        CHECK(drawnX == 4);
+             << drawnW << "x" << drawnH << ", tab width " << tabWidth);
+        CHECK(drawnX == 4);                  // buttonDrawInset()
         CHECK(drawnY == 4);
-        CHECK(drawnW == 8);
-        CHECK(drawnH == 8);
+        CHECK(drawnW == tabWidth - 8);       // buttonDrawSize()
+        CHECK(drawnH == tabWidth - 8);
 
         XDestroyWindow(d, win);
         XSync(d, False);
@@ -3976,9 +4428,12 @@ TEST_CASE("The window button answers across the whole tab-top square while "
     CHECK(hidesWhenPressedAt(6, 6));
 
     // The near-misses. Every one of these used to hit the tab or fall through.
+    // The hit square is buttonHitSize() == m_tabWidth on a side, so the far
+    // corner is at m_tabWidth - 1 and the band the painted square does not cover
+    // begins at m_tabWidth - 4.
     CHECK(hidesWhenPressedAt(1, 1));
-    CHECK(hidesWhenPressedAt(12, 12));
-    CHECK(hidesWhenPressedAt(15, 15));
+    CHECK(hidesWhenPressedAt(tabWidth - 4, tabWidth - 4));
+    CHECK(hidesWhenPressedAt(tabWidth - 1, tabWidth - 1));
     // The residual, pinned deliberately rather than left unsaid: a 1px sliver
     // down the notch's inner edge is not part of ANY window of this frame -- the
     // frame's own bounding shape excludes it, so a press there reaches the root
@@ -3986,12 +4441,12 @@ TEST_CASE("The window button answers across the whole tab-top square while "
     // pixels to the frame's shape could, and that would fill the visible gap the
     // notch is made of. Left alone on purpose. If a later change closes the gap,
     // this flips and should be updated, not deleted.
-    CHECK_FALSE(hidesWhenPressedAt(13, 13));
+    CHECK_FALSE(hidesWhenPressedAt(tabWidth - 3, tabWidth - 3));
 
     // ...and the widening stops at the tab's top square: below it the tab must
     // still be draggable, or this would trade a fiddly button for a window that
     // cannot be moved.
-    CHECK_FALSE(hidesWhenPressedAt(6, 30));
+    CHECK_FALSE(hidesWhenPressedAt(6, tabWidth + 14));
 
     REQUIRE(fixture.wmAlive());
     INFO("wm stderr:\n" << fixture.wmStderr());
@@ -4464,4 +4919,272 @@ TEST_CASE("A category submenu with more entries than fit stays inside the screen
     CHECK(sub.h <= screenH);
     CHECK(sub.y + sub.h <= screenH);
     dismissMenu(d, driver);
+}
+
+
+// ---------------------------------------------------------------------------
+// [wm_config_runtime] -- D-11: the root menu's Configure entry
+//
+// The decision, in its own words: the window manager adds a "Configure..."
+// entry to the top level of its root menu when a `wm2-config` binary is found
+// on PATH **at startup**, and otherwise no entry at all. The probe running once
+// is the decision, not a shortcut: putting the binary on PATH after the window
+// manager started deliberately changes nothing until it is restarted.
+//
+// WHY THESE CASES LIVE AT THE END OF THE FILE rather than beside the rest of
+// the [wm_config_runtime] group. They need the pixel machinery the
+// [wm_menulabel] section defines further down -- captureRootBitmap(),
+// pixelBounds(), nudgeUntil(), openRootMenuVerified() and seedApplications().
+// Hoisting those to the top would reorder a section whose comments explain
+// themselves where they sit; appending here does not move a line of it.
+//
+// HOW "ONE MORE ENTRY" IS OBSERVED. There is no readable label channel: the
+// menu paints text with Xft and the server keeps pixels, not strings. So the
+// row COUNT is derived from two things that are measured rather than assumed --
+// the popup's own height, read back from the server, and the row height, read
+// off the highlight band's bounding box exactly as the submenu-overflow case
+// reads it. menu() lays the outer popup out as `entryHeight * n + 13`
+// (src/Buttons.cpp), so n follows from those two measurements.
+//
+// WHAT MAKES THE COMPARISON FAIR. The two fixtures differ in exactly ONE
+// environment variable. Both are handed the same seeded XDG data tree, so the
+// same .desktop entry is discovered; both scan the same /usr/bin, so the binary
+// scanner contributes the same "Other" category to both; both run with the same
+// menu font, so entryHeight is the same measurement in each. The only free
+// variable is whether a directory holding a `wm2-config` binary is on the child
+// PATH.
+// ---------------------------------------------------------------------------
+namespace {
+
+// Two directories: one holding an executable named `wm2-config`, one holding
+// nothing. A PATH built from the first differs from a PATH built from the
+// second in exactly one fact -- whether a binary of that name is reachable --
+// which is the single variable these cases turn on.
+struct ConfigGuiDirs {
+    std::string withGui;
+    std::string withoutGui;
+};
+
+ConfigGuiDirs makeConfigGuiDirs(const char* tag)
+{
+    static int counter = 0;
+    const std::string base = std::string(WM2_TEST_WORKDIR) + "/configgui-" +
+                             std::string(tag) + "-" +
+                             std::to_string(::getpid()) + "-" +
+                             std::to_string(++counter);
+    ::mkdir(base.c_str(), 0700);
+
+    ConfigGuiDirs dirs;
+    dirs.withGui    = base + "/with";
+    dirs.withoutGui = base + "/without";
+    ::mkdir(dirs.withGui.c_str(), 0700);
+    ::mkdir(dirs.withoutGui.c_str(), 0700);
+    return dirs;
+}
+
+// Put the REAL built configuration GUI on the "with" side, by symlink rather
+// than by copy. The point of using the shipped binary here instead of a
+// stand-in is that the probe under test is `access(dir + "/wm2-config", X_OK)`
+// against whatever the build actually produced -- a stand-in would prove the
+// test's own file executable and nothing about the product.
+bool linkBuiltConfigGui(const std::string& dir, const std::string& target)
+{
+    const std::string link = dir + "/wm2-config";
+    ::unlink(link.c_str());
+    return ::symlink(target.c_str(), link.c_str()) == 0;
+}
+
+// An executable named `wm2-config` that records having been run and exits at
+// once. Used only by the SELECTION case, where what is being asserted is that
+// the entry execs a binary of that name through the window manager's own spawn
+// path -- not that GTK can open a window, which the [wm2_config_smoke] suite
+// already owns. A shim also leaves nothing running to clean up, which keeps
+// this case inside the project rule that every process is stopped by a PID its
+// own starter created.
+bool writeConfigGuiShim(const std::string& dir, const std::string& sentinel)
+{
+    const std::string path = dir + "/wm2-config";
+    std::ofstream out(path);
+    if (!out) return false;
+    out << "#!/bin/sh\n"
+        << ": > '" << sentinel << "'\n";
+    out.close();
+    return ::chmod(path.c_str(), 0700) == 0;
+}
+
+// The outer root menu's row count, from the popup geometry and the measured
+// row height. Returns -1 if the highlight never appeared, so a caller can tell
+// "no rows" from "never measured".
+//
+// The pointer is left ON row 0 with the button still held; the caller owns the
+// release.
+int measureMenuRows(Display* d, XTestDriver& driver, const Rect& menuRect,
+                    unsigned long highlight, int& entryHeightOut)
+{
+    entryHeightOut = 0;
+    if (!nudgeUntil(driver, menuRect.x + menuRect.w / 2, menuRect.y + 14, [&] {
+            return countAll(captureRootBitmap(d, menuRect), highlight) > 0;
+        })) {
+        return -1;
+    }
+
+    int hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+    if (!pixelBounds(captureRootBitmap(d, menuRect), highlight, hx0, hy0, hx1, hy1)) {
+        return -1;
+    }
+
+    const int entryHeight = hy1 - hy0 + 1;
+    if (entryHeight <= 0) return -1;
+    entryHeightOut = entryHeight;
+
+    // menu(): outerH = entryHeight * n + 13.
+    return (menuRect.h - 13) / entryHeight;
+}
+
+} // namespace
+
+
+TEST_CASE("The root menu carries a Configure entry when wm2-config is on the "
+          "window manager's PATH at startup, and not when it is not",
+          "[wm_config_runtime]")
+{
+#ifndef WM2_CONFIG_PATH
+    SKIP("this tree was configured without the settings window, so there is no "
+         "wm2-config binary to put on a PATH");
+#else
+    const ConfigGuiDirs dirs = makeConfigGuiDirs("menu");
+    REQUIRE(linkBuiltConfigGui(dirs.withGui, WM2_CONFIG_PATH));
+
+    // One seeded data tree, used by BOTH runs, so the discovered-application
+    // half of the menu is the same in each and the row-count difference can
+    // only come from the entry under test.
+    const std::string data = seedApplications(1);
+
+    // Rows in the top level of the root menu, for a window manager started with
+    // `path` as its whole PATH.
+    auto rowsWithPath = [&](const std::string& path, int& entryHeightOut) -> int {
+        WmFixtureOptions o = cleanFixture({"--menu-background=blue",
+                                           "--menu-foreground=red",
+                                           "--menu-highlight=green"});
+        o.childEnv["XDG_DATA_HOME"]  = data;
+        o.childEnv["XDG_DATA_DIRS"]  = data + "/no-system-data";
+        o.childEnv["XDG_CACHE_HOME"] = data + "/cache";
+        o.childEnv["PATH"]           = path;
+
+        WmFixture fixture(o);
+        x11::DisplayPtr dp = fixture.openDisplay();
+        REQUIRE(dp != nullptr);
+        Display* d = dp.get();
+        XTestDriver driver(fixture.display());
+        parkPointer(d);
+
+        const unsigned long hl = namedPixel(d, "green");
+        REQUIRE(hl != ~0UL);
+
+        Window menu = None; Rect menuRect; std::string why;
+        REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                     menu, menuRect, why, namedPixel(d, "blue")));
+        INFO("menu open diagnostics: " << why);
+
+        const int rows = measureMenuRows(d, driver, menuRect, hl, entryHeightOut);
+        INFO("wm stderr:\n" << fixture.wmStderr());
+        dismissMenu(d, driver);
+        return rows;
+    };
+
+    int heightWithout = 0;
+    const int rowsWithout = rowsWithPath(dirs.withoutGui, heightWithout);
+    int heightWith = 0;
+    const int rowsWith = rowsWithPath(dirs.withGui + ":" + dirs.withoutGui, heightWith);
+
+    INFO("rows without the GUI on PATH: " << rowsWithout
+         << " (entry height " << heightWithout << ")");
+    INFO("rows with the GUI on PATH:    " << rowsWith
+         << " (entry height " << heightWith << ")");
+
+    // Anti-vacuity: a measurement that failed reports -1, and -1 == -1 would
+    // otherwise satisfy a bare difference check.
+    REQUIRE(rowsWithout > 0);
+    REQUIRE(rowsWith > 0);
+    // Same font, same fixture geometry: a differing row height would mean the
+    // two runs are not comparable and the row counts below prove nothing.
+    REQUIRE(heightWith == heightWithout);
+
+    CHECK(rowsWith == rowsWithout + 1);
+#endif
+}
+
+
+TEST_CASE("Selecting the root menu's Configure entry runs wm2-config and leaves "
+          "no zombie behind", "[wm_config_runtime]")
+{
+    const ConfigGuiDirs dirs = makeConfigGuiDirs("spawn");
+    const std::string sentinel = sentinelPath("configgui");
+    ::unlink(sentinel.c_str());
+    REQUIRE(writeConfigGuiShim(dirs.withGui, sentinel));
+
+    const std::string data = seedApplications(1);
+
+    WmFixtureOptions o = cleanFixture({"--menu-background=blue",
+                                       "--menu-foreground=red",
+                                       "--menu-highlight=green"});
+    o.childEnv["XDG_DATA_HOME"]  = data;
+    o.childEnv["XDG_DATA_DIRS"]  = data + "/no-system-data";
+    o.childEnv["XDG_CACHE_HOME"] = data + "/cache";
+    // /bin is on this PATH because the shim is a `#!/bin/sh` script and the
+    // window manager's spawn path is execvp(), not a shell.
+    o.childEnv["PATH"]           = dirs.withGui + ":/usr/bin:/bin";
+
+    WmFixture fixture(o);
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    XTestDriver driver(fixture.display());
+    parkPointer(d);
+
+    const unsigned long hl = namedPixel(d, "green");
+    REQUIRE(hl != ~0UL);
+
+    Window menu = None; Rect menuRect; std::string why;
+    REQUIRE(openRootMenuVerified(d, driver, kMenuPressX, kMenuPressY,
+                                 menu, menuRect, why, namedPixel(d, "blue")));
+    INFO("menu open diagnostics: " << why);
+
+    int entryHeight = 0;
+    const int rows = measureMenuRows(d, driver, menuRect, hl, entryHeight);
+    REQUIRE(rows > 0);
+    REQUIRE(entryHeight > 0);
+
+    // D-11 puts the entry at the END of the top level, and the Exit slot is
+    // absent here because this menu was opened at (300,5) rather than in the
+    // bottom-right corner. So the last row is the Configure row.
+    const int lastRowCentre = menuRect.y + 11 + (rows - 1) * entryHeight + entryHeight / 2;
+    REQUIRE(nudgeUntil(driver, menuRect.x + menuRect.w / 2, lastRowCentre, [&] {
+        int hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+        if (!pixelBounds(captureRootBitmap(d, menuRect), hl, hx0, hy0, hx1, hy1)) {
+            return false;
+        }
+        return hy0 >= (rows - 1) * entryHeight;
+    }));
+
+    driver.release(Button1);
+    XSync(d, False);
+
+    const bool ran = WmFixture::pollUntil([&] {
+        return ::access(sentinel.c_str(), F_OK) == 0;
+    }, 20000);
+
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    CHECK(ran);
+
+    // The window manager double-forks, so the program it launched is orphaned
+    // to init and can never be its zombie; what this counts is the intermediate
+    // child, which spawnArgv() reaps itself. Selecting the entry must not have
+    // introduced a second, unreaped path.
+    settleWm(d);
+    const int zombies = zombieChildrenOf(fixture.wm().pid());
+    INFO("zombie children of the WM: " << zombies);
+    CHECK(zombies == 0);
+
+    ::unlink(sentinel.c_str());
 }

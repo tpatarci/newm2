@@ -52,6 +52,41 @@ struct Config {
     std::string menuBackground  = "#C8CACC";
     std::string menuHighlight   = "#A8ACB0";
     std::string menuBorders     = "#000000";
+
+    // ------------------------------------------------------------------
+    // Fonts (plan 09-01, CONF-02)
+    //
+    // The fonts this window manager draws with lived as string literals in the
+    // code that draws with them -- rung 1 of Border::loadTabFont() and the
+    // menu-font load in WindowManager::initialiseScreen() -- until this plan.
+    // They are here now because the Phase 9 configuration GUI edits fonts
+    // (CGUI-03) and nothing it could edit existed: `grep -ci font
+    // src/Config.cpp` returned 0.
+    //
+    // DISC-05a: the value grammar is a fontconfig pattern, handed to
+    // XftFontOpenName unchanged. That is the same grammar the two literals
+    // already used, and it is why there is no separate size key -- a size key
+    // would be a second way of saying something the pattern already says, and
+    // the two could disagree.
+    //
+    // DISC-05b: each default IS the literal the binary hardcoded before this
+    // plan, character for character. A user with no config file sees no change
+    // whatsoever, which is the entire promise this plan makes to them. Change
+    // one of these strings and you have changed the shipped look of the window
+    // manager, not merely a default.
+    //
+    // D-8.5-01: `tab-font` and `menu-font` are permanent spellings. Key names are
+    // free to choose before v1.0 and fixed after, and there will be no
+    // deprecated aliases.
+    //
+    // The two differ by exactly one token: the tab is drawn BOLD and the menu is
+    // not. That is not an oversight to tidy up -- bold survives a RENDER-less
+    // remote server where lighter weights go ragged (measured, 08.5-02), and the
+    // tab label is the text that has to stay legible sideways at 12 px.
+    // ------------------------------------------------------------------
+    std::string tabFont  = "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12";
+    std::string menuFont = "Ubuntu,Noto Sans,DejaVu Sans,Sans:size=12";
+
     // Focus policy
     //
     // D-17: these three values were CORRECTED to describe what the binary
@@ -136,3 +171,158 @@ struct Config {
 // XDG path resolution (exposed for testing)
 std::string xdgConfigHome();
 std::vector<std::string> xdgConfigDirs();
+
+// EVERY configuration FILE Config::load() reads, in the order it reads them:
+// the XDG_CONFIG_DIRS files lowest-precedence first, then the user's own file
+// last. The CLI layer is not a file and so is not here.
+//
+// WHY THIS IS A FUNCTION RATHER THAN A LOOP IN load(). A reload must refuse
+// when a file that EXISTS cannot be read, or Config::applyFile() skips it in
+// silence and the window manager reports a successful reload that quietly
+// dropped a whole layer. That check and the load itself have to walk the same
+// list, and a second hand-written copy of "which files are the layers" is
+// exactly how the two come to disagree -- one file added to load() and not to
+// the preflight is a layer nothing checks again (Codex pass 7, P2).
+std::vector<std::string> configFileLayerPaths();
+
+
+// -----------------------------------------------------------------------------
+// The settable surface, described rather than re-listed (plan 09-04)
+// -----------------------------------------------------------------------------
+//
+// Everything below is a VIEW of the option table src/Config.cpp already carries
+// -- the one plan 08-13 introduced so that getopt_long()'s array and the --help
+// text could not drift apart. The configuration socket's `set` needs the same
+// knowledge in a third place (what kind of value a key takes, and for an
+// integer what range the parser clamps it to), and a third hand-written list
+// would drift exactly as the first two used to.
+//
+// So there is no new table here. configKeySpecs() is built from kOptionSpecs,
+// and the integer bounds moved INTO those rows: Config::applyKeyValue() and
+// Config::applyCliArgs() now read 1..50 and 1..60000 from the same rows this
+// view exposes, instead of each spelling the numbers out again.
+//
+// Why the socket needs it at all: the prohibition this phase carries is that a
+// value arriving over the socket must never reach window-manager state without
+// the validation the config file performs. The parser's answer to a bad value
+// is to CLAMP it and warn on stderr -- correct for a file being read at
+// startup, wrong for a request that has a client waiting for an answer. The
+// dispatcher therefore checks kind and range BEFORE handing the value to the
+// very same Config::applyKeyValue(), and refuses what the parser would have
+// silently corrected. Stricter than the file, never looser.
+
+enum class ConfigValueKind {
+    String,   // taken verbatim
+    Boolean,  // true/false/1/0
+    Integer   // clamped to [minValue, maxValue]
+};
+
+struct ConfigKeySpec {
+    std::string     name;
+    ConfigValueKind kind = ConfigValueKind::String;
+    int             minValue = 0;   // Integer only
+    int             maxValue = 0;   // Integer only
+    std::string     summary;        // the same one --help prints
+};
+
+// Every key the parser accepts as a single key=value setting, in the order the
+// option table declares them. `rule-*` and `menu-entry-*` are deliberately
+// absent: they are ordered repeated groups rather than independent settings,
+// which is the same reason configFileManagedKeys() omits them. A
+// [wm_config_live] case asserts the two lists name exactly the same keys.
+const std::vector<ConfigKeySpec>& configKeySpecs();
+
+// The spec for one key, or nullptr for a key that is not a single setting.
+const ConfigKeySpec* configKeySpecFor(const std::string& key);
+
+// -----------------------------------------------------------------------------
+// The manual menu entries, as ONE value (plan 09-05, D-12)
+// -----------------------------------------------------------------------------
+//
+// `menu-entry-name` / `-command` / `-category` are an ORDERED, STATEFUL
+// accumulator: a name opens an entry and the other two fill in whichever entry
+// is currently open. That grammar reads perfectly as consecutive lines of a
+// file and does not survive being cut into independent request-reply messages,
+// which is why configKeySpecs() does not name them and why the socket cannot
+// treat them as settings.
+//
+// So the whole list travels as ONE value, in the file's own key order, records
+// separated by ';':
+//
+//   menu-entry-name=Editor;menu-entry-command=/usr/bin/vim;menu-entry-category=Custom;menu-entry-name=Mail;menu-entry-command=/usr/bin/mutt
+//
+// WHOLESALE REPLACEMENT, never a mutation of one row. That is what makes the
+// operation idempotent -- sending the same list twice leaves the same list --
+// and what lets a settings window's Add, Edit and Remove rows map onto it with
+// no per-row protocol and no row identity to keep in sync.
+//
+// The separator has NO ESCAPE, deliberately: a ';' inside a value would need
+// one, an escape needs a second grammar, and a second grammar is a second thing
+// to get wrong. A command that must contain a ';' is written into the config
+// file directly, where the accumulator's own line-per-key form has no
+// separator to collide with.
+
+// Render `config`'s manual entries in the grammar above. Empty for a
+// configuration with no manual entries, which is the same value that clears
+// them.
+std::string configMenuEntriesValue(const Config& config);
+
+// Parse the grammar above into `out`, replacing whatever it held. False with a
+// human-readable reason in `reasonOut` for a record that is not one of the
+// three keys, for a record with no '=', or for a value that opens a command or
+// a category before any name -- each of which the file parser answers with a
+// warning to a stderr nobody is reading, and which over the socket must be a
+// refusal instead.
+bool parseMenuEntriesValue(const std::string& value,
+                           std::vector<AppEntry>& out,
+                           std::string& reasonOut);
+
+// The permanent spelling of the key that carries the value above. Named here
+// rather than spelled as a literal at each of its three use sites (the socket's
+// get arm, its set arm, and wm2-ctl's help).
+inline constexpr const char* kMenuEntriesKey = "menu-entries";
+
+
+// The categories the running root menu currently shows, ';'-separated, in the
+// menu's own order -- alphabetical with "Custom" last (plan 09-07, D-12).
+//
+// READ-ONLY, and read-only by construction rather than by a check: it is not
+// one of the keys configKeySpecs() names, so applyConfigSet() refuses it as an
+// unknown setting like any other non-setting. That is the correct shape,
+// because the list is DERIVED -- from what discovery found plus the manual
+// entry list -- and setting a view of two things would mean setting neither.
+//
+// It exists because D-12 asks the settings window's category dropdown to offer
+// "the categories the WM currently shows". The GUI cannot compute that: it
+// would have to re-run the .desktop and /usr/bin scan, and a second
+// implementation of discovery is a second answer that disagrees with the first
+// the moment a .desktop file changes. So the window manager answers, and the
+// GUI asks.
+//
+// This adds no TWELFTH MESSAGE TYPE -- the eleven the version-1 contract froze
+// are untouched. It adds one key to the vocabulary the existing `get` verb
+// carries, which is exactly what plan 09-05 did for `menu-entries`.
+inline constexpr const char* kMenuCategoriesKey = "menu-categories";
+
+
+// Split a command string into an argument vector the way the config file's
+// `menu-entry-command` arm splits it: on whitespace, with NO shell evaluation,
+// no quote handling and no field codes.
+//
+// One implementation with two callers -- Config::applyKeyValue() and the
+// settings window's menu-entry dialog -- so a command typed into the window and
+// the same line written into the file cannot become two different argument
+// vectors. The dialog SHOWS the result of this call (T-9-40), which is the
+// honest form of the guarantee that a manual entry is never shell-evaluated: a
+// semicolon the user typed is visibly one argument rather than the start of a
+// second command.
+std::vector<std::string> configTokeniseCommand(const std::string& command);
+
+
+// The EFFECTIVE value of one key, spelled the way the config file would spell
+// it: a boolean as "true" or "false", an integer in decimal, a string
+// verbatim. False for a key configKeySpecs() does not name, leaving `out`
+// untouched -- which is how a caller distinguishes "unknown key" from "set to
+// the empty string".
+bool configValueForKey(const Config& config, const std::string& key,
+                       std::string& out);

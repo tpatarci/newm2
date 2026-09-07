@@ -1,0 +1,21 @@
+== building the installable targets in build/debug ==
+[100%] Built target wm2-born-again
+[100%] Built target wm2-ctl
+  configuration GUI in this tree: true
+
+== component: wm ==
+  bin/wm2-born-again
+  bin/wm2-ctl
+  share/doc/wm2-born-again/LICENSE
+  share/doc/wm2-born-again/RELEASE-NOTES.md
+  share/xsessions/wm2-born-again.desktop
+
+== wm component: toolkit linkage ==
+  bin/wm2-born-again: no GTK/GLib/GObject linkage
+  bin/wm2-ctl: no GTK/GLib/GObject linkage
+
+== component: config-gui ==
+  bin/wm2-config
+  share/applications/wm2-config.desktop
+
+install-components OK: wm and config-gui staged separately from build/debug

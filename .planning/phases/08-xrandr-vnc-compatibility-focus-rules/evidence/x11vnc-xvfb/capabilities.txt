@@ -6,7 +6,7 @@ wm2-born-again display capability capture
   label:        x11vnc-xvfb
   display:      :150
   timestamp:    2026-08-29T14:19:51Z (UTC)
-  host:         tomislav-HP-Z440-Workstation
+  host:         <workstation>
   kernel:       Linux 6.8.0-124-generic
   distro:       Ubuntu 22.04.5 LTS
   commit:       d478e836d259c3a82ba771b5f1d87ea5ca668a1a

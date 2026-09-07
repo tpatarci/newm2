@@ -7,6 +7,7 @@
 
 class Client;
 class WindowManager;
+struct Config;
 
 // Frame dimensions (from upstream Config.h and Border.h)
 constexpr int TAB_TOP_HEIGHT = 2;
@@ -27,6 +28,164 @@ public:
     void configure(int x, int y, int w, int h, unsigned long mask, int detail,
                    bool force = false);
     void moveTo(int x, int y);
+
+    // Re-lay this frame out IN PLACE after FRAME_WIDTH changed (CGUI-04, plan
+    // 09-04). Every window the frame is made of -- the frame itself, the tab,
+    // the button and the resize handle -- has geometry computed from the frame
+    // thickness, and two of them (the resize handle's size and its shape) are
+    // set only at creation, so configure() alone would leave a corner grabber
+    // sized for the old thickness.
+    //
+    // Deliberately NOT a destroy-and-rebuild: rebuilding would reparent the
+    // client, which flashes and loses stacking order. The client window keeps
+    // its size and its position ON SCREEN; only the decoration around it moves.
+    void relayoutForFrameThickness(int x, int y, int w, int h);
+
+    // -----------------------------------------------------------------------
+    // Live colour and font reload (CGUI-04, plan 09-05)
+    // -----------------------------------------------------------------------
+
+    // A palette that has been ALLOCATED and not yet INSTALLED: five pixels,
+    // two Xft colours, two derived bevel shades and up to three graphics
+    // contexts, all obtained from `next` and none of them yet shared with
+    // anything that draws.
+    //
+    // The sibling of TabFace below, and it exists for the enlarged form of the
+    // same defect. applyConfig() applies a WHOLE Config on a reload, so one
+    // edit can carry a colour AND a font -- and a palette that was allocated
+    // and swapped before either face was opened left every frame built
+    // afterwards wearing colours the window manager then refused to report,
+    // with no `set` able to repair it (coloursChanged is false on the way
+    // back). Splitting the allocation from the swap lets applyConfig() prove
+    // the whole configuration applies before it commits any part of it.
+    //
+    // Owns the two Xft colours until installPalette() takes them: a staged
+    // palette that is abandoned frees them in its destructor, so a refusal
+    // upstream leaks nothing.
+    struct Palette {
+        // Nothing to install. Before the first frame exists the statics block
+        // has not run, and the first Border will read the new colours for
+        // itself -- so there is nothing to allocate against and nothing to
+        // swap.
+        bool nothingToInstall = false;
+
+        unsigned long framePixel  = 0;
+        unsigned long buttonPixel = 0;
+        unsigned long borderPixel = 0;
+        unsigned long fgPixel     = 0;
+        unsigned long bgPixel     = 0;
+
+        XftColor foreground{};
+        XftColor background{};
+        bool     xftHeld = false;   // the two above are allocated and not handed over
+
+        x11::GCPtr drawGC;
+        x11::GCPtr lightGC;      // null when the shade would not allocate
+        x11::GCPtr shadowGC;     // ditto; every draw site treats null as "no bevel"
+
+        // The connection the two Xft colours came from, so the destructor can
+        // free them with no window manager to ask.
+        Display *display  = nullptr;
+        Visual  *visual   = nullptr;
+        Colormap colormap = 0;
+
+        Palette() = default;
+        ~Palette();
+        Palette(const Palette &) = delete;
+        Palette &operator=(const Palette &) = delete;
+    };
+
+    // Allocate every colour and every graphics context this class draws with,
+    // from `next`, WITHOUT installing any of them. Changes nothing whichever
+    // way it answers; returns false with the offending key in `keyOut`.
+    //
+    // Static because the palette is shared by every frame: one allocation, one
+    // set of graphics contexts, one bevel derivation.
+    static bool openPalette(WindowManager *wm, const Config &next, Palette &out,
+                            std::string &keyOut);
+
+    // Install a palette openPalette() produced. Cannot fail: everything that
+    // can is upstream, in the open. Exactly one set of old values is released
+    // and exactly one installed, so a repeated reload cannot accumulate
+    // colours. The per-instance repaint that makes them visible is the next
+    // method down.
+    static void installPalette(WindowManager *wm, Palette &palette);
+
+    // Push the reloaded palette onto THIS frame: the new background pixels on
+    // each window, a clear so the server repaints from them, and the existing
+    // paint path re-run for the tab and the button. Deliberately re-runs
+    // drawLabel()/drawButtonBevel() rather than inventing a second drawing
+    // path, so a frame repainted after a colour change is byte-identical to
+    // one repainted after an Expose.
+    void repaintForColourChange();
+
+    // XDIS-04: which rung of the tab-font degradation ladder this process
+    // landed on. Established once, at the first Border construction, and never
+    // revisited -- font availability is fixed for the lifetime of the X
+    // connection, exactly like the extension sentinels in include/Manager.h.
+    //
+    // Rung 1 is the normal path and the only one that prints nothing; every
+    // other rung announces itself on stderr so a release-evidence transcript
+    // records the degradation instead of leaving it to be inferred from a
+    // screenshot.
+    //
+    // PUBLIC because TabFace below carries one, and TabFace is what lets a
+    // caller hold an opened-but-not-installed face across another open (CR-04).
+    enum class TabFontRung {
+        RotatedPreferred,   // 1 -- sideways labels from the preferred chain
+        RotatedGeneric,     // 2 -- sideways labels from the generic sans chain
+        Unrotated,          // 3 -- horizontal labels, truncated to the tab width
+        NoFont              // 4 -- no label at all; frames are still drawn (None is an Xlib macro)
+    };
+
+    // A tab face that has been OPENED and not yet INSTALLED.
+    //
+    // The reason this type exists is CR-04: applyConfig() applies a whole
+    // Config on a reload, so a file that changes tab-font AND menu-font runs
+    // both swaps -- and a tab face that installed followed by a menu face that
+    // would not open left the shared face and the shared tab width moved while
+    // m_config was never updated. `get tab-font` then named a pattern nothing
+    // on screen was drawn with, and no `set` could repair it. Splitting the
+    // open from the install lets the caller prove BOTH faces open before it
+    // swaps EITHER.
+    struct TabFace {
+        x11::XftFontPtr font;
+        TabFontRung     rung = TabFontRung::NoFont;
+        // True when there is nothing to install: no frame has been built yet,
+        // so no face has been loaded and the first Border will read the new
+        // value for itself.
+        bool            nothingToInstall = false;
+    };
+
+    // Open `pattern` as a tab face WITHOUT installing it. Walks the same ladder
+    // loadTabFont() walks, stopping at rungs 1 to 3; rung 4 ("no face at all")
+    // is a legitimate degradation at startup and a downgrade at reload time, so
+    // it is reported as false here and the previous face stays in force.
+    // Changes nothing at all, whichever way it answers.
+    static bool openTabFace(WindowManager *wm, const std::string &pattern,
+                            TabFace &out);
+
+    // Install a face openTabFace() produced and re-measure the tab width.
+    // Cannot fail: everything that can is upstream, in the open. Exactly one
+    // face is closed and exactly one installed, so a repeated reload cannot
+    // accumulate faces (T-9-27).
+    static void installTabFace(WindowManager *wm, TabFace &face);
+
+    // Load `pattern` as the shared tab face and re-measure the tab width: the
+    // open and the install in one call, for a caller with only one face to
+    // change. LOADS BEFORE IT CLOSES -- a pattern with no usable face at any
+    // rung leaves the previous face loaded and the previous tab width in
+    // force, and returns false. Static for the same reason as openPalette().
+    static bool reloadTabFont(WindowManager *wm, const std::string &pattern);
+
+    // Re-lay this frame out after the shared tab font changed. The tab's
+    // thickness moves with the face's metrics, so the indents move with it and
+    // the frame, the tab, the button and the shape must all be recomputed --
+    // which is exactly what the thickness path above already does, so this
+    // delegates to it rather than computing the same geometry a second way.
+    // The label is redrawn afterwards because the FACE changed, which the
+    // thickness path has no reason to do.
+    void relayoutForTabFont(int x, int y, int w, int h);
 
     // Fullscreen support
     void stripForFullscreen();
@@ -69,22 +228,6 @@ public:
 
 private:
     void fatal(const char *m);
-
-    // XDIS-04: which rung of the tab-font degradation ladder this process
-    // landed on. Established once, at the first Border construction, and never
-    // revisited -- font availability is fixed for the lifetime of the X
-    // connection, exactly like the extension sentinels in include/Manager.h.
-    //
-    // Rung 1 is the normal path and the only one that prints nothing; every
-    // other rung announces itself on stderr so a release-evidence transcript
-    // records the degradation instead of leaving it to be inferred from a
-    // screenshot.
-    enum class TabFontRung {
-        RotatedPreferred,   // 1 -- sideways labels from the preferred chain
-        RotatedGeneric,     // 2 -- sideways labels from the generic sans chain
-        Unrotated,          // 3 -- horizontal labels, truncated to the tab width
-        NoFont              // 4 -- no label at all; frames are still drawn (None is an Xlib macro)
-    };
 
     std::string m_label;
 
@@ -157,6 +300,11 @@ private:
 
     // Static resources shared across all Border instances
     static int m_tabWidth;
+    // The one column the rotated label's baseline sits on -- a property of
+    // the FONT, measured beside m_tabWidth when a face is loaded, never of
+    // the title. Left at -1 on the unrotated and no-font rungs, which do not
+    // read it (quick task 260906-ldw; see src/Border.cpp).
+    static int m_tabBaseline;
     static XftFont *m_tabFont;         // raw pointer, managed via static refcount
     static TabFontRung m_tabFontRung;
 

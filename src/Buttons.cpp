@@ -1,6 +1,7 @@
 #include "Manager.h"
 #include "Client.h"
 #include "MenuPaint.h"
+#include "RootMenuModel.h"
 #include <cstdio>
 #include <cstring>
 #include <sys/time.h>
@@ -232,28 +233,78 @@ void WindowManager::menu(XButtonEvent *e)
 {
     if (e->window == m_menuWindow || e->window == m_submenuWindow) return;
 
+    // CGUI-04 (plan 09-05). Two things happen here, in this order, and both
+    // exist because the manual menu entries can now change while the window
+    // manager is running.
+    //
+    // FIRST, pick up a list a `set` deferred. applyConfig() will not rebuild
+    // m_appCategories while a menu is open, because the modal loop below holds
+    // a pointer INTO it (subEntries), so the rebuild happens here instead --
+    // before a single label is read, and while no loop is iterating anything.
+    //
+    // SECOND, say so for the duration. The flag is what applyConfig() consults,
+    // and it is cleared on EVERY exit from this function by the guard below
+    // rather than at the returns, because this function has several and a
+    // missed one would leave the window manager permanently deferring rebuilds.
+    if (m_appCategoriesStale) {
+        rebuildAppCategoriesFromConfig();
+        m_appCategoriesStale = false;
+    }
+
+    struct MenuOpenGuard {
+        bool &flag;
+        explicit MenuOpenGuard(bool &f) : flag(f) { flag = true; }
+        ~MenuOpenGuard() { flag = false; }
+    } menuOpenGuard(m_menuOpen);
+
     std::vector<Client*> clients;
     clients.reserve(m_hiddenClients.size());
     std::transform(m_hiddenClients.begin(), m_hiddenClients.end(),
                    std::back_inserter(clients),
                    [](const std::unique_ptr<Client>& hc) { return hc.get(); });
 
-    const int nh = static_cast<int>(clients.size()) + 1;
-    const int numCategories = static_cast<int>(m_appCategories.size());
-    int n = static_cast<int>(clients.size()) + 1 + numCategories;
-
     const int mx = screenWidth() - 1;
     const int my = screenHeight() - 1;
 
-    const bool allowExit = ((e->x > mx - 3) && (e->y > my - 3));
-    if (allowExit) n += 1;
+    // The top level's shape, in one place. Four sites below index this list --
+    // the label lambda, the right-alignment test in the row painter, the
+    // category hit test in the pointer policy, and the selection dispatch after
+    // the loop -- and each of them used to carry its own copy of the same
+    // bounds. include/RootMenuModel.h holds the one copy now, and a
+    // display-free case in tests/test_menupaint.cpp pins every index in it.
+    RootMenuLayout layout;
+    layout.hiddenClients   = static_cast<int>(clients.size());
+    layout.categories      = static_cast<int>(m_appCategories.size());
+    layout.hasConfigureGui = m_configGuiOnPath;
+    layout.allowExit       = ((e->x > mx - 3) && (e->y > my - 3));
+
+    // Kept as a named local because the rest of this function reads it a dozen
+    // times, and `layout.count()` inside a width loop would be a function call
+    // per row for no gain in clarity. The `nh`, `numCategories` and `allowExit`
+    // this function carried alongside it are gone: every site that used to
+    // compute a bound from them now asks layout.slotAt() what a row IS, which
+    // is the question all four of them were really asking.
+    const int n = layout.count();
 
     auto outerLabel = [&](int idx) -> const char* {
-        if (idx == 0) return m_menuCreateLabel;
-        if (idx < nh) return clients[idx - 1]->label().c_str();
-        if (idx < nh + numCategories) return m_appCategories[idx - nh].first.c_str();
-        if (allowExit && idx == n - 1) return "[Exit wm2]";
-        return clients[idx - 1]->label().c_str();
+        switch (layout.slotAt(idx)) {
+        case RootMenuSlot::Create:
+            return m_menuCreateLabel;
+        case RootMenuSlot::HiddenClient:
+            return clients[layout.hiddenClientAt(idx)]->label().c_str();
+        case RootMenuSlot::Category:
+            return m_appCategories[layout.categoryAt(idx)].first.c_str();
+        case RootMenuSlot::ConfigureGui:
+            return kRootMenuConfigureLabel;
+        case RootMenuSlot::Exit:
+            return kRootMenuExitLabel;
+        case RootMenuSlot::OutOfRange:
+            break;
+        }
+        // Unreachable for any idx in [0, n). The chain this replaced ended by
+        // indexing `clients` with whatever arrived instead, which is undefined
+        // behaviour on exactly the inputs a future bug would supply.
+        return "";
     };
 
     const int entryHeight = m_menuFont->ascent + m_menuFont->descent + 4;
@@ -351,9 +402,10 @@ void WindowManager::menu(XButtonEvent *e)
         XftTextExtentsUtf8(display(), m_menuFont,
             reinterpret_cast<const FcChar8*>(label), len, &ext);
         const int dy = i * entryHeight + m_menuFont->ascent + 10;
-        // The Exit row is right-aligned; category rows also sit at idx >= nh
-        // but stay left-aligned, so the test is on the Exit row specifically.
-        const int dx = (allowExit && i == n - 1)
+        // The Exit row is right-aligned; the category rows and the Configure
+        // row also sit past nh but stay left-aligned, so the test names the
+        // Exit slot rather than describing where it happens to be.
+        const int dx = (layout.slotAt(i) == RootMenuSlot::Exit)
                      ? outerW - 8 - static_cast<int>(ext.width)
                      : 8;
         XftDrawStringUtf8(m_menuDraw.get(), m_menuFgColor.get(),
@@ -538,8 +590,8 @@ void WindowManager::menu(XButtonEvent *e)
         const int row = rowAt(ry - outerY, n, outerSel);
         setOuterSel(row);
 
-        if (row >= nh && row < nh + numCategories) {
-            const int cat = row - nh;
+        if (layout.slotAt(row) == RootMenuSlot::Category) {
+            const int cat = layout.categoryAt(row);
             if (cat != openCat) {
                 closeSubmenu();
                 openSubmenu(cat, row);
@@ -663,33 +715,59 @@ void WindowManager::menu(XButtonEvent *e)
 
     if (chosenOuter < 0) return;
 
-    if (allowExit && chosenOuter == n - 1) {
+    switch (layout.slotAt(chosenOuter)) {
+    case RootMenuSlot::Exit:
         m_signalled = 1;
         // Wake a blocked poll() the same way a signal does. The loop now
         // observes m_signalled, but if it is already parked in poll() with no
         // timer armed nothing would arrive to make it look.
         wakeEventLoop();
         return;
-    }
 
-    if (chosenOuter == 0) {
+    case RootMenuSlot::Create:
         spawn();
-    } else if (chosenOuter < nh) {
-        clients[chosenOuter - 1]->unhide(true);
-    } else if (chosenOuter < nh + numCategories) {
+        return;
+
+    case RootMenuSlot::HiddenClient:
+        clients[layout.hiddenClientAt(chosenOuter)]->unhide(true);
+        return;
+
+    case RootMenuSlot::Category:
         // A category row released with nothing chosen in its submenu: the
         // submenu opens on hover, so this means "backed out". Nothing to do.
-    } else if (chosenOuter < n) {
-        clients[chosenOuter - 1]->mapRaised();
-        clients[chosenOuter - 1]->ensureVisible();
+        return;
+
+    case RootMenuSlot::ConfigureGui:
+        // D-11. spawnArgv() rather than a fork of its own: it is the same
+        // double-fork the New entry and the discovered-application entries go
+        // through, so the existing reaping guarantee -- and the [wm_stress]
+        // assertion behind it -- covers this entry without a line of new
+        // process code. It never routes through a shell, which is why the
+        // argv is a single literal name and not a command string.
+        spawnArgv({kRootMenuConfigureBinary});
+        return;
+
+    case RootMenuSlot::OutOfRange:
+        // Unreachable: chosenOuter came from rowAt(), which returns -1 or an
+        // index inside [0, n), and the negative case returned above. The chain
+        // this replaced ended with a `chosenOuter < n` arm that was already
+        // unreachable for the same reason and would have called mapRaised() on
+        // a hidden-client index computed from a category row.
+        return;
     }
 }
 
 
 void WindowManager::showGeometry(int x, int y)
 {
-    char string[20];
-    std::sprintf(string, "%d %d\n", x, y);
+    // 32, and snprintf (WR-16). Two ints at their widest produce
+    // "-2147483648 -2147483648\n" -- 24 bytes plus the terminator, into what
+    // was a 20-byte buffer. The current callers pass screen-clamped
+    // coordinates so it was latent rather than live, but showGeometry() is a
+    // public method with no documented bound on its arguments and sprintf
+    // gives it no way to fail safely.
+    char string[32];
+    std::snprintf(string, sizeof(string), "%d %d\n", x, y);
     int len = static_cast<int>(std::strlen(string));
 
     XGlyphInfo extents;

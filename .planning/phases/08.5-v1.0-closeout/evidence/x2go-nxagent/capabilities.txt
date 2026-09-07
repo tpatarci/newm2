@@ -6,7 +6,7 @@ wm2-born-again display capability capture
   label:        x2go-nxagent
   display:      :92
   timestamp:    2026-08-30T07:47:32Z (UTC)
-  host:         tomislav-HP-Z440-Workstation
+  host:         <workstation>
   kernel:       Linux 6.8.0-124-generic
   distro:       Ubuntu 22.04.5 LTS
   commit:       f5bbea7342c1c1805770fd4e38d1d3274d95e220

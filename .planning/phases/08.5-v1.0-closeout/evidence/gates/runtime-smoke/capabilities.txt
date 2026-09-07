@@ -6,7 +6,7 @@ wm2-born-again display capability capture
   label:        runtime-smoke
   display:      :136
   timestamp:    2026-09-05T17:05:44Z (UTC)
-  host:         tomislav-HP-Z440-Workstation
+  host:         <workstation>
   kernel:       Linux 6.8.0-124-generic
   distro:       Ubuntu 22.04.5 LTS
   commit:       39de54811084154ddac1d2115e5f950b0c9f1565

@@ -1,0 +1,965 @@
+// The libc half of the configuration socket: the path, the directory, the
+// boundary verdicts and the accept/read/write loop.
+//
+// No X11, no Xft, no GTK, no project header but include/SocketServer.h and the
+// wire contract it pulls in. test_config_socket compiles this file straight
+// into itself (the test_config pattern) and runs with no X server.
+//
+// TWO RULES HOLD THROUGHOUT AND NEITHER HAS AN EXCEPTION:
+//
+//   1. Nothing here blocks. Every descriptor is created non-blocking, every
+//      read is a SINGLE recv() per readable notification -- never a loop that
+//      could spin on a fast writer -- and every write is a single send() whose
+//      remainder is buffered rather than waited on. The window manager has one
+//      thread and it is also the thread that draws frames (T-9-15).
+//
+//   2. Nothing grows without a bound. The input buffer is capped at the
+//      protocol's line bound and the output buffer at kConfigSocketMaxPending;
+//      reaching either is a refusal and a close, not an allocation (T-9-14).
+
+#include "SocketServer.h"
+
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <cerrno>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+
+namespace {
+
+// The servicing-depth bracket, as an object rather than as a pair of
+// statements (W-01, CR-01).
+//
+// service() may not leave m_serviceDepth raised on ANY exit. A handler that
+// throws -- std::bad_alloc from the string, Config and vector copies
+// WindowManager::handleConfigRequest performs -- would skip a bare
+// `--m_serviceDepth` and wedge reap() into deferring for ever, which ends as a
+// configuration socket that accepts nothing for the rest of the session. The
+// window manager has one thread, so this counts nesting and never contention.
+class ServiceDepthGuard {
+public:
+    explicit ServiceDepthGuard(std::size_t& depth) : m_depth(depth) { ++m_depth; }
+    ~ServiceDepthGuard() { --m_depth; }
+
+    ServiceDepthGuard(const ServiceDepthGuard&) = delete;
+    ServiceDepthGuard& operator=(const ServiceDepthGuard&) = delete;
+
+private:
+    std::size_t& m_depth;
+};
+
+// The `which connection is being served` bracket, as an object for the same
+// reason ServiceDepthGuard is one (W-01, W-04): a handler that throws must not
+// leave the server believing it is still answering a connection that is no
+// longer being read.
+class ServingFdGuard {
+public:
+    ServingFdGuard(int& slot, int fd) : m_slot(slot), m_previous(slot) { m_slot = fd; }
+    ~ServingFdGuard() { m_slot = m_previous; }
+
+    ServingFdGuard(const ServingFdGuard&) = delete;
+    ServingFdGuard& operator=(const ServingFdGuard&) = delete;
+
+private:
+    int& m_slot;
+    int  m_previous;
+};
+
+// steady_clock milliseconds. Steady rather than wall-clock so the silence
+// deadline survives a clock adjustment, exactly as the timestamp wait's
+// deadline does (include/TimestampWait.h).
+long long nowMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// Fill a sockaddr_un for `path`. The caller has already established the path
+// fits; this asserts it again rather than trusting, because a silent truncation
+// here binds somewhere else entirely.
+bool fillAddress(const std::string& path, struct sockaddr_un& addr)
+{
+    if (!configSocketPathFits(path)) return false;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    std::memcpy(addr.sun_path, path.c_str(), path.size());
+    addr.sun_path[path.size()] = '\0';
+    return true;
+}
+
+bool setNonBlockingCloexec(int fd)
+{
+    int flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags < 0 || ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return false;
+    int fdFlags = ::fcntl(fd, F_GETFD, 0);
+    if (fdFlags < 0 || ::fcntl(fd, F_SETFD, fdFlags | FD_CLOEXEC) < 0) return false;
+    return true;
+}
+
+// The one place a refusal reply is spelled. The key is empty because a
+// transport-level refusal is not about any key.
+std::string errorLine(const char* reason)
+{
+    ConfigMessage m;
+    m.type = ConfigMessageType::Error;
+    m.reason = reason;
+    return configProtocolEncode(m);
+}
+
+}  // namespace
+
+
+// -----------------------------------------------------------------------------
+// Path resolution (DISC-02)
+// -----------------------------------------------------------------------------
+
+std::string configSocketDirectory()
+{
+    const char* runtime = std::getenv("XDG_RUNTIME_DIR");
+    if (runtime && runtime[0] == '/') {
+        return std::string(runtime) + "/wm2-born-again";
+    }
+    // The ONE documented fallback (D-16). The uid is in the NAME, not merely in
+    // the mode: two users falling back to /tmp must not contend for one path.
+    return "/tmp/wm2-born-again-" + std::to_string(static_cast<unsigned long>(::geteuid()));
+}
+
+
+std::string configSocketPath(const char* displayName)
+{
+    std::string suffix;
+    if (displayName != nullptr) {
+        for (const char* p = displayName; *p != '\0'; ++p) {
+            const unsigned char c = static_cast<unsigned char>(*p);
+            const bool safe = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                              (c >= '0' && c <= '9') ||
+                              c == '.' || c == '_' || c == '-';
+            suffix += safe ? static_cast<char>(c) : '_';
+        }
+    }
+    // Total by construction: an absent or empty DISPLAY still names a socket,
+    // rather than producing a directory path with a trailing "socket".
+    if (suffix.empty()) suffix = "_";
+
+    return configSocketDirectory() + "/socket" + suffix;
+}
+
+
+bool configSocketPathFits(const std::string& path)
+{
+    struct sockaddr_un addr;
+    return path.size() + 1 <= sizeof(addr.sun_path);
+}
+
+
+// -----------------------------------------------------------------------------
+// Boundary verdicts (D-16)
+// -----------------------------------------------------------------------------
+
+bool configSocketPeerUid(int fd, uid_t& out)
+{
+    struct ucred cred;
+    socklen_t len = sizeof(cred);
+    if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0) return false;
+    if (len != sizeof(cred)) return false;
+    out = cred.uid;
+    return true;
+}
+
+
+PeerVerdict configSocketPeerVerdict(int fd, uid_t self)
+{
+    uid_t peer = 0;
+    if (!configSocketPeerUid(fd, peer)) return PeerVerdict::Unknown;
+    // EQUALITY, not a range and not a capability test. root is uid 0 and is
+    // foreign to a window manager running as anyone else, which is what D-16
+    // names explicitly (T-9-12).
+    return (peer == self) ? PeerVerdict::SameUid : PeerVerdict::ForeignUid;
+}
+
+
+StaleVerdict configSocketStaleVerdict(const std::string& path)
+{
+    struct stat st;
+    if (::lstat(path.c_str(), &st) != 0) return StaleVerdict::NoFile;
+
+    // Not a socket: not ours to remove. A regular file, a symlink or a
+    // directory at this path was not put there by a window manager, and
+    // unlinking whatever happens to be in the way is precisely the behaviour
+    // that lets a pre-placed path be replaced (T-9-17).
+    if (!S_ISSOCK(st.st_mode)) return StaleVerdict::Live;
+
+    struct sockaddr_un addr;
+    if (!fillAddress(path, addr)) return StaleVerdict::Live;
+
+    // NON-BLOCKING, AND BOUNDED (WR-08). connect() on an AF_UNIX stream socket
+    // BLOCKS when the peer's listen backlog is full, and this runs inside
+    // ConfigSocketServer::listen() -- before the event loop or the root window
+    // exist. A same-uid process that binds the socket path, calls listen(fd, 1)
+    // and never accepts would otherwise hold the window manager here
+    // indefinitely: it never starts, and prints nothing.
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    if (fd < 0) return StaleVerdict::Live;   // cannot prove stale; do not unlink
+
+    int rc  = ::connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+    int err = errno;
+
+    if (rc < 0 && (err == EINPROGRESS || err == EAGAIN || err == EWOULDBLOCK)) {
+        struct pollfd p;
+        p.fd      = fd;
+        p.events  = POLLOUT;
+        p.revents = 0;
+        if (::poll(&p, 1, kConfigSocketStaleProbeMs) <= 0) {
+            // Nobody said no in the time allowed. Conservative: a path this
+            // process cannot prove is dead is never unlinked.
+            ::close(fd);
+            return StaleVerdict::Live;
+        }
+        socklen_t len = sizeof(err);
+        if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) != 0) {
+            ::close(fd);
+            return StaleVerdict::Live;
+        }
+        rc = (err == 0) ? 0 : -1;
+    }
+
+    ::close(fd);
+
+    if (rc == 0) return StaleVerdict::Live;                 // somebody answered
+    if (err == ECONNREFUSED || err == ENOENT) return StaleVerdict::Stale;
+    return StaleVerdict::Live;                              // unknown: conservative
+}
+
+
+// -----------------------------------------------------------------------------
+// ConfigSocketServer
+// -----------------------------------------------------------------------------
+
+ConfigSocketServer::ConfigSocketServer() = default;
+
+ConfigSocketServer::~ConfigSocketServer()
+{
+    close();
+}
+
+
+bool ConfigSocketServer::listen(const char* displayName)
+{
+    close();
+
+    m_directory = configSocketDirectory();
+    m_path      = configSocketPath(displayName);
+
+    if (!configSocketPathFits(m_path)) {
+        // Named, not truncated (RESEARCH Pitfall 4). The window manager carries
+        // on with no socket.
+        struct sockaddr_un probe;
+        std::fprintf(stderr,
+                     "wm2: warning: configuration socket path is too long "
+                     "(%zu bytes, limit %zu), no socket will be created\n",
+                     m_path.size() + 1, sizeof(probe.sun_path));
+        m_path.clear();
+        return false;
+    }
+
+    // The directory, mode 0700 and verified rather than trusted. mkdir applies
+    // the umask, so the mode is set explicitly afterwards; an existing
+    // directory is checked, because a directory this process did not create is
+    // a directory whose mode it does not know.
+    //
+    // NOTHING BELOW OPERATES ON THE DIRECTORY BY NAME AFTER THE mkdir (CR-03).
+    // mkdir() on an existing symlink-to-directory returns EEXIST, and chmod()
+    // and stat() both FOLLOW symlinks -- so a by-name sequence inspects and
+    // modifies the LINK'S TARGET rather than the path the socket will live
+    // under. D-16's documented fallback is /tmp/wm2-born-again-<uid>: a
+    // predictable name in a world-writable directory, and the ordinary state
+    // under `su`, a bare startx and the minimal VNC session scripts this
+    // project targets. An attacker who plants that name as a symlink to a
+    // directory the victim owns would otherwise get an attacker-directed
+    // `chmod 0700` on it and a socket node inside it.
+    //
+    // So: open the final component with O_NOFOLLOW and work through the
+    // descriptor. The ELOOP that O_NOFOLLOW produces IS the symlink refusal;
+    // the socket NODE's handling has always been this careful
+    // (configSocketStaleVerdict's lstat + S_ISSOCK, T-9-17), and the asymmetry
+    // between the two is what made this a defect rather than an accepted risk.
+    if (::mkdir(m_directory.c_str(), 0700) != 0 && errno != EEXIST) {
+        std::fprintf(stderr, "wm2: warning: cannot create %s (%s), "
+                             "no configuration socket\n",
+                     m_directory.c_str(), std::strerror(errno));
+        return false;
+    }
+
+    const int dirFd = ::open(m_directory.c_str(),
+                             O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dirFd < 0) {
+        std::fprintf(stderr, "wm2: warning: %s is not a directory this process "
+                             "may use (%s), no configuration socket\n",
+                     m_directory.c_str(), std::strerror(errno));
+        return false;
+    }
+
+    struct stat dst;
+    if (::fstat(dirFd, &dst) != 0 || !S_ISDIR(dst.st_mode) ||
+        dst.st_uid != ::geteuid()) {
+        std::fprintf(stderr, "wm2: warning: %s is not a directory owned by this "
+                             "user, no configuration socket\n",
+                     m_directory.c_str());
+        ::close(dirFd);
+        return false;
+    }
+
+    // Corrected only when it is wrong, and through the descriptor that has
+    // already been proved to name a directory this user owns.
+    if ((dst.st_mode & 07777) != 0700 && ::fchmod(dirFd, 0700) != 0) {
+        std::fprintf(stderr, "wm2: warning: cannot set mode 0700 on %s (%s), "
+                             "no configuration socket\n",
+                     m_directory.c_str(), std::strerror(errno));
+        ::close(dirFd);
+        return false;
+    }
+    ::close(dirFd);
+
+    // A predecessor's socket. Reclaimed only when nothing answers on it.
+    switch (configSocketStaleVerdict(m_path)) {
+    case StaleVerdict::NoFile:
+        break;
+    case StaleVerdict::Stale:
+        if (::unlink(m_path.c_str()) != 0) {
+            std::fprintf(stderr, "wm2: warning: cannot remove stale socket %s (%s), "
+                                 "no configuration socket\n",
+                         m_path.c_str(), std::strerror(errno));
+            return false;
+        }
+        break;
+    case StaleVerdict::Live:
+        std::fprintf(stderr, "wm2: warning: %s is already in use, "
+                             "no configuration socket\n", m_path.c_str());
+        return false;
+    }
+
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        std::fprintf(stderr, "wm2: warning: cannot create configuration socket (%s)\n",
+                     std::strerror(errno));
+        return false;
+    }
+    if (!setNonBlockingCloexec(fd)) {
+        std::fprintf(stderr, "wm2: warning: cannot configure the listening socket (%s)\n",
+                     std::strerror(errno));
+        ::close(fd);
+        return false;
+    }
+
+    struct sockaddr_un addr;
+    if (!fillAddress(m_path, addr)) {
+        ::close(fd);
+        return false;
+    }
+
+    if (::bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) != 0) {
+        std::fprintf(stderr, "wm2: warning: cannot bind %s (%s), "
+                             "no configuration socket\n",
+                     m_path.c_str(), std::strerror(errno));
+        ::close(fd);
+        return false;
+    }
+    m_bound = true;
+
+    // 0600 as D-16 requires, belt to the directory's braces. Set after bind
+    // because bind() is what creates the node.
+    if (::chmod(m_path.c_str(), 0600) != 0) {
+        std::fprintf(stderr, "wm2: warning: cannot set mode 0600 on %s (%s), "
+                             "no configuration socket\n",
+                     m_path.c_str(), std::strerror(errno));
+        ::close(fd);
+        ::unlink(m_path.c_str());
+        m_bound = false;
+        return false;
+    }
+
+    if (::listen(fd, 8) != 0) {
+        std::fprintf(stderr, "wm2: warning: cannot listen on %s (%s), "
+                             "no configuration socket\n",
+                     m_path.c_str(), std::strerror(errno));
+        ::close(fd);
+        ::unlink(m_path.c_str());
+        m_bound = false;
+        return false;
+    }
+
+    m_listenFd = fd;
+
+    const char* force = std::getenv("WM2_SOCKET_FORCE_FOREIGN");
+    m_forceForeign = (force != nullptr && std::strcmp(force, "1") == 0);
+    if (m_forceForeign) {
+        // Worded so a captured transcript proves the lever was taken, the same
+        // discipline the shape and randr levers follow.
+        std::fprintf(stderr, "wm2: warning: configuration socket peer check "
+                             "forced to refuse, no client will be admitted\n");
+    }
+
+    std::fprintf(stderr, "  Configuration socket: %s\n", m_path.c_str());
+    return true;
+}
+
+
+void ConfigSocketServer::appendPollFds(std::vector<struct pollfd>& out) const
+{
+    if (m_listenFd < 0) return;
+
+    struct pollfd p;
+    p.fd      = m_listenFd;
+    // POLLIN is dropped while the accept stall is in force (WR-06). The
+    // listener is still in the set -- its failure bits are delivered whether
+    // or not .events asked for them, and the positional contract the two poll
+    // sites share must not change -- but a readable listener this process has
+    // no descriptor to accept with is a busy loop, not work.
+    p.events  = (m_acceptStalledUntilMs > nowMs()) ? 0 : static_cast<short>(POLLIN);
+    p.revents = 0;
+    out.push_back(p);
+
+    for (const Connection& c : m_clients) {
+        struct pollfd q;
+        q.fd      = c.fd;
+        // A connection with nothing left to say is polled for readability only.
+        // POLLOUT is asked for ONLY while a reply is still unsent, because a
+        // permanently writable descriptor with POLLOUT set turns every poll()
+        // into a busy loop.
+        q.events  = static_cast<short>((c.closing ? 0 : POLLIN) |
+                                       (c.out.empty() ? 0 : POLLOUT));
+        q.revents = 0;
+        out.push_back(q);
+    }
+}
+
+
+int ConfigSocketServer::timeoutHintMs() const
+{
+    if (m_listenFd < 0) return -1;
+
+    long long earliest = -1;
+    for (const Connection& c : m_clients) {
+        if (c.helloSeen || c.closing) continue;
+        if (earliest < 0 || c.deadlineMs < earliest) earliest = c.deadlineMs;
+    }
+    // The accept stall is the second thing that fires on the passage of time
+    // alone (WR-06): a poll that blocked past it would leave the pending
+    // connection unaccepted until something else happened to wake the loop.
+    if (m_acceptStalledUntilMs > nowMs() &&
+        (earliest < 0 || m_acceptStalledUntilMs < earliest)) {
+        earliest = m_acceptStalledUntilMs;
+    }
+    if (earliest < 0) return -1;
+
+    const long long left = earliest - nowMs();
+    if (left <= 0) return 0;
+    if (left > 60000) return 60000;
+    return static_cast<int>(left);
+}
+
+
+void ConfigSocketServer::service(const std::vector<struct pollfd>& fds,
+                                 std::size_t firstIndex, const Handler& handler)
+{
+    if (m_listenFd < 0) return;
+
+    // The silence deadline fires on the passage of time, so it is evaluated on
+    // EVERY call and not only when some descriptor spoke.
+    expireSilent();
+
+    // The set has to be the one appendPollFds() filled. A mismatch is ignored
+    // rather than misread: reading connection i's verdict off some other
+    // descriptor is worse than doing nothing this iteration.
+    const std::size_t needed = firstIndex + 1 + m_clients.size();
+    if (fds.size() >= needed && fds[firstIndex].fd == m_listenFd) {
+
+        // Connections FIRST, so nothing an accept does can shift the indices
+        // being read here.
+        //
+        // THE WHOLE LOOP IS ONE SERVICING PASS (CR-01). A handler is allowed to
+        // call back into this server -- the window manager's broadcasts D-08's
+        // reload notice from inside the `reload` it is answering -- and a reap
+        // running under this loop would erase, shift and destroy the very
+        // elements it is indexing. So reap() defers while the depth is
+        // non-zero and is paid once, below, when every handler has returned.
+        //
+        // RAII, NOT A ++/-- PAIR (W-01). The handler is
+        // WindowManager::handleConfigRequest, which builds and copies
+        // std::strings, a whole Config and a std::vector<AppEntry>: on the
+        // 512 MB VPS this project's constraints name, std::bad_alloc is
+        // reachable. An exception past a bare `--m_serviceDepth` leaves the
+        // depth stuck at one for the life of the process, reap() then defers
+        // on EVERY later call, dead connections accumulate to
+        // kConfigSocketMaxClients, and the configuration socket is
+        // permanently deaf with no diagnostic. The same shape as
+        // ModalDepthGuard in src/Events.cpp, for the same reason.
+        {
+            const ServiceDepthGuard depth(m_serviceDepth);
+            for (std::size_t i = 0; i < m_clients.size(); ++i) {
+                const struct pollfd& p = fds[firstIndex + 1 + i];
+                if (p.fd != m_clients[i].fd) continue;
+
+                if (p.revents & POLLOUT) flush(m_clients[i]);
+                if (m_clients[i].dead) continue;
+
+                switch (socketServerDecide(p.revents)) {
+                case SocketAction::ReadClient:
+                    readConnection(i, handler);
+                    break;
+                case SocketAction::CloseClient:
+                    closeConnection(m_clients[i]);
+                    break;
+                case SocketAction::Accept:
+                    // Unreachable for a connection role; named rather than left to
+                    // a default arm so a fifth action is a compile error here.
+                    break;
+                case SocketAction::Idle:
+                    break;
+                }
+            }
+        }   // released here, on EVERY exit including an unwind
+
+        reap();
+
+        // THE LISTENER, AS A SWITCH RATHER THAN AS ONE `if` (codex pass 3).
+        //
+        // This was `if (... == Accept) acceptPending();` and nothing else, so
+        // the CloseClient verdict the decision function has always returned for
+        // POLLERR, POLLHUP and POLLNVAL on a listener was computed and then
+        // discarded. Those bits are level-triggered and appendPollFds() keeps
+        // offering the descriptor, so both poll sites in src/Events.cpp came
+        // back immediately, for ever, on a socket that could never serve
+        // anybody again -- a window manager pinning a core on the 512 MB VPS
+        // this project's constraints name. Named arms, no default: a fifth
+        // action is a compile error here rather than another dropped verdict.
+        switch (socketServerDecide(fds[firstIndex].revents, SocketRole::Listener)) {
+        case SocketAction::Accept:
+            acceptPending();
+            break;
+        case SocketAction::CloseClient: {
+            // Said ONCE, because close() is what stops this branch from being
+            // reached again: isListening() goes false, and the window manager's
+            // serviceConfigSocket() does not call in at all after that.
+            std::fprintf(stderr,
+                         "wm2: warning: the configuration socket's listening "
+                         "descriptor failed; the socket is shut down for the "
+                         "rest of this session\n");
+            std::fflush(stderr);
+            // Closes every connection, closes the listener and unlinks the
+            // path, so the next window manager on this display finds nothing to
+            // reclaim.
+            close();
+            break;
+        }
+        case SocketAction::ReadClient:
+            // Unreachable for the listener role; named rather than left to a
+            // default arm, exactly as Accept is in the connection loop above.
+            break;
+        case SocketAction::Idle:
+            break;
+        }
+    } else {
+        reap();
+    }
+}
+
+
+void ConfigSocketServer::acceptPending()
+{
+    for (;;) {
+        const int fd = ::accept(m_listenFd, nullptr, nullptr);
+        if (fd < 0) {
+            // EVERY accept() ERROR USED TO MEAN "NOTHING LEFT" (WR-06), which
+            // is true of exactly one of them.
+            if (errno == EINTR || errno == ECONNABORTED) {
+                // A connection that went away between the poll and the accept.
+                // The NEXT pending one is still pending, so this is not the end
+                // of the batch.
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;  // the real "nothing left"
+            if (errno == EMFILE || errno == ENFILE) {
+                // The connection stays pending and poll() is level-triggered,
+                // so without this the listener is readable again immediately
+                // and the window manager spins at full CPU for as long as the
+                // process is out of descriptors.
+                if (!m_acceptStallReported) {
+                    m_acceptStallReported = true;
+                    std::fprintf(stderr,
+                                 "wm2: warning: out of descriptors accepting a "
+                                 "configuration socket connection (%s); the "
+                                 "listener will be retried\n",
+                                 std::strerror(errno));
+                    std::fflush(stderr);
+                }
+                m_acceptStalledUntilMs = nowMs() + kConfigSocketAcceptStallMs;
+                break;
+            }
+            break;
+        }
+
+        // A descriptor was obtained, so whatever the shortage was, it is over.
+        m_acceptStalledUntilMs = 0;
+        m_acceptStallReported  = false;
+
+        if (!setNonBlockingCloexec(fd)) {
+            ::close(fd);
+            continue;
+        }
+
+        // THE BOUNDARY, BEFORE THE FIRST READ. A foreign process never reaches
+        // configProtocolDecode() (T-9-11, T-9-12).
+        uid_t peer = 0;
+        const bool known = configSocketPeerUid(fd, peer);
+        PeerVerdict verdict = configSocketPeerVerdict(fd, ::geteuid());
+        if (m_forceForeign) verdict = PeerVerdict::ForeignUid;
+
+        if (verdict != PeerVerdict::SameUid) {
+            warnForeign(peer, known);
+            ::close(fd);
+            continue;
+        }
+
+        if (m_clients.size() >= kConfigSocketMaxClients) dropOldestSilent();
+        if (m_clients.size() >= kConfigSocketMaxClients) {
+            ::close(fd);
+            continue;
+        }
+
+        Connection c;
+        c.fd         = fd;
+        c.deadlineMs = nowMs() + kConfigSocketHelloDeadlineMs;
+        m_clients.push_back(std::move(c));
+    }
+}
+
+
+void ConfigSocketServer::readConnection(std::size_t index, const Handler& handler)
+{
+    // BY INDEX, NEVER BY A REFERENCE HELD ACROSS THE HANDLER (CR-01). The
+    // handler is the window manager's, and a `reload` reaches
+    // reloadConfigFromDisk(), which broadcasts on this server -- so control
+    // re-enters this object between the frame being extracted and the reply
+    // being written. A `Connection&` taken before the call and used after it is
+    // a reference into a vector the call may have shifted, moved from or
+    // shortened; the ASan report that led to this shape named exactly that
+    // write. The descriptor the index named on entry is remembered too, so an
+    // index that survives while its OCCUPANT changed is caught as well.
+    if (index >= m_clients.size()) return;
+    const int fdAtEntry = m_clients[index].fd;
+
+    // ONE receive per readable notification. Not a loop: a peer writing as fast
+    // as this process can read would otherwise keep the window manager inside
+    // this function indefinitely, which is the same stall a blocking read would
+    // cause by a different route (T-9-15).
+    {
+        Connection& c = m_clients[index];
+
+        char buf[4096];
+        const ssize_t n = ::recv(c.fd, buf, sizeof(buf), 0);
+
+        if (n == 0) {                       // orderly shutdown by the peer
+            closeConnection(c);
+            return;
+        }
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return;
+            closeConnection(c);
+            return;
+        }
+
+        // APPENDED FIRST, AND BOUNDED PER FRAME BELOW -- never on what happens
+        // to be in hand. A unix stream carries bytes, not messages: a client
+        // that sent two legal frames can have the first arrive split across two
+        // reads and the second arrive in the same read as the first one's
+        // remainder, and refusing that aggregate refuses a correct client for a
+        // fact about packetisation it cannot control.
+        //
+        // The buffer stays bounded all the same, and by arithmetic rather than
+        // by hope: the loop below either extracts every complete frame or
+        // refuses an incomplete tail that has reached kConfigProtocolMaxLine,
+        // so what survives a servicing pass is always shorter than the bound.
+        // One recv() adds at most sizeof(buf), which is that same bound. The
+        // buffer therefore never exceeds twice it.
+        c.in.append(buf, static_cast<std::size_t>(n));
+    }
+
+    for (;;) {
+        // RE-TAKEN every iteration, and validated first. Nothing below this
+        // line may be carried across the handler call at the bottom of the
+        // loop.
+        if (index >= m_clients.size()) return;
+        if (m_clients[index].fd != fdAtEntry) return;
+        if (m_clients[index].closing || m_clients[index].dead) return;
+
+        std::string line;
+        bool helloSeen = false;
+        {
+            Connection& c = m_clients[index];
+
+            const std::size_t nl = c.in.find('\n');
+            if (nl == std::string::npos) {
+                // No frame yet. A buffer that has reached the bound without a
+                // newline never will have one, so it is refused now rather than
+                // held (the no-newline-forever case).
+                //
+                // AT the bound rather than past it, deliberately: the newline
+                // that would end this frame counts towards the length, so a
+                // tail already kConfigProtocolMaxLine long can only ever become
+                // a frame one byte too long. Refusing it here is also what
+                // keeps the buffer bounded across reads.
+                if (c.in.size() >= kConfigProtocolMaxLine) {
+                    deliver(c, errorLine("message too long"), true);
+                    c.in.clear();
+                }
+                return;
+            }
+
+            line      = c.in.substr(0, nl + 1);
+            helloSeen = c.helloSeen;
+            c.in.erase(0, nl + 1);
+
+            // THE BOUND, on the frame the framing just produced. Enforced HERE,
+            // at the transport, and not only in the decoder: the decoder never
+            // sees a frame this refuses (T-9-14). The length INCLUDES the
+            // terminating newline, which is how kConfigProtocolMaxLine is
+            // defined and what configProtocolDecode() compares against, so the
+            // two ends cannot disagree about which frames are legal.
+            if (line.size() > kConfigProtocolMaxLine) {
+                deliver(c, errorLine("message too long"), true);
+                c.in.clear();
+                return;
+            }
+        }
+
+        ConfigSocketRequest req;
+        req.line      = std::move(line);
+        req.helloSeen = helloSeen;
+
+        // NAMED FOR THE HANDLER (W-04). The window manager's `reload` handler
+        // broadcasts D-08's notice from inside the call below, and the one
+        // connection that must NOT receive it is this one -- it is about to be
+        // handed its own `reloaded` as the reply, and two indistinguishable
+        // lines are what make "is this mine?" unanswerable for every client.
+        // Saved and restored rather than cleared, and restored on the unwind
+        // too, for the reason W-01 gives about the depth counter beside it.
+        const ServingFdGuard serving(m_servingFd, fdAtEntry);
+
+        const ConfigSocketReply reply = handler(req);
+
+        // The re-look-up. A handler that closed this connection, or a reap
+        // that ran despite the deferral (a caller outside service(), which is
+        // allowed), leaves nothing here to write to.
+        if (index >= m_clients.size()) return;
+        if (m_clients[index].fd != fdAtEntry) return;
+
+        Connection& after = m_clients[index];
+        if (reply.helloAccepted) after.helloSeen = true;
+        if (!reply.line.empty() || reply.closeAfterSend) {
+            deliver(after, reply.line, reply.closeAfterSend);
+        }
+    }
+}
+
+
+void ConfigSocketServer::deliver(Connection& c, const std::string& line,
+                                 bool closeAfter)
+{
+    if (c.out.size() + line.size() > kConfigSocketMaxPending) {
+        // A peer that has stopped reading. Its connection is worth losing.
+        closeConnection(c);
+        return;
+    }
+    c.out += line;
+    if (closeAfter) c.closing = true;
+
+    flush(c);
+}
+
+
+void ConfigSocketServer::flush(Connection& c)
+{
+    while (!c.out.empty()) {
+        // MSG_NOSIGNAL: a peer that vanished mid-reply must not kill the window
+        // manager with SIGPIPE. This is the "one client disconnecting
+        // mid-message does not disturb the other" guarantee at its root.
+        const ssize_t n = ::send(c.fd, c.out.data(), c.out.size(), MSG_NOSIGNAL);
+        if (n > 0) {
+            c.out.erase(0, static_cast<std::size_t>(n));
+            continue;
+        }
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;  // poll again
+        if (n < 0 && errno == EINTR) continue;
+        closeConnection(c);
+        return;
+    }
+    if (c.closing) closeConnection(c);
+}
+
+
+void ConfigSocketServer::broadcast(const std::string& line)
+{
+    broadcastExcept(line, -1);
+}
+
+
+void ConfigSocketServer::broadcastExcept(const std::string& line, int exceptFd)
+{
+    if (line.empty()) return;
+    for (Connection& c : m_clients) {
+        if (!c.helloSeen || c.closing || c.dead) continue;   // never to a stranger
+        // THE REQUESTER IS ANSWERED, NOT BROADCAST TO (W-04, W-05). It gets
+        // exactly one `reloaded` -- its reply -- so a `reloaded` arriving on a
+        // client's socket is unambiguously either its own answer or somebody
+        // else's notice, which is the correlation the frozen wire contract has
+        // no field to carry.
+        if (exceptFd >= 0 && c.fd == exceptFd) continue;
+        deliver(c, line, false);
+    }
+    reap();
+}
+
+
+void ConfigSocketServer::expireSilent()
+{
+    const long long now = nowMs();
+    bool any = false;
+    for (Connection& c : m_clients) {
+        if (c.helloSeen || c.dead) continue;
+        if (c.deadlineMs > now) continue;
+        closeConnection(c);
+        any = true;
+    }
+    if (any) reap();
+}
+
+
+void ConfigSocketServer::dropOldestSilent()
+{
+    // Oldest first, and only among connections that never spoke: a flood of
+    // silent connections must not be able to push out a working client
+    // (T-9-16).
+    for (Connection& c : m_clients) {
+        if (c.helloSeen) continue;
+        closeConnection(c);
+        reap();
+        return;
+    }
+}
+
+
+void ConfigSocketServer::closeConnection(Connection& c)
+{
+    if (c.fd >= 0) ::close(c.fd);
+    c.fd   = -1;
+    c.dead = true;
+}
+
+
+void ConfigSocketServer::reap()
+{
+    // DEFERRED WHILE A SERVICING PASS IS IN FLIGHT (CR-01). Every path that
+    // marks a connection dead ends here -- closeConnection() through
+    // expireSilent(), dropOldestSilent(), flush() and deliver(), and
+    // broadcast(), which a handler may call while this object is walking its
+    // own vector. Erasing there shifts and destroys elements the servicing loop
+    // still names. The debt is recorded and paid by service() the moment the
+    // last handler has returned, so a dead connection lives at most to the end
+    // of the pass that killed it and never past a poll().
+    if (m_serviceDepth != 0) return;
+
+    m_clients.erase(std::remove_if(m_clients.begin(), m_clients.end(),
+                                   [](const Connection& c) { return c.dead; }),
+                    m_clients.end());
+}
+
+
+ForeignWarning socketForeignWarningDecide(bool known, uid_t peer,
+                                          std::vector<uid_t>& warnedUids,
+                                          bool& saturated)
+{
+    // The kernel would not name the peer. Reported once in total, using the
+    // uid-less spelling, and remembered under a sentinel so it cannot flood.
+    const uid_t sentinel = static_cast<uid_t>(-1);
+    const uid_t remembered = known ? peer : sentinel;
+
+    if (std::find(warnedUids.begin(), warnedUids.end(), remembered) !=
+        warnedUids.end()) {
+        return ForeignWarning::Silent;
+    }
+
+    // THE BOUND IS A REFUSAL TO WARN, NOT MERELY A REFUSAL TO REMEMBER
+    // (WR-07). Recording nothing while still printing left the warning
+    // floodable by exactly the caller the log-once rule was written against:
+    // one that reconnects, from uids the memory has no room for.
+    if (warnedUids.size() >= kConfigSocketMaxWarnedUids) {
+        if (saturated) return ForeignWarning::Silent;
+        saturated = true;
+        return ForeignWarning::Saturated;
+    }
+
+    warnedUids.push_back(remembered);
+    return known ? ForeignWarning::Named : ForeignWarning::Unnamed;
+}
+
+
+void ConfigSocketServer::warnForeign(uid_t peer, bool known)
+{
+    // ONCE PER UID, deliberately not once per attempt: the log records the
+    // event without being floodable by a caller that simply reconnects
+    // (T-9-19). The rule itself is the decision above, so that a test can
+    // reach it -- no test can become sixty-five different users.
+    switch (socketForeignWarningDecide(known, peer, m_warnedUids,
+                                       m_warnedUidsSaturated)) {
+    case ForeignWarning::Named:
+        std::fprintf(stderr, "wm2: warning: refused configuration socket "
+                             "connection from uid %lu\n",
+                     static_cast<unsigned long>(peer));
+        std::fflush(stderr);
+        return;
+    case ForeignWarning::Unnamed:
+        std::fprintf(stderr, "wm2: warning: refused configuration socket "
+                             "connection from an unidentifiable peer\n");
+        std::fflush(stderr);
+        return;
+    case ForeignWarning::Saturated:
+        std::fprintf(stderr, "wm2: warning: more than %zu distinct uids have "
+                             "been refused on the configuration socket; "
+                             "further refusals are not logged\n",
+                     kConfigSocketMaxWarnedUids);
+        std::fflush(stderr);
+        return;
+    case ForeignWarning::Silent:
+        return;
+    }
+}
+
+
+void ConfigSocketServer::close()
+{
+    for (Connection& c : m_clients) {
+        if (c.fd >= 0) ::close(c.fd);
+    }
+    m_clients.clear();
+    m_warnedUids.clear();
+    m_warnedUidsSaturated = false;
+
+    if (m_listenFd >= 0) {
+        ::close(m_listenFd);
+        m_listenFd = -1;
+    }
+    if (m_bound && !m_path.empty()) {
+        ::unlink(m_path.c_str());
+        m_bound = false;
+    }
+}

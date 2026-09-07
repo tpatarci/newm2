@@ -2,6 +2,8 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "Config.h"
+#include "ConfigProtocol.h"
+#include "ConfigFileWriter.h"   // kConfigFileMaxValueBytes -- the per-value bound the wire must respect too
 
 #include <cstdlib>
 #include <cstdio>
@@ -9,6 +11,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/wait.h>
 
@@ -25,6 +28,58 @@ static std::string writeTempConfig(const std::string& content) {
 // Helper: clean up temp file
 static void removeTempFile(const std::string& path) {
     std::remove(path.c_str());
+}
+
+// Helper: capture everything written to stderr for the lifetime of the object.
+//
+// The warning-emitting cases assert on the captured TEXT rather than merely on
+// the resulting Config, because a warning that is never emitted is exactly the
+// silent-failure mode they exist to catch. The same shape as
+// tests/test_rules.cpp's StderrCapture, duplicated per the project's
+// per-translation-unit convention for small test helpers.
+class StderrCapture {
+public:
+    StderrCapture() {
+        static int counter = 0;
+        m_path = "/tmp/wm2-test-config-stderr-" + std::to_string(::getpid()) +
+                 "-" + std::to_string(++counter) + ".txt";
+        std::fflush(stderr);
+        m_saved = dup(STDERR_FILENO);
+        m_fd = open(m_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (m_fd >= 0) dup2(m_fd, STDERR_FILENO);
+    }
+
+    StderrCapture(const StderrCapture&) = delete;
+    StderrCapture& operator=(const StderrCapture&) = delete;
+
+    ~StderrCapture() {
+        std::fflush(stderr);
+        if (m_saved >= 0) { dup2(m_saved, STDERR_FILENO); close(m_saved); }
+        if (m_fd >= 0) close(m_fd);
+        std::remove(m_path.c_str());
+    }
+
+    std::string text() const {
+        std::fflush(stderr);
+        std::ifstream in(m_path);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        return ss.str();
+    }
+
+private:
+    std::string m_path;
+    int m_saved = -1;
+    int m_fd = -1;
+};
+
+// The encoded `value` reply that `get menu-entries` would produce for `cfg`.
+static std::string menuEntriesReplyLine(const Config& cfg) {
+    ConfigMessage reply;
+    reply.type  = ConfigMessageType::Value;
+    reply.key   = kMenuEntriesKey;
+    reply.value = configMenuEntriesValue(cfg);
+    return configProtocolEncode(reply);
 }
 
 // =============================================================================
@@ -1062,4 +1117,430 @@ TEST_CASE("menu-entry-category with no preceding menu-entry-name is a no-op", "[
     cfg.applyKeyValue("menu-entry-category", "Graphics");
 
     REQUIRE(cfg.manualMenuEntries.empty());
+}
+
+// Test 41: a ';' in any of the three accumulator values is refused, because a
+// stored ';' makes `get menu-entries` unreadable by `set menu-entries`
+// (CodeRabbit F1, 2026-09-07)
+TEST_CASE("a menu-entry value containing a semicolon is refused by the file parser",
+          "[config]") {
+    // WHY THE FILE PARSER AND NOT THE WIRE PARSER. configMenuEntriesValue()
+    // renders the manual entries as ';'-separated records and
+    // parseMenuEntriesValue() splits on ';' to read them back, so the WIRE
+    // parser cannot produce an entry whose name, command or category contains
+    // a ';'. The config FILE accumulator could -- and the value rendered from
+    // one could not be read back by the parser that is supposed to read it, so
+    // a `set` of exactly what `get` had just printed was refused.
+    //
+    // All THREE keys are exercised in one file, because the renderer emits all
+    // three and a fix that guarded only the name would leave the same defect
+    // reachable through the other two.
+    std::string path = writeTempConfig(
+        "menu-entry-name = a;b\n"
+        "menu-entry-name = Mail\n"
+        "menu-entry-command = mutt;rm -rf\n"
+        "menu-entry-category = Inter;net\n"
+    );
+
+    Config cfg;
+    cfg.applyFile(path);
+    removeTempFile(path);
+
+    const std::string rendered = configMenuEntriesValue(cfg);
+    std::vector<AppEntry> readBack;
+    std::string reason;
+    const bool reRead = parseMenuEntriesValue(rendered, readBack, reason);
+
+    INFO("rendered: " << rendered);
+    INFO("re-read refusal: " << reason);
+    INFO("stored entries: " << cfg.manualMenuEntries.size());
+
+    // THE DEFECT. What `get` prints must be a value `set` accepts, and it must
+    // mean the same list.
+    CHECK(reRead);
+    CHECK(readBack.size() == cfg.manualMenuEntries.size());
+
+    // The refused NAME opened no entry at all, so the well-formed one is the
+    // only entry stored.
+    REQUIRE(cfg.manualMenuEntries.size() == 1);
+    CHECK(cfg.manualMenuEntries[0].name == "Mail");
+
+    // ...and the refused COMMAND and CATEGORY were skipped rather than written
+    // into the entry that was open, which is what keeps the ';' out of the
+    // rendered value by every route into it.
+    CHECK(cfg.manualMenuEntries[0].execArgv.empty());
+    CHECK(cfg.manualMenuEntries[0].category == "Custom");
+
+    // The round trip agrees field by field, not merely in length.
+    if (reRead && readBack.size() == cfg.manualMenuEntries.size()) {
+        for (std::size_t i = 0; i < readBack.size(); ++i) {
+            CHECK(readBack[i].name     == cfg.manualMenuEntries[i].name);
+            CHECK(readBack[i].category == cfg.manualMenuEntries[i].category);
+            CHECK(readBack[i].execArgv == cfg.manualMenuEntries[i].execArgv);
+        }
+    }
+}
+
+// Test 42: an entry the file parser DOES accept still round-trips, so Test 41
+// cannot pass by refusing everything
+TEST_CASE("menu entries with no semicolon round-trip through the rendered value",
+          "[config]") {
+    std::string path = writeTempConfig(
+        "menu-entry-name = Mail\n"
+        "menu-entry-command = mutt -f inbox\n"
+        "menu-entry-category = Internet\n"
+        "menu-entry-name = Editor\n"
+        "menu-entry-command = vi\n"
+    );
+
+    Config cfg;
+    cfg.applyFile(path);
+    removeTempFile(path);
+
+    REQUIRE(cfg.manualMenuEntries.size() == 2);
+
+    const std::string rendered = configMenuEntriesValue(cfg);
+    std::vector<AppEntry> readBack;
+    std::string reason;
+    INFO("rendered: " << rendered);
+    INFO("re-read refusal: " << reason);
+    REQUIRE(parseMenuEntriesValue(rendered, readBack, reason));
+
+    REQUIRE(readBack.size() == 2);
+    CHECK(readBack[0].name     == "Mail");
+    CHECK(readBack[0].execArgv == (std::vector<std::string>{"mutt", "-f", "inbox"}));
+    CHECK(readBack[0].category == "Internet");
+    CHECK(readBack[1].name     == "Editor");
+    CHECK(readBack[1].execArgv == std::vector<std::string>{"vi"});
+    CHECK(readBack[1].category == "Custom");
+}
+
+// =============================================================================
+// Font settings (plan 09-01): tab-font
+//
+// CONF-02's outstanding "fonts" box. Before this plan `grep -ci font
+// src/Config.cpp` was 0: the tab font was a string literal inside
+// Border::loadTabFont() and the menu font a string literal inside
+// WindowManager::initialiseScreen(). Neither could be changed without editing
+// the source and recompiling.
+//
+// The default is asserted as a LITERAL rather than against a named constant,
+// deliberately. The whole promise of this plan to an existing user is that
+// nothing changes for them, and that promise is only kept if the default is
+// character-for-character the string the binary hardcoded. A comparison against
+// whatever the header happens to hold would keep passing after a silent drift.
+//
+// D-8.5-01: the spelling `tab-font` is permanent. Chosen over `font-tab`
+// because every existing key in this file is <subject>-<attribute>
+// (tab-foreground, menu-highlight, frame-background).
+// =============================================================================
+
+TEST_CASE("tab-font defaults to the pattern Border::loadTabFont hardcoded", "[config]") {
+    Config cfg;
+    REQUIRE(cfg.tabFont == "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12");
+}
+
+TEST_CASE("applyKeyValue sets tab-font verbatim", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("tab-font", "Monospace:size=20");
+    REQUIRE(cfg.tabFont == "Monospace:size=20");
+}
+
+// A fontconfig pattern is spaces, commas and colons by nature (DISC-05a: the
+// value grammar is a pattern handed to XftFontOpenName unchanged). If applyFile
+// mangled any of those the setting would be silently unusable for every
+// multi-word family name, which is most of them.
+TEST_CASE("A tab-font value with spaces, commas and colons survives applyFile intact",
+          "[config]") {
+    const std::string pattern = "Noto Sans Mono,DejaVu Sans Mono:bold:size=14";
+    std::string path = writeTempConfig("tab-font = " + pattern + "\n");
+
+    Config cfg;
+    cfg.applyFile(path);
+
+    REQUIRE(cfg.tabFont == pattern);
+
+    removeTempFile(path);
+}
+
+TEST_CASE("CLI --tab-font sets string value", "[config][cli]") {
+    Config cfg;
+    char arg0[] = "wm2";
+    char arg1[] = "--tab-font=Monospace:size=20";
+    char* argv[] = {arg0, arg1, nullptr};
+
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.tabFont == "Monospace:size=20");
+}
+
+// =============================================================================
+// Font settings (plan 09-01): menu-font
+//
+// The sibling of tab-font above, and the same reasoning applies to all of it:
+// the default is the literal WindowManager::initialiseScreen() spelled inline,
+// asserted as a literal so a silent drift fails here; the spelling `menu-font`
+// is permanent under D-8.5-01; the value is a fontconfig pattern taken verbatim.
+//
+// Note the ONE difference from tab-font: this default carries no `:bold`. The
+// menu was never drawn bold and this plan does not change how anything looks.
+// =============================================================================
+
+TEST_CASE("menu-font defaults to the pattern the menu font load hardcoded", "[config]") {
+    Config cfg;
+    REQUIRE(cfg.menuFont == "Ubuntu,Noto Sans,DejaVu Sans,Sans:size=12");
+}
+
+TEST_CASE("applyKeyValue sets menu-font verbatim", "[config]") {
+    Config cfg;
+    cfg.applyKeyValue("menu-font", "Monospace:size=20");
+    REQUIRE(cfg.menuFont == "Monospace:size=20");
+}
+
+TEST_CASE("A menu-font value with spaces, commas and colons survives applyFile intact",
+          "[config]") {
+    const std::string pattern = "Noto Sans Mono,DejaVu Sans Mono:size=14";
+    std::string path = writeTempConfig("menu-font = " + pattern + "\n");
+
+    Config cfg;
+    cfg.applyFile(path);
+
+    REQUIRE(cfg.menuFont == pattern);
+
+    removeTempFile(path);
+}
+
+TEST_CASE("CLI --menu-font sets string value", "[config][cli]") {
+    Config cfg;
+    char arg0[] = "wm2";
+    char arg1[] = "--menu-font=Monospace:size=20";
+    char* argv[] = {arg0, arg1, nullptr};
+
+    cfg.applyCliArgs(2, argv);
+    REQUIRE(cfg.menuFont == "Monospace:size=20");
+}
+
+// The two font keys are independent of one another. Setting one must not move
+// the other -- a single shared member behind two key names would pass every
+// case above and fail this one.
+TEST_CASE("tab-font and menu-font are independent settings", "[config]") {
+    Config cfg;
+    const std::string tabDefault = cfg.tabFont;
+    const std::string menuDefault = cfg.menuFont;
+
+    REQUIRE(tabDefault != menuDefault);
+
+    cfg.applyKeyValue("tab-font", "Monospace:size=20");
+    REQUIRE(cfg.tabFont == "Monospace:size=20");
+    REQUIRE(cfg.menuFont == menuDefault);
+
+    cfg.applyKeyValue("menu-font", "Serif:size=9");
+    REQUIRE(cfg.menuFont == "Serif:size=9");
+    REQUIRE(cfg.tabFont == "Monospace:size=20");
+}
+
+
+// =============================================================================
+// C2 (Codex pass 4): the accumulated menu-entry list has to fit in one reply
+//
+// The WHOLE manual entry list travels as ONE value under `menu-entries`, and
+// the protocol refuses a line over kConfigProtocolMaxLine before it scans it.
+// A config file may hold any number of individually valid menu-entry groups,
+// so a file with enough of them loaded perfectly and then made
+// `get menu-entries` produce a reply BOTH clients reject as TooLong --
+// wm2-config disconnecting during its opening read of a file the window
+// manager was entirely happy with.
+// =============================================================================
+
+TEST_CASE("a menu-entry list too long for one reply is trimmed as the file is read, with a warning",
+          "[config]") {
+    // Two hundred entries is far more than one 4096-byte line can carry, so
+    // the guard has to bite; the exact number that survives is not asserted as
+    // a constant but derived from the bound itself below.
+    std::string contents;
+    for (int i = 0; i < 200; ++i) {
+        const std::string n = std::to_string(i);
+        contents += "menu-entry-name=Entry" + n + "\n";
+        contents += "menu-entry-command=/usr/bin/app" + n + "\n";
+        contents += "menu-entry-category=Custom\n";
+    }
+    const std::string path = writeTempConfig(contents);
+
+    Config cfg;
+    std::string warnings;
+    {
+        StderrCapture capture;
+        cfg.applyFile(path);
+        warnings = capture.text();
+    }
+    removeTempFile(path);
+
+    const std::size_t kept = cfg.manualMenuEntries.size();
+    INFO("kept " << kept << " of 200; reply line "
+         << menuEntriesReplyLine(cfg).size() << " bytes, bound "
+         << kConfigProtocolMaxLine);
+    INFO("warnings:\n" << warnings);
+
+    // THE POINT: what the window manager holds is always what the wire can
+    // carry.
+    CHECK(menuEntriesReplyLine(cfg).size() <= kConfigProtocolMaxLine);
+
+    // Trimmed, not emptied, and trimmed from the END so the file's own order
+    // decides which entries survive.
+    CHECK(kept > 0);
+    CHECK(kept < 200);
+    REQUIRE(kept > 0);
+    CHECK(cfg.manualMenuEntries.front().name == "Entry0");
+    CHECK(cfg.manualMenuEntries.back().name ==
+          "Entry" + std::to_string(kept - 1));
+
+    // The user is TOLD, and told how many and why.
+    CHECK(warnings.find("wm2: warning:") != std::string::npos);
+    CHECK(warnings.find(std::to_string(200 - kept)) != std::string::npos);
+    CHECK(warnings.find("menu") != std::string::npos);
+}
+
+TEST_CASE("a menu-entry list that fits in one reply is loaded whole and silently",
+          "[config]") {
+    // The other side of the bound, so the case above cannot pass by refusing
+    // everything: the largest list the guard keeps is loaded entry for entry
+    // with nothing said about it.
+    Config probe;
+    {
+        std::string contents;
+        for (int i = 0; i < 200; ++i) {
+            const std::string n = std::to_string(i);
+            contents += "menu-entry-name=Entry" + n + "\n";
+            contents += "menu-entry-command=/usr/bin/app" + n + "\n";
+            contents += "menu-entry-category=Custom\n";
+        }
+        const std::string path = writeTempConfig(contents);
+        StderrCapture quiet;
+        probe.applyFile(path);
+        removeTempFile(path);
+    }
+    const std::size_t fits = probe.manualMenuEntries.size();
+    REQUIRE(fits > 1);
+
+    std::string contents;
+    for (std::size_t i = 0; i < fits; ++i) {
+        const std::string n = std::to_string(i);
+        contents += "menu-entry-name=Entry" + n + "\n";
+        contents += "menu-entry-command=/usr/bin/app" + n + "\n";
+        contents += "menu-entry-category=Custom\n";
+    }
+    const std::string path = writeTempConfig(contents);
+
+    Config cfg;
+    std::string warnings;
+    {
+        StderrCapture capture;
+        cfg.applyFile(path);
+        warnings = capture.text();
+    }
+    removeTempFile(path);
+
+    INFO("reply line " << menuEntriesReplyLine(cfg).size() << " bytes, bound "
+         << kConfigProtocolMaxLine);
+    INFO("warnings:\n" << warnings);
+
+    CHECK(cfg.manualMenuEntries.size() == fits);
+    CHECK(menuEntriesReplyLine(cfg).size() <= kConfigProtocolMaxLine);
+    CHECK(warnings.empty());
+}
+
+// Test 43: the wire parser enforces the same PER-VALUE rules the config file
+// does -- the 256-byte bound and the ban on line breaks (X2, Codex pass 5)
+TEST_CASE("a menu-entry value the configuration file could not hold is refused on the wire",
+          "[config]") {
+    // X2. parseMenuEntriesValue() checked each `val` for leading and trailing
+    // space -- because applyFile() trims and the wire does not -- and stopped
+    // there. Two rules of exactly the same class were missing:
+    //
+    //   * Config::applyFile() SKIPS a value longer than
+    //     kConfigFileMaxValueBytes with a warning to a stderr nobody reads, and
+    //     configFileWrite() refuses to write one;
+    //   * the file is one value per line, so it can hold no line break at all,
+    //     and configFileWrite() refuses that too. The wire's JSON escaping is
+    //     what lets a '\n' arrive here in the first place.
+    //
+    // So `set menu-entries` was ACKNOWLEDGED for a list the file can neither
+    // preserve nor reproduce: applied live, and then either lost at the next
+    // reload or refused at Save with a message about a rule the client was
+    // never told.
+    //
+    // The reasons are in the shape src/Manager.cpp's socket String branch uses
+    // for the same two rules on a plain string key: name the bound, name the
+    // newline.
+
+    SECTION("a name over the file's per-value bound is refused, and the reason names it") {
+        const std::string tooLong(300, 'x');
+        REQUIRE(tooLong.size() > kConfigFileMaxValueBytes);
+
+        std::vector<AppEntry> out;
+        std::string reason;
+        const bool accepted = parseMenuEntriesValue(
+            "menu-entry-name=" + tooLong + ";menu-entry-command=mutt", out, reason);
+
+        INFO("refusal: " << reason);
+        CHECK_FALSE(accepted);
+        CHECK(reason.find(std::to_string(kConfigFileMaxValueBytes)) != std::string::npos);
+    }
+
+    SECTION("a name with a line break in it is refused, and the reason names it") {
+        std::vector<AppEntry> out;
+        std::string reason;
+        const bool accepted = parseMenuEntriesValue(
+            "menu-entry-name=Ma\nil;menu-entry-command=mutt", out, reason);
+
+        INFO("refusal: " << reason);
+        CHECK_FALSE(accepted);
+        CHECK(reason.find("newline") != std::string::npos);
+    }
+
+    SECTION("a COMMAND with a line break in it is refused too") {
+        // The command is exempt from the trim rule, because applyKeyValue()
+        // tokenises it on whitespace and its outer spaces survive nothing on
+        // either route. A LINE BREAK is a different thing: on the wire it is
+        // one more token separator, and in the file it ends the line -- so the
+        // entry the file reads back is not the entry that was acknowledged.
+        std::vector<AppEntry> out;
+        std::string reason;
+        const bool accepted = parseMenuEntriesValue(
+            "menu-entry-name=Mail;menu-entry-command=mutt\n-f inbox", out, reason);
+
+        INFO("refusal: " << reason);
+        CHECK_FALSE(accepted);
+        CHECK(reason.find("newline") != std::string::npos);
+    }
+
+    SECTION("a carriage return is refused on the same grounds") {
+        std::vector<AppEntry> out;
+        std::string reason;
+        const bool accepted = parseMenuEntriesValue(
+            "menu-entry-name=Mail;menu-entry-category=Inter\rnet", out, reason);
+
+        INFO("refusal: " << reason);
+        CHECK_FALSE(accepted);
+        CHECK(reason.find("newline") != std::string::npos);
+    }
+
+    SECTION("an ordinary value is still accepted, so the guards refuse something rather than everything") {
+        // Including a name of EXACTLY the bound, so the comparison is proved to
+        // be "longer than" rather than "as long as".
+        const std::string atTheBound(kConfigFileMaxValueBytes, 'x');
+
+        std::vector<AppEntry> out;
+        std::string reason;
+        const bool accepted = parseMenuEntriesValue(
+            "menu-entry-name=" + atTheBound +
+            ";menu-entry-command=mutt -f inbox;menu-entry-category=Internet",
+            out, reason);
+
+        INFO("refusal: " << reason);
+        REQUIRE(accepted);
+        REQUIRE(out.size() == 1);
+        CHECK(out[0].name == atTheBound);
+        CHECK(out[0].execArgv == (std::vector<std::string>{"mutt", "-f", "inbox"}));
+        CHECK(out[0].category == "Internet");
+    }
 }

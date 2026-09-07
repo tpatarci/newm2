@@ -83,6 +83,7 @@ A lightweight, visually distinctive window manager that works well on resource-c
 | AI menu discovery | Scans installed binaries to auto-populate root menu — novel feature, fits AI showcase | Done — Phase 7 |
 | Xlib not XCB | XCB is lower-level but more complex; wm2's Xlib code works well and is well-understood. Can revisit later. | — Pending |
 | GTK for config GUI | Lightweight, available on most VPS setups, accessible to non-technical users | — Pending |
+| Toolkit-free Xlib config tool as the final phase (2026-09-06) | Operator wants the configuration tool to be as compatible with plain vanilla X as possible; hand-rolled widgets are a project of their own, so it is Phase 10, after the GTK tool, reusing Phase 9 socket, codec, and writer | — Pending |
 
 ## Evolution
 

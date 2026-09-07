@@ -19,7 +19,7 @@ would print Task 1's own legitimate work and fail on every run.
 
 ## Host
 
-- `tomislav-HP-Z440-Workstation`, Linux 6.8.0-124-generic
+- `<workstation>`, Linux 6.8.0-124-generic
 - Xvfb `:99`, `1024x768x24`, `+render`, the arguments `CMakeLists.txt:185` uses
 - Debug tree, `ctest -L '^eventloop$' --no-tests=error`
 

@@ -1,19 +1,19 @@
 ---
-gsd_state_version: 1.0
+gsd_state_version: "1.0"
 milestone: v1.0
-current_phase: 08.5
-current_phase_name: v1.0 Closeout
-status: executing
-stopped_at: "08.5 all plans complete (08.5-08 bundle at 39de548, 08.5-05 repointed); phase verification and closeout PR #6 pending"
-last_updated: "2026-09-05T17:55:00Z"
-last_activity: 2026-09-05
-last_activity_desc: 08.5-08 complete after six captures (five findings fixed at source); 08.5-05 complete; CodeRabbit CLI and Codex branch reviews fixed; ten-run series at the final source tree 39de548 10/10 green
-state_head: 5a418206824065ab01d647835a34c71e78cb1ecd
+current_phase: 09
+current_phase_name: Config GUI + IPC
+status: verifying
+stopped_at: Completed 09-09-PLAN.md
+last_updated: "2026-09-06T16:23:44.946Z"
+last_activity: 2026-09-06
+last_activity_desc: "Completed 09-08: two CMake install components (wm, config-gui), the no-toolkit manifest gate, and the nogtk build tree with same-suite accounting"
+state_head: 2d281de676ad855beccd411b5c4444b89b4b8f8b
 progress:
-  total_phases: 10
+  total_phases: 11
   completed_phases: 4
-  total_plans: 49
-  completed_plans: 48
+  total_plans: 58
+  completed_plans: 57
 milestone_name: milestone
 ---
 
@@ -24,11 +24,14 @@ milestone_name: milestone
 See: .planning/PROJECT.md (updated 2026-05-06)
 
 **Core value:** A lightweight, visually distinctive window manager that works well on resource-constrained VPS instances via remote desktop -- simple enough for non-programmers to configure, reliable enough for daily use.
-**Current focus:** Phase 08.5 — v1.0 Closeout
+**Current focus:** Phase 09 — Config GUI + IPC
 
 ## Current Position
 
-Phase: 08.5 (v1.0 Closeout) — EXECUTING, all plans complete; phase verification and the closeout PR remain
+Phase: 09 (Config GUI + IPC) — EXECUTING
+Plan: 9 of 9
+Status: Phase complete — ready for verification
+Progress: [████████░░] 81% (7/9 phases complete)
 
 **Position as of 2026-09-05 (evening).** On 2026-09-05 the operator instructed the
 delegated project lead to finish everything planned without stopping for
@@ -74,11 +77,32 @@ decision.
    bundle, test-surface row recomputed by its own commands, interaction rows
    cite the table row by row (13 open boxes file-wide, 7 in User Interaction, 0
    in Release Evidence), `evidence/README.md` written.
-9. **Next**: phase verification (`08.5-VERIFICATION.md` re-run), push this
-   worktree's branch onto `modernize/wm2-born-again`, open **PR #6** → `main`,
-   CodeRabbit CLI + Codex on the final delta, merge, `/gsd-ship`.
+9. **Phase verification** re-run by gsd-verifier at `e244492` and re-checked by
+   the lead at `39de548` and after the third ten-run series: 7/7, status
+   `human_needed` (`08.5-VERIFICATION.md`). The two items are the operator's:
+   ratify or reverse the two `blocking-human` rulings the delegated lead took
+   (08.5-10 ATTRIBUTED, 08.5-12 Decision A), and confirm row 23's label.
+10. **Shipped 2026-09-05T18:05Z**: the worktree branch was pushed onto
+   `modernize/wm2-born-again` (`afd3ec2..58d549f`, fast-forward, 44 commits) and
+   **PR #6** merged into `main` as merge commit `0fec5db`; issue #3 closed by it.
+   Final review passes before the push: Codex `--commit 39de548` (one chronology
+   finding, already resolved by the capture at that commit) and CodeRabbit CLI
+   over the last delta (one wording finding, fixed). No bot reviewer is installed
+   on the repository, so the PR had zero review threads; the local CLIs are the
+   recorded gate (PR #6 comment, 2026-09-05). The formal `/gsd-ship` preflight
+   would have blocked on two gates and is recorded here rather than bypassed
+   silently: verification `human_needed` (item 9) and `workflow.security_enforcement`
+   with no `08.5-SECURITY.md`. The merge was taken under the operator's standing
+   "carry the PR through to merge" instruction, as PR #5 was.
+11. **Security review done** (`08.5-SECURITY.md`, 2026-09-05): 40 register rows
+   from ten plans' threat models, 23 high, 0 open; read-only auditor verdict
+   SECURED, every high citation re-read by the lead. The second ship gate is now
+   green; the first (verification `human_needed`) remains the operator's.
+12. **Next**: Phase 9 (Config GUI + IPC) — no plans exist yet; discuss, plan,
+   execute. Operator reminder on file: they want a visual refresh of the WM's
+   look once all planned work is done (screenshots in chat, they approve).
 
-### History (superseded 2026-09-05)
+## History (superseded 2026-09-05)
 
 The RE-PLAN hold on 08.5-05/07/08 described in this history section was lifted
 2026-09-05 by 08.5-12 Task 5 Decision A — 08.5-07 superseded, 08.5-08 and
@@ -97,7 +121,7 @@ Plan: 2 of 10
   this round's measurement refuted and which the precommitted terminal rule
   forbids. **The next action is RE-PLANNING the attribution around the actual
   failing path** — an add-only round, as 08.5-09 was.
-Status: Ready to execute
+Status: Executing Phase 09
   ruled at the Task 3 `checkpoint:decision` (`gate="blocking-human"`).
   **Verdict of record: `REFUTED`. `08.5-07` disposition: `RE-PLAN`. No
   sub-decision** (a sub-decision is carried only by an `inconclusive` ruling).
@@ -268,13 +292,11 @@ Known gate false-negative, recorded so it is not "fixed": `check.decision-covera
   two-digit ID. Coverage verified manually at planning time: all 8 decisions
   (`D-8.5-01`..`-06`, `D-8-TIGHTVNC`, `D-8-X2GO`) are cited by at least one plan;
   `08.5-10` cites six of them.
-Last activity: 2026-08-31 — Phase 08.5 execution started
+Last activity: 2026-09-06 - Completed quick task 260906-ldw: tab label baseline clearance (tab 16 -> 25 px on the default font; knob kTabFrameClearance)
   preserved; next action is executing 08.5-10 alone
 
 Phase 8 closed at `66591ec`, verified with 2 declared gaps (5/7 success criteria).
 Phase 8.5 exists to close them: RULES-01, XDIS-05, TEST-08.
-
-Progress: [████████░░] 81% (7/9 phases complete)
 
 ## Performance Metrics
 
@@ -337,6 +359,15 @@ Progress: [████████░░] 81% (7/9 phases complete)
 | Phase 08.5 P09 | 1h 17m | 3 tasks | 51 files |
 | Phase 08.5 P10 | 1h 15m | 2 tasks | 291 files |
 | Phase 08.5-v1.0-closeout P13 | 65min | 4 tasks | 13 files |
+| Phase 09 P01 | 24 min | 3 tasks | 7 files |
+| Phase 09 P02 | 35 min | 4 tasks | 6 files |
+| Phase 09 P03 | 68 min | 3 tasks | 10 files |
+| Phase 09 P04 | 30 min | 3 tasks | 13 files |
+| Phase 09 P05 | 1h 40m | 3 tasks | 17 files |
+| Phase 09 P06 | 65 min | 3 tasks | 13 files |
+| Phase 09 P07 | 105 min | 3 tasks | 21 files |
+| Phase 09 P08 | 52 min | 3 tasks | 7 files |
+| Phase 09 P09 | 49 min | 4 tasks | 35 files |
 
 ## Accumulated Context
 
@@ -441,6 +472,28 @@ Recent decisions affecting current work:
 - [Phase 08.5]: 08.5-10: the arm floor is FOUR per arm, the derived minimum at which the pre-registered exact test can reach p<0.05 (1/C(8,4)=0.0143 clears; 1/C(6,3)=0.050 fails). An earlier draft set it at six on a false claim that six was that minimum -- a floor of six would have routed a clearing 5-vs-5 table (p~0.004) to NOT-ATTRIBUTED and ended the attribution effort under a terminal rule on a reading that had already answered the question. Recorded as a correction, not silently changed.
 - [Phase 08.5]: 08.5-13: the menu flake is attributed to findOpenMenu()'s silent first-viewable-child fallback, which satisfied its own pollUntil on the first iteration and spent none of the 20s budget; the fallback is deleted and no timing constant changed
 - [Phase 08.5]: 08.5-13: menu paint completion is now a POSITIVE criterion (dominant == expected AND share >= 0.55 named constant, not settable from the environment), replacing the distinct-value count that accepted bleed-through, wrong colour and half-painted rectangles
+- [Phase 09]: 09-01: font config keys are `tab-font` and `menu-font` (DISC-05), permanent under D-8.5-01 — Every existing key in Config.cpp is <subject>-<attribute> (tab-foreground, menu-highlight), so these sort and read with their siblings. No deprecated aliases will exist.
+- [Phase 09]: 09-01: font values are fontconfig patterns taken verbatim; there is no separate size key (DISC-05a) — The pattern already carries the size. A separate size key would be a second way to say the same thing, and the two could disagree.
+- [Phase 09]: 09-01: only the PREFERRED rung of the tab-font ladder is configurable; rungs 2 and 4 keep their literals — A fallback the user can also break is not a fallback. One bad value would otherwise take out the preferred face and every net under it, which is the outcome XDIS-04 exists to prevent. Rung 3 does read the value because rung 3 IS the preferred pattern, unrotated.
+- [Phase 09]: 09-01: the menu font keeps its fatal() on total failure; the tab font still cannot terminate the process — The menu measures every row against its font, so there is no carry-on-without-it the way there is for an unlabelled tab. Only a host with no sans font at all reaches the exit, which is the condition that already ended startup before menu-font existed (T-9-02).
+- [Phase 09]: 09-01: a font change takes effect at next start; RELEASE-NOTES.md says so and plan 09-05 must delete that sentence — It is the only setting in the release that does not apply immediately. The plan's own prohibition required the exception to be named in the release notes rather than left for a user to discover.
+- [Phase 09]: DISC-02: the configuration socket path is $XDG_RUNTIME_DIR/wm2-born-again/socket<display>, fallback /tmp/wm2-born-again-<uid>/socket<display>, display sanitised outside [A-Za-z0-9._-]
+- [Phase 09]: DISC-03: the socket path is published on the root window as _WM2_CONFIG_SOCKET (XA_STRING, format 8); its absence means there is no socket
+- [Phase 09]: DISC-04: SIGHUP keeps its existing exit behaviour; reload is a socket message and nothing else
+- [Phase 09]: DISC-06: servicing the socket is a fourth, silent case in modalWait() -- never Event, never Interrupted, so no existing caller's contract changes
+- [Phase 09]: Both poll sites in src/Events.cpp are ONE shared descriptor set built by WindowManager::buildPollSet(), with named indices; any future multiplexed descriptor is added once and reaches both
+- [Phase 09]: include/ConfigProtocol.h replaces Xlib's 'define Status int' macro with a typedef, because the frozen 'status' message type cannot be renamed and X11 extension headers return Status
+- [Phase 09]: 09-05: applyConfig() validates BEFORE it stores and returns bool -- 09-04's store-first order could not survive a setting the X server can refuse, so a colour or font failure now returns having changed nothing at all, not even m_config
+- [Phase 09]: 09-05: every live resource change allocates before it releases (colours, GCs, Xft colours) or loads before it closes (fonts), so a value that cannot be resolved leaves the previous one entirely in place (T-9-26/T-9-27)
+- [Phase 09]: 09-05: manual menu entries travel as ONE value in the config file's own key order with ';' between records, replaced wholesale -- idempotent by construction, and mapping onto a GUI's Add/Edit/Remove rows with no per-row protocol (D-12)
+- [Phase 09]: 09-05: D-08's reload notice reuses the already-frozen 'reloaded' type and carries nothing but its type, so version 1 gains no twelfth message and the notice cannot become a second copy of the settings (T-9-31)
+- [Phase 09]: 09-05: D-06's per-setting next-start fallback was NOT exercised -- every setting the GUI will offer applies live, and docs/RELEASE-NOTES.md names no exception
+- [Phase 09]: 09-05: the menu-open deferral (T-9-32) is a structural mitigation with no mutation-proof case -- removing it leaves the held-open case green in both trees, recorded in WINDOWS.md rather than claimed as covered
+- [Phase 09]: The window manager answers a read-only 'menu-categories' key on the existing get verb, so the settings window's category dropdown asks rather than re-running discovery. No twelfth message type; refused on set by construction.
+- [Phase 09]: The menu command tokeniser was hoisted to configTokeniseCommand() in include/Config.h -- one whitespace split with two callers, the config parser and the GUI dialog, because 'exactly the same way' is only true of one function.
+- [Phase 09]: FormField::staleUnderEdit marks the DISAGREEMENT a reload created, not the edit: a reload bringing exactly what the user typed marks nothing, or the mark would mean what 'dirty' already means.
+- [Phase 09]: 09-08: the CMake install COMPONENT, not the binary, is this project's install identity. Component "wm" (window manager, wm2-ctl, session entry, docs) and component "config-gui" (wm2-config and its application entry) stage separately from one build tree, and the wm component's freedom from GTK is enforced by ldd over its own install manifest rather than promised in prose.
+- [Phase 09]: 09-08: a GUI-disabled build is only certified when it ran the SAME suite. build-all.sh nogtk asserts an equal registered count against the GUI-enabled tree, requires the pass-count difference to equal the skip count, and re-runs each skipped test to confirm it stated a reason.
 
 ### Pending Todos
 
@@ -469,6 +522,16 @@ Recent decisions affecting current work:
 - 08.5-09 lead, recorded and NOT attributed: trip-r-3/-4/-5 each carry a BadWindow cascade (X_CreateWindow, X_ReparentWindow, X_MapWindow, X_ChangeSaveSet, all on window 0x80003b) -- the WM framing a window that no longer exists. trip-r-1 and trip-r-2 have clean 12-line stderr and still failed to frame, so it is 3 of 5 and NOT the universal signature. Starting point for the re-plan; a refutation of one mechanism is not an attribution to another.
 - **08.5-10 HALTED AT TASK 3 -- the blocking-human operator ruling has NOT been taken.** The measurement is complete and committed (evidence/gates/wakeup/, 40 eight-channel bundles, measurement.log, README with one **Proposed outcome:** line reading ATTRIBUTED). What does NOT exist: any **Attribution outcome:** line, any **Terminal disposition:** line, and any round-4 append to evidence/gates/attribution/README.md -- that file is byte-identical to the pin 397310a (diff removes 0 and adds 0). Nothing records 08.5-07 as the flake fix; 08.5-05/-07/-08 stay held. Under the precommitted terminal rule ATTRIBUTED -> FIX-PLAN and everything else -> one of SHIP-WITH-RECORDED-DEFECT | REVERSE-RULING-B | DESCOPE-FROM-V1.0; no branch schedules another attribution round.
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260906-ldw | Tab label baseline clearance: size the rotated tab from a full glyph box and fix the baseline per font so descenders end 5 px short of the frame edge (operator request from the 09-06 screenshot) | 2026-09-06 | 94cfaa3 | [260906-ldw-tab-label-baseline-clearance-size-the-ro](./quick/260906-ldw-tab-label-baseline-clearance-size-the-ro/) |
+
+### Roadmap Evolution
+
+- Phase 10 added 2026-09-06 (operator direction, during Phase 9 wave 3): Native X11 Configuration Tool. A toolkit-free Xlib edition of `wm2-config`, core protocol only, same socket and file writer as Phase 9. Last in the roadmap; depends on Phase 9; requirements XCFG-01..05.
+
 ## Deferred Items
 
 Items acknowledged and carried forward from previous milestone close:
@@ -487,6 +550,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-01T07:39:44.787Z
-Stopped at: Completed 08.5-13-PLAN.md -- discriminator ran 30/30 pass, bucket: all thirty passed
+Last session: 2026-09-06T16:23:44.372Z
+Stopped at: Completed 09-09-PLAN.md
 Resume file: None

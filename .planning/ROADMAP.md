@@ -2,7 +2,7 @@
 
 ## Overview
 
-Modernize wm2 from a 1997 pre-standard C++ codebase into a buildable, maintainable C++17 window manager. Start with build infrastructure and RAII wrappers so every subsequent phase has a solid foundation. Modernize the event loop, then client lifecycle. Rebuild the visual identity with Xft while preserving the classic sideways-tab look. Add runtime configuration, EWMH compliance, and application discovery. Harden for VNC/Xrandr and add focus rules. Cap it off with a GTK3 config GUI so non-programmers can configure the WM visually.
+Modernize wm2 from a 1997 pre-standard C++ codebase into a buildable, maintainable C++17 window manager. Start with build infrastructure and RAII wrappers so every subsequent phase has a solid foundation. Modernize the event loop, then client lifecycle. Rebuild the visual identity with Xft while preserving the classic sideways-tab look. Add runtime configuration, EWMH compliance, and application discovery. Harden for VNC/Xrandr and add focus rules. Cap it off with a GTK3 config GUI so non-programmers can configure the WM visually, then close with a toolkit-free Xlib edition of that tool so the same configuration works on a plain vanilla X server.
 
 ## Phases
 
@@ -23,6 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [~] **Phase 8: Xrandr + VNC Compatibility + Focus/Rules** - Display config, extension fallbacks, VNC compatibility, focus stealing prevention, window rules. **All 14 plans complete; 5 of 7 success criteria verified.** Two remain unmet and are declared, not stubbed: four-target remote-desktop coverage (2 of 4 exercised — XDIS-05) and WM_NAME matching (RULES-01). See VERIFICATION.md.
 - [ ] **Phase 8.5: v1.0 Closeout** *(INSERTED 2026-08-30)* - Finish the three requirements Phase 8 left Pending: title matching for window rules plus the config key rename (RULES-01), the two remaining remote-desktop targets (XDIS-05), and the interaction checklist as a per-item table (TEST-08). Inserted **before** Phase 9 because RULES-01 changes the config surface the GUI will expose.
 - [ ] **Phase 9: Config GUI + IPC** - GTK3 config tool, Unix domain socket IPC, live configuration changes, optional dependency
+- [ ] **Phase 10: Native X11 Configuration Tool** *(added 2026-09-06, last in line)* - A second `wm2-config` front end written against plain Xlib (Xft when present), no toolkit, core protocol only; same socket, same file writer, same pages as the GTK tool
 
 ## Phase Details
 
@@ -365,18 +366,72 @@ Gap-closure wave 5 (round 2) *(blocked on wave 4)*:
   3. The WM runs perfectly without GTK3 installed -- the config GUI is an optional separate package
   4. Changes made in the config GUI are persisted to the config file so they survive WM restarts
 
-**Plans**: 3 plans
+**Plans**: 9/9 plans executed
+
+*(Planned 2026-09-06. The roadmap's original estimate of 3 plans predated the research, which found that fonts are not configurable at all today — a precondition for CGUI-03 — and that the event loop's descriptor set is declared twice, making the socket integration a structural change to two functions rather than an additive one. Nine plans at fine granularity, 2-4 tasks each, in eight waves; only wave 1 runs two plans in parallel, because this phase is a genuine dependency chain.)*
+
+Plans:
+**Wave 1**
+
+- [x] 09-01-PLAN.md — wave 1 — Fonts become configuration: `tab-font` and `menu-font` keys, closing CONF-02's outstanding box and CGUI-03's precondition
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 09-02-PLAN.md — wave 2 — **COMPLETE 2026-09-06 (`09-02-SUMMARY.md`): DISC-01 frozen at `minimal` by human decision; `include/ConfigProtocol.h` (header-only, 25 `[config_protocol]` cases) and `include/ConfigFileWriter.h`/`src/ConfigFileWriter.cpp` (31 `[config_writer]` cases), both test binaries linking no display library.** Originally: The display-free halves: the newline-delimited JSON codec and the surgical config-file writer, behind a wire-contract decision checkpoint
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 09-03-PLAN.md — wave 3 — The socket the window manager answers on: one shared descriptor set across both poll sites, same-uid access control, status only
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 09-04-PLAN.md — wave 4 — `wm2-ctl` and the first setting that changes the running desktop, with validation shared with the config-file path
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [x] 09-05-PLAN.md — wave 5 — Everything else applies live: colours, fonts, focus policy, delays, menu entries, and the reload notice
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [x] 09-06-PLAN.md — wave 6 — `wm2-config`: the GTK window, the connection, the Appearance page, and the AUTO build option
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [x] 09-07-PLAN.md — wave 7 — The Behaviour and Menu pages, and the three moments where the file and the desktop can disagree
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [x] 09-08-PLAN.md — wave 8 — Two install components, and the GTK-absent build proven as a gate
+
+**Wave 9** *(blocked on Wave 8 completion)*
+
+- [x] 09-09-PLAN.md — wave 9 — "Configure…" on the root menu, the documentation-parity gate, checklist rows, and the measured remote-desktop pass
+
+### Phase 10: Native X11 Configuration Tool
+
+**Goal**: The configuration tool runs anywhere the window manager runs. A second front end, built against plain Xlib with no widget toolkit, offers the same three pages and the same editing semantics as the GTK tool, over the same socket and the same config file, on a bare X server with nothing but the core protocol.
+**Depends on**: Phase 9
+**Requirements**: XCFG-01, XCFG-02, XCFG-03, XCFG-04, XCFG-05
+**Success Criteria** (what must be TRUE):
+
+  1. A native binary links against libX11 (and libXft when available) and nothing toolkit-shaped; `ldd` shows no GTK, GLib, Cairo, or Pango
+  2. It runs on an X server that offers only the core protocol: no Shape, Xrandr, Render, or XInput2 required, and with Render absent it falls back to core X fonts rather than refusing to start
+  3. Every operation the GTK tool supports (Appearance, Behaviour, Menu pages; per-setting and per-page reset; Save/Discard/Cancel on close; reload refresh; file-only mode when no WM is running) works identically, driven by the Phase 9 socket protocol and surgical file writer unchanged
+  4. It is exercised on all four remote-desktop targets from Phase 8 (TigerVNC, TightVNC, XRDP, X2Go) and under Xvfb in the test suite, with RSS recorded
+  5. The widget set it needs (button, text field, toggle, list, colour and font pickers) lives in the tree under the project's MIT licence, with no bundled third-party toolkit
+
+**Plans**: 0 plans
+
+*(Added 2026-09-06 during Phase 9 execution, at the operator's direction, after the observation that hand-rolling the GUI's widgets in raw Xlib would be a project of its own. That widget set is the substantial part, which is why this phase sits last: it must not delay Phase 9's GTK tool, and it consumes Phase 9's socket, codec, writer, and page design as fixed inputs. The GTK tool stays; this adds an alternative for servers where GTK is unwanted or unavailable. Compatibility with plain vanilla X is the governing constraint, not feature parity beyond what the GTK tool already does.)*
 
 Plans:
 
-- [ ] 09-01: TBD
-- [ ] 09-02: TBD
-- [ ] 09-03: TBD
+- [ ] TBD (run /gsd-plan-phase 10 to break down)
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 9
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 9 -> 10
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -388,5 +443,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 8.5 -> 
 | 6. EWMH Compliance | 0/3 | Planned | - |
 | 7. Root Menu + Application Discovery | 6/6 | Complete    | 2026-07-08 |
 | 8. Xrandr + VNC + Focus/Rules | 14/14 | Verified with gaps | 2026-08-30 |
-| 8.5 v1.0 Closeout *(INSERTED)* | 8/13 | In Progress|  |
-| 9. Config GUI + IPC | 0/3 | Not started | - |
+| 8.5 v1.0 Closeout *(INSERTED)* | 12/13 (08.5-07 superseded) | Shipped: PR #6 merged `0fec5db`; verification `human_needed`; security review pending | 2026-09-05 |
+| 9. Config GUI + IPC | 9/9 | In Progress|  |
+| 10. Native X11 Configuration Tool | 0/0 | Not started (added 2026-09-06) | - |

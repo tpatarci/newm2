@@ -88,6 +88,21 @@ public:
     void lower();
     void ensureVisible();
 
+    // CGUI-04 (plan 09-04): re-lay this client's decoration out for a frame
+    // thickness that changed while the window manager was running. Reached only
+    // from WindowManager::applyConfig(), which is the single funnel every live
+    // configuration change goes through.
+    void relayoutFrame();
+
+    // CGUI-04 (plan 09-05): the same funnel's other two per-client entry
+    // points. relayoutFrameForFont() re-lays the decoration out for a tab face
+    // whose metrics moved the tab's thickness, and repaintForColourChange()
+    // pushes a reloaded palette onto this client's frame. Both carry the SAME three skip
+    // conditions relayoutFrame() carries, named individually in src/Client.cpp
+    // rather than folded into one catch-all guard.
+    void relayoutFrameForFont();
+    void repaintForColourChange();
+
     // Interaction
     void move(XButtonEvent *e);
     void resize(XButtonEvent *e, bool horizontal, bool vertical);
@@ -183,6 +198,18 @@ private:
     // Remove exactly two states from _NET_WM_STATE, keeping the rest (see .cpp).
     void stripNetWmStates(Atom a, Atom b);
     bool m_reparenting;
+
+    // relayoutFrame(), relayoutFrameForFont() and repaintForColourChange() are
+    // all SKIPPED for a client that is fullscreen: there is no frame to lay
+    // out, because Border::stripForFullscreen() unmapped every component of it
+    // and reparented the window to root. A skip is not a discard: each of them
+    // records here what it could not do, and applyDeferredFrameRefresh() --
+    // called from setFullscreen(false) -- does it the moment there is a frame
+    // again. See src/Client.cpp for what restoreFromFullscreen() does, and does
+    // not, put back by itself.
+    bool m_frameLayoutStale{false};      // a thickness or tab-face change
+    bool m_frameColoursStale{false};     // a palette change
+    void applyDeferredFrameRefresh();
 
     // EWMH state
     WindowType m_windowType{WindowType::Normal};

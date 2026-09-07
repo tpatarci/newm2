@@ -6,7 +6,7 @@ wm2-born-again display capability capture
   label:        tigervnc
   display:      :11
   timestamp:    2026-08-29T16:46:33Z (UTC)
-  host:         tomislav-HP-Z440-Workstation
+  host:         <workstation>
   kernel:       Linux 6.8.0-124-generic
   distro:       Ubuntu 22.04.5 LTS
   commit:       dba2f30647ad950c7332711a5000219e0da74f4b

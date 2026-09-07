@@ -3,6 +3,7 @@
 #include "x11wrap.h"
 #include "Config.h"
 #include "AppEntry.h"
+#include "SocketServer.h"
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <X11/Xft/Xft.h>
@@ -14,6 +15,7 @@
 #include <unordered_map>
 #include <csignal>
 #include <chrono>
+#include <poll.h>
 #include <unistd.h>
 
 // RAII wrapper for POSIX file descriptors (not X11 resources -- those are in x11wrap.h)
@@ -36,10 +38,27 @@ class Client;
 
 class WindowManager {
 public:
-    WindowManager(const Config& config, const std::vector<AppEntry>& apps);
+    // argc/argv are retained for `reload` (DISC-07, plan 09-04): re-reading the
+    // configuration means re-running the WHOLE layered load -- defaults, system
+    // file, user file, command line -- and the command line is the top layer.
+    // Merging the file onto current state instead would let a `--frame-thickness`
+    // given at startup be silently overridden by the file on the first reload.
+    // Defaulted so a caller with no command line to offer still compiles; then
+    // the CLI layer is simply empty.
+    WindowManager(const Config& config, const std::vector<AppEntry>& apps,
+                  int argc = 0, char** argv = nullptr);
     ~WindowManager();
 
+    // The EFFECTIVE configuration -- what the window manager is drawing with
+    // right now, which after a socket `set` is not what any file on disk says.
     const Config& config() const { return m_config; }
+
+    // DISC-07: the last configuration READ FROM DISK, as a snapshot taken at
+    // startup and replaced by every successful `reload`. The difference between
+    // this and config() above is exactly the set of changes made over the
+    // socket and not saved, which is what makes the GUI's "revert" expressible
+    // as "send the saved values back" rather than as a new message type.
+    const Config& savedConfig() const { return m_savedConfig; }
 
     void fatal(const char *message);
 
@@ -71,6 +90,24 @@ public:
     void installCursorOnWindow(RootCursor, Window w);
     void installColormap(Colormap cmap);
     unsigned long allocateColour(const char *name, const char *fallback);
+
+    // The NON-FATAL forms of the two allocators below, and the reason a colour
+    // arriving over the socket can be refused rather than ending the process
+    // (plan 09-05, threat T-9-26).
+    //
+    // allocateColour() calls fatal() on a name the server cannot parse, which
+    // is right at startup -- a window manager with no frame colour has nothing
+    // to draw -- and catastrophic for a `set`, where the correct answer is an
+    // error naming the key and a desktop that keeps the colour it had. These
+    // return false instead, having changed nothing.
+    //
+    // The live path allocates EVERY new value through these BEFORE it releases
+    // a single old one. That ordering is the whole of the safety property: a
+    // failure after the old value was freed would leave the window manager
+    // with no usable colour, which is exactly what the prohibition forbids.
+    bool tryAllocateColour(const char *name, unsigned long &out) const;
+    bool tryAllocateShadeOf(const char *name, double fraction,
+                            unsigned long &out) const;
 
     // A shade of `name`: blended `fraction` of the way toward white when
     // positive, toward black when negative. Used for the 1 px bevel highlight
@@ -155,6 +192,17 @@ private:
 
     Config m_config;
 
+    // DISC-07's second half. Populated from the same Config the constructor was
+    // handed, replaced wholesale by a successful reload, and never touched by a
+    // `set` -- because a `set` writes no file (D-01), so the saved state does
+    // not change when one arrives.
+    Config m_savedConfig;
+
+    // argv, copied rather than aliased. The pointers main() was handed do live
+    // for the whole process, but a copy costs a few hundred bytes once and
+    // removes the question entirely.
+    std::vector<std::string> m_cliArgs;
+
     // RAII-managed X11 resources (D-05)
     // IMPORTANT: m_display declared first so it is destroyed last (D-05, Pitfall 2)
     x11::DisplayPtr m_display;
@@ -179,9 +227,53 @@ private:
     // Application discovery (Phase 7): merged AppEntry list from Desktop/BinaryScan/Manual
     // sources, and the same entries grouped into category buckets (alphabetical,
     // "Custom" always last) ready for menu rendering.
+    // The AUTO-DISCOVERED half, kept as it arrived (plan 09-05). m_apps below
+    // is this list with the effective configuration's manual entries merged
+    // onto it, and the merge is re-run whenever those entries change -- which
+    // cannot be done from m_apps alone, because D-08's name-match rule
+    // REPLACES an auto-discovered entry rather than shadowing it.
+    std::vector<AppEntry> m_autoApps;
+
     std::vector<AppEntry> m_apps;
     std::vector<std::pair<std::string, std::vector<AppEntry>>> m_appCategories;
     void buildAppCategories();
+
+    // Re-run the startup merge and regroup, from m_autoApps and the effective
+    // configuration's manual entries. The SAME merge the startup path uses --
+    // AppCache::mergeEntries() -- rather than a second one, so a manual entry
+    // set over the socket lands exactly where the identical line in a config
+    // file would put it.
+    void rebuildAppCategoriesFromConfig();
+
+    // The categories the NEXT root menu will show, ';'-separated in the menu's
+    // own order, for the read-only `menu-categories` key the settings window's
+    // dropdown reads (plan 09-07, D-12).
+    //
+    // Computed from m_autoApps plus the EFFECTIVE configuration's manual
+    // entries rather than read out of m_appCategories, because those two differ
+    // for exactly as long as a menu is held open across a change: m_appCategories
+    // is deliberately not rebuilt under a modal loop that holds a pointer into
+    // it. "What the next menu will show" is the question the dropdown is
+    // asking, and it is the one this answers.
+    std::string menuCategoriesValue() const;
+
+    // A root menu is open right now, and its modal loop is holding a pointer
+    // INTO m_appCategories (the submenu's entry vector). Rebuilding that list
+    // underneath it is the defect class plans 08-13 and 08-14 already fixed
+    // once, so applyConfig() defers instead: it sets the flag below and menu()
+    // rebuilds before it assembles the NEXT menu. A menu already open is left
+    // undisturbed, which is also what D-08 asks for.
+    bool m_menuOpen = false;
+
+    // How many modalWait() calls are on the stack (WR-13). Non-zero means a
+    // grab is held and something has cached geometry a live apply would move
+    // under it: WindowManager::menu() computes its entry height once from
+    // m_menuFont and reuses it for row layout, for the hit test and for the
+    // label baselines; Client::move() caches xIndent() minus the pointer
+    // position, which a frame-thickness change moves without moving the cached
+    // offset. Counted rather than flagged because modal waits nest.
+    std::size_t m_modalDepth = 0;
+    bool m_appCategoriesStale = false;
 
     // Capability sentinel convention (Phase 8). Every optional X extension this
     // WM depends on is represented by the SAME triple:
@@ -262,6 +354,130 @@ private:
     FdGuard m_pipeWrite{-1};
     static int s_pipeWriteFd;  // accessed from signal handler (static for async-signal-safety)
 
+    // CGUI-02: the configuration socket, and the ONE descriptor set both poll
+    // sites consume.
+    //
+    // RESEARCH Pitfall 1 is the whole reason these live here rather than as two
+    // stack-local arrays. Before this phase src/Events.cpp declared
+    // `struct pollfd fds[2]` TWICE -- once in nextEvent() and once in
+    // modalWait() -- and every modal grab in this codebase (the root menu, move,
+    // resize, the tab-button hold, the gesture recogniser) funnels through the
+    // second one. A socket added to only the first produces a window manager
+    // that answers when idle and appears to freeze the moment a menu is held:
+    // exactly the defect class ledger 8 already fixed once for signal delivery.
+    // The two arrays are now one builder called from both, and the indices are
+    // named so neither site can drift from the other by a literal.
+    static constexpr std::size_t kPollFdX          = 0;  // the X connection
+    static constexpr std::size_t kPollFdPipe       = 1;  // the self-pipe read end
+    static constexpr std::size_t kPollFdFixedCount = 2;  // socket fds start here
+
+    ConfigSocketServer m_socketServer;
+
+    // When this process started, for the status reply's uptime. Steady rather
+    // than wall-clock, so a clock adjustment cannot make uptime run backwards.
+    std::chrono::steady_clock::time_point m_startTime{};
+
+    // The shared poll set: X connection at kPollFdX, self-pipe at kPollFdPipe,
+    // the socket server's own descriptors appended after kPollFdFixedCount.
+    // Rebuilt each iteration because the connection population changes.
+    std::vector<struct pollfd> buildPollSet() const;
+
+    // Clamp a poll timeout so the socket server's silence deadline can fire.
+    // A deadline that expires on the passage of time alone is never reached by
+    // a poll() that blocks forever.
+    int clampPollTimeoutForSocket(int base) const;
+
+    // Service whatever the socket server put in `fds`. In modalWait() this is a
+    // FOURTH, SILENT case (DISC-06): it never returns Event and never returns
+    // Interrupted, exactly as ServiceFocusTick is silent in nextEvent(), so no
+    // existing caller of modalWait() observes any change.
+    void serviceConfigSocket(const std::vector<struct pollfd>& fds);
+
+    // The protocol policy. Owns D-15's handshake rule and D-14's field ceiling;
+    // the transport in src/SocketServer.cpp owns descriptors and buffers and
+    // knows nothing about what a message means.
+    ConfigSocketReply handleConfigRequest(const ConfigSocketRequest& request);
+
+    // D-14's ceiling, assembled in exactly one place so there is exactly one
+    // site to review.
+    ConfigMessage statusReplyMessage() const;
+
+    // DISC-06a -- THE ONE FUNNEL THROUGH WHICH A CONFIGURATION CHANGE REACHES
+    // RUNNING STATE.
+    //
+    // Diffs `next` against m_config field by field and re-applies only what
+    // actually changed, then stores `next` whole. Every later plan in this
+    // phase adds a branch HERE rather than a second application path, so
+    // "what is live?" has exactly one answer and exactly one place to read it
+    // -- and so the idempotency guarantee (applying the same value twice does
+    // no second piece of work) holds for every setting by construction rather
+    // than one setting at a time.
+    // Returns false with a human-readable reason in `reasonOut`, HAVING
+    // CHANGED NOTHING -- not even m_config. Plan 09-04's form returned void
+    // because the one setting it applied could not fail; a colour can (the
+    // config parser takes a colour verbatim and the X server is what refuses
+    // it), so validation now happens before the store rather than after it.
+    bool applyConfig(const Config& next, std::string& reasonOut);
+
+    // The menu half of the palette reload, beside applyConfig() because that is
+    // its only caller, and split into an OPEN and an INSTALL for the same
+    // reason Border::openPalette() is: a reload applies a whole Config, so one
+    // edit can carry a colour and a font, and a palette that installed itself
+    // before the font was opened committed half a refused configuration.
+    //
+    // openMenuColours() changes nothing whichever way it answers, and reports
+    // the offending key in `keyOut`; installMenuColours() cannot fail.
+    struct MenuPalette {
+        x11::XftColorWrap foreground;
+        x11::XftColorWrap background;
+        x11::XftColorWrap highlight;
+        unsigned long     borderPixel = 0;
+    };
+    bool openMenuColours(const Config& next, MenuPalette& out, std::string& keyOut);
+    void installMenuColours(MenuPalette& palette);
+
+    // The menu's half of the font reload, split into an OPEN and an INSTALL for
+    // the same reason Border's is (CR-04): a reload applies a whole Config, so
+    // a file that changes both fonts runs both swaps, and either one committing
+    // while the other is refused leaves a half-applied state `get` denies.
+    //
+    // openMenuFace() changes nothing whichever way it answers; installMenuFace()
+    // cannot fail. There is deliberately no re-layout counterpart to the
+    // install: menu() rebuilds and re-measures the whole popup on every
+    // opening, and a menu that IS open is being iterated by a modal loop
+    // holding pointers into state neither of these may disturb.
+    bool openMenuFace(const std::string& pattern, x11::XftFontPtr& out);
+    void installMenuFace(x11::XftFontPtr face);
+
+    // Serve one `set`. Validates key and value BEFORE the parser sees them --
+    // see include/Config.h for why -- then applies through the very same
+    // Config::applyKeyValue() the config file goes through, on a COPY, and
+    // hands the result to applyConfig(). Returns false with a human-readable
+    // reason in `reasonOut`, having changed nothing at all.
+    bool applyConfigSet(const std::string& key, const std::string& value,
+                        std::string& reasonOut);
+
+    // Serve one `reload`: re-run the layered load, replace the saved snapshot,
+    // apply the result. False with a reason on a read failure, having changed
+    // nothing.
+    bool reloadConfigFromDisk(std::string& reasonOut);
+
+    // Start the socket and publish its path on the root window (DISC-03).
+    void startConfigSocket();
+
+    // Withdraw that publication (codex pass 3, P2).
+    //
+    // A root-window property outlives the process that set it -- the X server
+    // holds it until somebody deletes it -- so every path that ends the socket
+    // has to end the property with it, or a discovery client is sent to a node
+    // that is no longer there. Called from the three places that can leave this
+    // window manager without a listener: a startup that could not bind, a
+    // listener that failed mid-session, and release().
+    //
+    // Safe when nothing was ever published: deleting an absent property is a
+    // no-op at the server, not an error.
+    void unpublishConfigSocketPath();
+
     static bool m_initialising;
     static int errorHandler(Display*, XErrorEvent*);
     static void sigHandler(int);
@@ -292,6 +508,20 @@ private:
     Window m_wmCheckWindow;
 
     static const char* const m_menuCreateLabel;
+
+    // D-11: was a `wm2-config` binary on PATH when this window manager started?
+    //
+    // COMPUTED ONCE, IN THE CONSTRUCTOR, AND NEVER AGAIN, which is the decision
+    // rather than a shortcut. Installing the settings window into a running
+    // session does not make the entry appear until the window manager is
+    // restarted, and re-probing on every menu open would mean a $PATH lookup --
+    // one access(2) per directory -- inside the interaction the user is
+    // currently holding the pointer button down for.
+    //
+    // The window manager gains no GTK dependency from this and must not: the
+    // whole mechanism is a PATH lookup and an exec of a name, and the settings
+    // window remains a separately packaged component (D-19).
+    bool m_configGuiOnPath = false;
     // menu() owns the WHOLE root-menu interaction, submenu included: one grab,
     // one event loop, the submenu a state of that loop. openCategorySubmenu()
     // is deliberately gone rather than merely unused -- it was a second nested
@@ -375,6 +605,12 @@ struct Atoms {
     static Atom wm_takeFocus;
     static Atom wm_colormaps;
     static Atom wm2_running;
+
+    // DISC-03 / DISC-01: the socket's filesystem path, published on the root
+    // window as an XA_STRING so a client DISCOVERS it rather than
+    // reconstructing it. A window manager started with an unusual
+    // XDG_RUNTIME_DIR is still findable.
+    static Atom wm2_configSocket;
 
     // EWMH atoms
     static Atom net_supported;

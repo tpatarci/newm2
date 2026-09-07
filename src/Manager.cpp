@@ -1,8 +1,14 @@
 #include "Manager.h"
 #include "Client.h"
+#include "AppCache.h"  // mergeEntries -- the one merge the startup path and the live path share
+#include "Border.h"   // FRAME_WIDTH -- the live frame thickness applyConfig() writes
 #include "TimestampWait.h"
+#include "DesktopEntry.h"  // findOnPath -- D-11's startup probe for the settings window
+#include "RootMenuModel.h" // kRootMenuConfigureBinary -- the name that probe asks about
+#include "ConfigFileWriter.h"  // kConfigFileMaxValueBytes -- the file bound a `set` must respect
 #include <string>
 #include <cstring>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <unistd.h>
@@ -26,6 +32,7 @@ Atom Atoms::wm_delete = None;
 Atom Atoms::wm_takeFocus = None;
 Atom Atoms::wm_colormaps = None;
 Atom Atoms::wm2_running = None;
+Atom Atoms::wm2_configSocket = None;
 
 // EWMH atom static members
 Atom Atoms::net_supported = None;
@@ -66,13 +73,15 @@ bool ignoreBadWindowErrors = false;
 const char *const WindowManager::m_menuCreateLabel = "New";
 
 
-WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& apps)
+WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& apps,
+                             int argc, char** argv)
     : m_config(config)
+    , m_savedConfig(config)
     , m_screenNumber(0)
     , m_root(None)
     , m_defaultColormap(None)
     , m_activeClient(nullptr)
-    , m_apps(apps)
+    , m_autoApps(apps)
     , m_shapeEvent(0)
     , m_randrEventBase(-1)
     , m_lastKnownScreenW(0)
@@ -85,6 +94,7 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     , m_timestampWaitTimeouts(0)
     , m_looping(false)
     , m_returnCode(0)
+    , m_startTime(std::chrono::steady_clock::now())
     , m_menuWindow(None)
     , m_menuFont(nullptr)
     , m_menuBorderPixel(0)
@@ -102,6 +112,11 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     , m_pointerStoppedDeadlineActive(false)
     , m_autoRaiseDeadlineActive(false)
 {
+    // DISC-07: keep the command line for reload. argv[0] is included because
+    // getopt_long() skips it and because it is what an error message would
+    // name.
+    for (int i = 0; i < argc && argv && argv[i]; ++i) m_cliArgs.emplace_back(argv[i]);
+
     std::fprintf(stderr, "\nwm2-born-again: Copyright (c) 1996-7 Chris Cannam, modernized 2026.\n"
                  "  Parts derived from 9wm Copyright (c) 1994-96 David Hogan\n"
                  "  Copying and redistribution encouraged.  No warranty.\n\n");
@@ -116,9 +131,25 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
                  m_config.autoRaise    ? "Auto-raise on."   : "Auto-raise off.",
                  m_config.raiseOnFocus ? "Raise on focus."  : "No raise on focus.");
 
-    // Group the merged AppEntry list into category buckets for menu rendering.
-    // Pure data grouping, no X11 dependency -- safe to run before the display opens.
-    buildAppCategories();
+    // Merge the configuration's manual entries onto what discovery found, then
+    // group the result into category buckets for menu rendering. Pure data, no
+    // X11 dependency -- safe to run before the display opens.
+    //
+    // The merge happens HERE rather than in main.cpp (where it lived until plan
+    // 09-05) because the manual entries can now change while the window manager
+    // is running: the same merge has to be re-runnable, from the same two
+    // inputs, and both of them therefore have to be things this object holds.
+    rebuildAppCategoriesFromConfig();
+
+    // D-11: does this host have a settings window? Asked ONCE, here, and never
+    // again -- see the member's declaration for why that is the decision and
+    // not a shortcut. Pure $PATH arithmetic, no X11 and no GTK; the window
+    // manager links neither the toolkit nor anything that would pull it in, and
+    // this line must never become the reason it does.
+    m_configGuiOnPath = DesktopEntry::findOnPath(kRootMenuConfigureBinary);
+    std::fprintf(stderr, "  Settings window on PATH: %s.\n",
+                 m_configGuiOnPath ? "yes, Configure is on the root menu"
+                                   : "no, no Configure entry");
 
     // Open display via RAII
     m_display.reset(XOpenDisplay(nullptr));
@@ -161,6 +192,7 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
     Atoms::wm_takeFocus   = XInternAtom(display(), "WM_TAKE_FOCUS",       false);
     Atoms::wm_colormaps   = XInternAtom(display(), "WM_COLORMAP_WINDOWS", false);
     Atoms::wm2_running    = XInternAtom(display(), "_WM2_RUNNING",        false);
+    Atoms::wm2_configSocket = XInternAtom(display(), "_WM2_CONFIG_SOCKET",  false);
 
     // EWMH atoms
     Atoms::net_supported          = XInternAtom(display(), "_NET_SUPPORTED", false);
@@ -284,6 +316,16 @@ WindowManager::WindowManager(const Config& config, const std::vector<AppEntry>& 
                              "tab labels will be drawn through the core X11 glyph path\n");
     }
 
+    // CGUI-02: the configuration socket, started BEFORE initialiseScreen()
+    // because that is what publishes root-window properties -- the path has to
+    // exist before the property naming it is written. Nothing here needs the
+    // root window; the display name is all it takes.
+    //
+    // A failure is a warning and no socket, never a fatal. A window manager
+    // with no configuration socket still manages windows, which is the whole of
+    // its job; only wm2-ctl and the GUI lose their live connection.
+    startConfigSocket();
+
     initialiseScreen();
 
     // Claim WM selection
@@ -304,32 +346,95 @@ WindowManager::~WindowManager()
 }
 
 
-void WindowManager::buildAppCategories()
+void WindowManager::rebuildAppCategoriesFromConfig()
 {
-    // std::map keys sort alphabetically, giving us the base ordering for free;
-    // "Custom" (D-07: manual/uncategorized entries) is special-cased to always
-    // be appended last, matching conventional WM root-menu UX.
+    m_apps = AppCache::mergeEntries(m_autoApps, m_config.manualMenuEntries);
+    buildAppCategories();
+}
+
+
+namespace {
+
+// THE ORDERING RULE, in one place (plan 09-07).
+//
+// std::map keys sort alphabetically, giving the base ordering for free;
+// "Custom" (D-07: manual/uncategorized entries) is special-cased to always be
+// appended last, matching conventional WM root-menu UX.
+//
+// Two callers: the menu's own bucket list, and the read-only `menu-categories`
+// answer the settings window's dropdown reads. A second copy of this rule
+// would be a dropdown that offered the categories in an order the menu does not
+// use, which is precisely the kind of quiet disagreement D-12 asks the window
+// manager -- rather than the GUI -- to be the source of truth about.
+void bucketAppCategories(const std::vector<AppEntry>& apps,
+                         std::vector<std::pair<std::string, std::vector<AppEntry>>>& out)
+{
     std::map<std::string, std::vector<AppEntry>> buckets;
-    for (const AppEntry& entry : m_apps) {
+    for (const AppEntry& entry : apps) {
         buckets[entry.category].push_back(entry);
     }
 
-    m_appCategories.clear();
+    out.clear();
     for (auto& kv : buckets) {
         if (kv.first == "Custom") continue;
-        m_appCategories.emplace_back(kv.first, std::move(kv.second));
+        out.emplace_back(kv.first, std::move(kv.second));
     }
 
     auto customIt = buckets.find("Custom");
     if (customIt != buckets.end()) {
-        m_appCategories.emplace_back(customIt->first, std::move(customIt->second));
+        out.emplace_back(customIt->first, std::move(customIt->second));
     }
+}
+
+}  // namespace
+
+
+void WindowManager::buildAppCategories()
+{
+    bucketAppCategories(m_apps, m_appCategories);
+}
+
+
+std::string WindowManager::menuCategoriesValue() const
+{
+    // The SAME merge the menu itself performs, on the effective configuration,
+    // so the answer is what the next opening will actually show rather than
+    // what the last one did.
+    std::vector<std::pair<std::string, std::vector<AppEntry>>> categories;
+    bucketAppCategories(AppCache::mergeEntries(m_autoApps, m_config.manualMenuEntries),
+                        categories);
+
+    // ';'-separated, the same separator the menu-entry value grammar uses. A
+    // category containing a ';' cannot be spelled -- and cannot exist either,
+    // because the .desktop Categories field uses ';' as its own separator and a
+    // manual entry's category is one config-file value on one line.
+    std::string out;
+    for (const auto &pair : categories) {
+        if (!out.empty()) out += ";";
+        out += pair.first;
+    }
+    return out;
 }
 
 
 void WindowManager::release()
 {
     if (m_returnCode != 0) return;
+
+    // The configuration socket goes first, before any X resource: it owns
+    // plain file descriptors and a filesystem node, neither of which depends on
+    // the display, and closing it here means no client can observe a half-torn
+    // window manager. close() unlinks the socket, so the next start finds
+    // nothing to reclaim.
+    m_socketServer.close();
+
+    // And the publication goes with it (codex pass 3, P2). The socket node has
+    // just been unlinked; a property still naming it would outlive this process
+    // on the server's root window and send the next discovery client to
+    // nothing. Done HERE, while the display is still open and before the
+    // ignoreBadWindowErrors window below, because after either of those this is
+    // no longer a request that can be made honestly.
+    unpublishConfigSocketPath();
 
     m_windowMap.clear();
 
@@ -681,8 +786,16 @@ void WindowManager::initialiseScreen()
 
     // Load menu font via Xft with fontconfig fallback chain (D-02)
     // Font size 12 matches Lucida Bold 14pt visual footprint (D-03)
+    //
+    // The preferred pattern comes from config since plan 09-01; its default is
+    // the literal this call spelled inline before, so a user with no config file
+    // gets the same face. The generic-sans SECOND rung below keeps its own
+    // literal, and the fatal() below it stands: the menu measures every row
+    // against this font, so unlike the tab there is no "carry on without it".
+    // Only a host with no sans font at all reaches that exit -- the same
+    // condition that already ended startup before this key existed (T-9-02).
     x11::XftFontPtr menuFont = x11::make_xft_font_name(display(),
-        "Ubuntu,Noto Sans,DejaVu Sans,Sans:size=12");
+        m_config.menuFont.c_str());
     if (!menuFont) {
         menuFont = x11::make_xft_font_name(display(), "sans-serif:size=12");
     }
@@ -713,18 +826,79 @@ void WindowManager::initialiseScreen()
 }
 
 
-unsigned long WindowManager::allocateColour(const char *name, const char *desc)
+bool WindowManager::tryAllocateColour(const char *name, unsigned long &out) const
 {
     XColor nearest, ideal;
 
-    if (!XAllocNamedColor(display(), DefaultColormap(display(), m_screenNumber),
+    // const_cast'd through the accessor rather than making display() const:
+    // Xlib takes a non-const Display* everywhere, and this is a read of the
+    // colormap, not a mutation of the manager.
+    Display *d = const_cast<WindowManager *>(this)->m_display.get();
+    if (!XAllocNamedColor(d, DefaultColormap(d, m_screenNumber),
                           name, &nearest, &ideal)) {
+        return false;
+    }
+    out = nearest.pixel;
+    return true;
+}
+
+
+unsigned long WindowManager::allocateColour(const char *name, const char *desc)
+{
+    // The FATAL wrapper, and the only one startup uses. A colour the server
+    // cannot parse before the window manager has drawn anything is an
+    // unrecoverable configuration error; the same failure arriving over the
+    // socket later is not, which is why the predicate above exists separately
+    // rather than as a flag on this function.
+    unsigned long pixel = 0;
+    if (!tryAllocateColour(name, pixel)) {
         char error[100];
-        std::sprintf(error, "couldn't load %s colour", desc);
+        std::snprintf(error, sizeof error, "couldn't load %s colour", desc);
         fatal(error);
     }
+    return pixel;
+}
 
-    return nearest.pixel;
+
+bool WindowManager::tryAllocateShadeOf(const char *name, double fraction,
+                                       unsigned long &out) const
+{
+    XColor nearest, ideal;
+
+    Display *d = const_cast<WindowManager *>(this)->m_display.get();
+    if (!XAllocNamedColor(d, DefaultColormap(d, m_screenNumber),
+                          name, &nearest, &ideal)) {
+        return false;
+    }
+
+    auto blend = [fraction](unsigned short c) -> unsigned short {
+        const double v = static_cast<double>(c);
+        const double result = (fraction >= 0.0)
+            ? v + (65535.0 - v) * fraction
+            : v * (1.0 + fraction);
+        if (result < 0.0) return 0;
+        if (result > 65535.0) return 65535;
+        return static_cast<unsigned short>(result);
+    };
+
+    XColor shade;
+    shade.red   = blend(ideal.red);
+    shade.green = blend(ideal.green);
+    shade.blue  = blend(ideal.blue);
+    shade.flags = DoRed | DoGreen | DoBlue;
+
+    // A shade that will not allocate is reported as SUCCESS with a zero pixel,
+    // exactly as the warning wrapper below reports it: the base colour did
+    // resolve, and "no bevel" is the correct degradation on a display whose
+    // colormap is full. A false return is reserved for the one condition a
+    // caller must refuse on -- the base colour itself being unparseable.
+    if (!XAllocColor(d, DefaultColormap(d, m_screenNumber), &shade)) {
+        out = 0;
+        return true;
+    }
+
+    out = shade.pixel;
+    return true;
 }
 
 
@@ -799,6 +973,35 @@ void WindowManager::setupEwmhProperties()
     XChangeProperty(display(), m_root, Atoms::net_supportingWmCheck,
                     XA_WINDOW, 32, PropModeReplace,
                     reinterpret_cast<unsigned char*>(&m_wmCheckWindow), 1);
+
+    // DISC-03: the configuration socket's path, published in exactly the shape
+    // of the write above -- a root-window property, PropModeReplace, one atom
+    // and one payload. Written immediately after it so a client that has just
+    // established a window manager is present can ask where to talk to it in
+    // the same round trip.
+    //
+    // XA_STRING, format 8: the value is a filesystem path, and paths are bytes.
+    // Written ONLY when the socket actually bound, so the property's presence
+    // is itself the answer to "is there a socket?" -- a client never has to
+    // connect to find out.
+    //
+    // AND EXPLICITLY REMOVED WHEN IT DID NOT (codex pass 3, P2). The write used
+    // to have no else, which is only correct on a root window this process
+    // owns -- and it owns none of it. The property persists across window
+    // manager processes on a live X server, so a predecessor's path survives
+    // its predecessor; a start that cannot bind would then publish all of its
+    // OWN metadata beside a stale path belonging to nobody, and discovery
+    // clients would be sent to a node that is not there. Write or delete: the
+    // property's presence stays the answer to "is there a socket?" either way.
+    if (m_socketServer.isListening()) {
+        const std::string &socketPath = m_socketServer.path();
+        XChangeProperty(display(), m_root, Atoms::wm2_configSocket,
+                        XA_STRING, 8, PropModeReplace,
+                        reinterpret_cast<const unsigned char*>(socketPath.c_str()),
+                        static_cast<int>(socketPath.size()));
+    } else {
+        unpublishConfigSocketPath();
+    }
 
     // Set _NET_SUPPORTING_WM_CHECK on check window pointing to ITSELF (Pitfall 1)
     XChangeProperty(display(), m_wmCheckWindow, Atoms::net_supportingWmCheck,
@@ -1105,12 +1308,26 @@ void WindowManager::installColormap(Colormap cmap)
 
 void WindowManager::updateClientList()
 {
+    // WITHDRAWN CLIENTS ARE NOT MANAGED WINDOWS AND ARE NOT PUBLISHED.
+    //
+    // A Client exists for every non-override-redirect top-level window from
+    // CreateNotify onwards, which is long before -- and possibly instead of --
+    // a map: a window created and never mapped, or one that has just been
+    // withdrawn, is held here with state Withdrawn, no frame and no manage()
+    // behind it. _NET_CLIENT_LIST is the list of windows the window manager
+    // MANAGES, so publishing those made every panel and pager offer a button
+    // for a window the user can neither see nor raise.
+    //
+    // Iconic clients stay: they are managed, they are in m_hiddenClients, and
+    // a taskbar showing them is the whole point of the list.
     std::vector<Window> windows;
     windows.reserve(m_clients.size() + m_hiddenClients.size());
     for (const auto& c : m_clients) {
+        if (c->isWithdrawn()) continue;
         windows.push_back(c->window());
     }
     for (const auto& c : m_hiddenClients) {
+        if (c->isWithdrawn()) continue;
         windows.push_back(c->window());
     }
     XChangeProperty(display(), m_root, Atoms::net_clientList,
@@ -1606,4 +1823,929 @@ int WindowManager::computePollTimeout() const
     auto ms = duration_cast<milliseconds>(earliest - now).count();
     if (ms <= 0) return 0;
     return static_cast<int>(std::min(ms, static_cast<decltype(ms)>(30000)));
+}
+
+
+// =============================================================================
+// The configuration socket (CGUI-02)
+// =============================================================================
+//
+// The transport -- descriptors, buffers, the uid boundary, the framing bound --
+// lives in src/SocketServer.cpp and knows nothing about what a message means.
+// Everything below is POLICY: D-15's handshake rule and D-14's field ceiling.
+
+// The version this build reports over the socket. Supplied by CMake from the
+// project version so the two cannot drift; the fallback exists only so this
+// file still compiles outside the project's own build.
+#ifndef WM2_VERSION
+#define WM2_VERSION "0.0.0-unknown"
+#endif
+
+
+// D-14's CEILING, ASSEMBLED IN EXACTLY ONE PLACE.
+//
+// Seven fields and no eighth: window manager version, protocol version, uptime
+// in seconds, screen width, screen height, the count of managed windows and the
+// count of hidden ones. That is the whole of what D-14 permits to leave the
+// window manager over the socket.
+//
+// WHAT IS DELIBERATELY ABSENT: every per-window datum. No title, no class, no
+// instance name, no geometry, no window id -- not filtered out downstream, but
+// never gathered here at all (T-9-13). A per-window list is an explicitly
+// EXCLUDED FUTURE MESSAGE: D-14 records it as addable later as a NEW message
+// type without changing this one, so its omission is a decision rather than an
+// oversight. Anyone adding it should add a message, not a field here.
+//
+// This function is the single site a security review has to read, and a
+// region-scoped source check over it is part of this plan's acceptance: the
+// assembly must not reach the client label accessor at all.
+ConfigMessage WindowManager::statusReplyMessage() const
+{
+    ConfigMessage reply;
+    reply.type = ConfigMessageType::StatusReply;
+
+    const auto up = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - m_startTime).count();
+
+    // "managed" is every window under management, hidden ones included:
+    // addToHiddenList() MOVES a client out of m_clients rather than copying it,
+    // so the two vectors are disjoint and a bare m_clients.size() would report
+    // a window manager losing windows as the user hides them.
+    const std::size_t hidden  = m_hiddenClients.size();
+    const std::size_t managed = m_clients.size() + hidden;
+
+    reply.fields.emplace_back("version",       WM2_VERSION);
+    reply.fields.emplace_back("protocol",      std::to_string(kConfigProtocolVersion));
+    reply.fields.emplace_back("uptime",        std::to_string(static_cast<long long>(up)));
+    reply.fields.emplace_back("screen-width",  std::to_string(screenWidth()));
+    reply.fields.emplace_back("screen-height", std::to_string(screenHeight()));
+    reply.fields.emplace_back("managed",       std::to_string(managed));
+    reply.fields.emplace_back("hidden",        std::to_string(hidden));
+
+    return reply;
+}
+
+
+// =============================================================================
+// Live configuration (CGUI-04, plan 09-04)
+// =============================================================================
+
+namespace {
+
+// A whole string, or nothing. std::stoi("12abc") happily returns 12, which over
+// a socket would mean answering "yes" to a request nobody made; the config FILE
+// can afford that laxity because it warns on stderr to a user who is reading
+// it, and a client waiting on a reply cannot.
+bool parseWholeInt(const std::string& text, int& out)
+{
+    if (text.empty()) return false;
+    std::size_t consumed = 0;
+    long long value = 0;
+    try {
+        value = std::stoll(text, &consumed);
+    } catch (const std::exception&) {
+        return false;
+    }
+    if (consumed != text.size()) return false;
+    if (value < -2147483648LL || value > 2147483647LL) return false;
+    out = static_cast<int>(value);
+    return true;
+}
+
+// The four spellings Config's parseBool() gives a meaning to, and no others.
+// The parser maps every OTHER string to false silently -- fine for a file being
+// read once at startup, wrong for a request, because `set click-to-focus yes`
+// would be acknowledged while meaning the opposite of what was typed.
+bool parseStrictBool(const std::string& text, bool& out)
+{
+    std::string lower;
+    lower.reserve(text.size());
+    for (unsigned char c : text) lower += static_cast<char>(std::tolower(c));
+
+    if (lower == "true"  || lower == "1") { out = true;  return true; }
+    if (lower == "false" || lower == "0") { out = false; return true; }
+    return false;
+}
+
+// applyFile()'s own trim, applied to a value that arrived over the socket.
+//
+// C3. The FILE path trims " \t" off the front and " \t\r\n" off the back of
+// every value before Config::applyKeyValue() sees it (src/Config.cpp,
+// applyFile). The socket path did not, so `set new-window-command "  xterm  "`
+// was acknowledged and applied with its spaces, saved into the file with them,
+// and read back WITHOUT them -- `get` then disagreeing with what the window
+// manager held a moment before. Spelled here rather than shared with
+// src/Config.cpp's file-local static, following this project's
+// per-translation-unit convention for small helpers; the character sets are
+// copied deliberately and are asserted equal by the round-trip case in
+// tests/test_wm_socket.cpp.
+std::string trimmedLikeConfigFile(const std::string& text)
+{
+    const std::size_t a = text.find_first_not_of(" \t");
+    if (a == std::string::npos) return std::string();
+    const std::size_t b = text.find_last_not_of(" \t\r\n");
+    return text.substr(a, b - a + 1);
+}
+
+// How the accepted value will read back out of the Config once the parser has
+// stored it. Compared against the real read-back below, so a future divergence
+// between this file's pre-validation and Config::applyKeyValue() is caught by
+// the code rather than shipped.
+std::string canonicalValue(const ConfigKeySpec& spec, const std::string& value)
+{
+    switch (spec.kind) {
+    case ConfigValueKind::Boolean: {
+        bool parsed = false;
+        parseStrictBool(value, parsed);
+        return parsed ? "true" : "false";
+    }
+    case ConfigValueKind::Integer: {
+        int parsed = 0;
+        parseWholeInt(value, parsed);
+        return std::to_string(parsed);
+    }
+    case ConfigValueKind::String:
+        break;
+    }
+    return value;
+}
+
+}  // namespace
+
+
+bool WindowManager::openMenuColours(const Config &next, MenuPalette &out,
+                                   std::string &keyOut)
+{
+    Visual  *visual = DefaultVisual(display(), m_screenNumber);
+    Colormap cmap   = DefaultColormap(display(), m_screenNumber);
+
+    // ALLOCATE, exactly as Border::openPalette() does it: all four values into
+    // a staged palette, and nothing the menu draws with is touched here.
+    // XftColorWrap's move-assignment frees what it replaces, so the old
+    // colours are released in installMenuColours() and nowhere else -- and a
+    // staged palette that is abandoned frees its own in its destructor.
+    x11::XftColorWrap fg(display(), visual, cmap, next.menuForeground.c_str());
+    if (!fg) { keyOut = "menu-foreground"; return false; }
+    x11::XftColorWrap bg(display(), visual, cmap, next.menuBackground.c_str());
+    if (!bg) { keyOut = "menu-background"; return false; }
+    x11::XftColorWrap hl(display(), visual, cmap, next.menuHighlight.c_str());
+    if (!hl) { keyOut = "menu-highlight"; return false; }
+
+    unsigned long borderPixel = 0;
+    if (!tryAllocateColour(next.menuBorders.c_str(), borderPixel)) {
+        keyOut = "menu-borders";
+        return false;
+    }
+
+    out.foreground  = std::move(fg);
+    out.background  = std::move(bg);
+    out.highlight   = std::move(hl);
+    out.borderPixel = borderPixel;
+    return true;
+}
+
+
+void WindowManager::installMenuColours(MenuPalette &palette)
+{
+    if (!palette.foreground) return;   // nothing was staged
+
+    m_menuFgColor     = std::move(palette.foreground);
+    m_menuBgColor     = std::move(palette.background);
+    m_menuHlColor     = std::move(palette.highlight);
+    m_menuBorderPixel = palette.borderPixel;
+
+    // The three popups are UNMAPPED between uses and rebuilt on every opening,
+    // so there is no live drawing to repair here -- only the state the server
+    // paints from when the next opening maps them. The background pixel is what
+    // fills the window on map (which is the BackgroundOnly state
+    // tests/support/PixelVerdict.h names); the border pixel is the one-pixel
+    // outline, these popups being the only windows in the codebase created with
+    // a border WIDTH above zero.
+    for (Window w : {m_menuWindow, m_submenuWindow, m_geometryWindow}) {
+        if (w == None) continue;
+        XSetWindowBackground(display(), w, m_menuBgColor->pixel);
+        XSetWindowBorder(display(), w, m_menuBorderPixel);
+    }
+}
+
+
+bool WindowManager::openMenuFace(const std::string &pattern, x11::XftFontPtr &out)
+{
+    // LOAD BEFORE CLOSE, exactly as Border::reloadTabFont() does it. The
+    // difference between the two is only in the ladder: the menu has one rung
+    // and a fatal() beneath it at startup, because every row of the menu is
+    // MEASURED against this face and there is no "carry on without it". At
+    // reload time there is no fatal to reach -- a pattern that will not open
+    // leaves the previous face in place and the reload is refused.
+    //
+    // WM2_FORCE_MENU_FONT_RELOAD_FAILURE is the sibling of
+    // WM2_FORCE_TAB_FONT_RELOAD_FAILURE (src/Border.cpp), read here and
+    // nowhere else, with no config key, no command-line flag and no mention in
+    // user documentation. It exists for the same reason: fontconfig
+    // SUBSTITUTES for a family it does not have rather than failing, so no
+    // string a user can type reaches the bottom of this ladder -- which is
+    // what makes the refusal path, and CR-04's whole-or-nothing font
+    // application, unreachable and therefore untestable without it.
+    const char *forceFailure = std::getenv("WM2_FORCE_MENU_FONT_RELOAD_FAILURE");
+    const bool forced =
+        (forceFailure != nullptr && std::strcmp(forceFailure, "1") == 0);
+
+    x11::XftFontPtr font =
+        forced ? x11::XftFontPtr()
+               : x11::make_xft_font_name(display(), pattern.c_str());
+    if (!font) {
+        std::fprintf(stderr, "wm2: warning: no usable menu font for that "
+                             "pattern, keeping the previous one\n");
+        return false;
+    }
+
+    out = std::move(font);
+    return true;
+}
+
+
+void WindowManager::installMenuFace(x11::XftFontPtr face)
+{
+    if (!face) return;
+
+    if (m_menuFont) XftFontClose(display(), m_menuFont);
+    m_menuFont = face.release();
+
+    // NOTHING IS RE-LAID-OUT HERE, and that is correct rather than an
+    // omission. WindowManager::menu() measures every row, computes the entry
+    // height from this face's ascent and descent, and sizes the popup, ALL on
+    // each opening -- so the next menu is drawn in the new face by
+    // construction. Do not add a re-layout of an open menu: the popups are
+    // unmapped between uses, and a menu that IS open is being iterated by a
+    // modal loop holding pointers into state this function must not disturb.
+}
+
+
+bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
+{
+    // DISC-06a. Read the declaration in include/Manager.h before adding to
+    // this function: the rule is that every field is diffed here, and that
+    // nothing anywhere else in the codebase writes running state from a Config.
+
+    const Config previous = m_config;
+
+    // --- Not while a grab is holding geometry it has already cached (WR-13) --
+    //
+    // DISC-06 services the configuration socket from modalWait() on purpose,
+    // so a `set` can be applied while the root menu is open or a move/resize
+    // drag is in progress. Three settings move geometry those grabs have
+    // already read once and will not read again:
+    //
+    //   menu-font        WindowManager::menu() computes its entry height once,
+    //                    from m_menuFont, and uses it for the row layout, for
+    //                    rowAt()'s hit test and for the label baselines. Swap
+    //                    the face under it and the pointer highlights a
+    //                    different row from the one it activates.
+    //   tab-font         moves m_tabWidth, and so every frame's indents.
+    //   frame-thickness  moves FRAME_WIDTH and relayouts every client,
+    //                    including the one being dragged: Client::move()
+    //                    cached xIndent() minus the pointer position, so the
+    //                    window jumps by the delta on the next motion and
+    //                    commits the wrong position on release.
+    //
+    // REFUSED, NOT QUEUED. A deferred apply would have to be replayed against
+    // whatever the configuration had become by the time the grab ended, and a
+    // refusal the client can retry is honest about what happened -- D-06
+    // allows a setting to say "not now" as long as it says so. The other
+    // settings are unaffected: a colour, a delay or a focus policy moves
+    // nothing a grab has cached, and still applies instantly under one.
+    if (m_modalDepth != 0 &&
+        (next.tabFont        != previous.tabFont ||
+         next.menuFont       != previous.menuFont ||
+         next.frameThickness != previous.frameThickness)) {
+        // NAMES WHAT WAS REFUSED (I-01). applyConfig() is reached by a `set` of
+        // one key and by a `reload` of a whole file, and the bare sentence
+        // under-described the second: a file that moves frame-thickness AND six
+        // colours, reloaded while the root menu is open, applies none of the
+        // six. That is deliberate -- refusing whole is the only outcome that
+        // cannot leave the file and the screen half-agreeing -- but a client
+        // told only "try again in a moment" cannot tell how much did not
+        // happen.
+        reasonOut = "a menu or a drag is in progress; try again in a moment. "
+                    "Only tab-font, menu-font and frame-thickness are affected, "
+                    "and a reload that moves any of them is refused whole";
+        return false;
+    }
+
+    // --- Everything that can FAIL happens before anything is COMMITTED ------
+    //
+    // Plan 09-04 stored `next` first, because the one live setting it applied
+    // could not fail. A colour can: `set tab-background nonsense` is a value
+    // the CONFIG PARSER accepts verbatim (colours are validated by the server,
+    // not by Config) and the X server then refuses. A font can too. So the
+    // order is: allocate and open EVERY failable resource into a stage, then
+    // install them all, then store, then apply -- and a failure at any point
+    // returns having changed nothing at all, on the screen or in m_config.
+    const bool coloursChanged =
+        next.tabForeground    != previous.tabForeground    ||
+        next.tabBackground    != previous.tabBackground    ||
+        next.frameBackground  != previous.frameBackground  ||
+        next.buttonBackground != previous.buttonBackground ||
+        next.borders          != previous.borders          ||
+        next.menuForeground   != previous.menuForeground   ||
+        next.menuBackground   != previous.menuBackground   ||
+        next.menuHighlight    != previous.menuHighlight    ||
+        next.menuBorders      != previous.menuBorders;
+
+    // STAGED, NOT COMMITTED. Both palettes are ALLOCATED here -- the frame's
+    // five pixels, two Xft colours, two derived bevel shades and three
+    // graphics contexts, and the menu's three Xft colours and border pixel --
+    // and neither is installed until every font below has opened too. The
+    // staged values live to the end of the function and are freed by their own
+    // destructors on any early return, so a refusal leaks nothing.
+    //
+    // THE NAME PRE-FLIGHT THAT USED TO STAND HERE IS GONE, and its caveat with
+    // it (I-02): it proved the nine names PARSE through tryAllocateColour,
+    // which is not the allocation either reload then performed, so it could
+    // never guarantee what it was written to guarantee. Staging both palettes
+    // through the very allocations that will be installed proves the same
+    // thing exactly rather than by analogy -- on any visual, not only the
+    // TrueColor ones this project targets.
+    Border::Palette framePalette;
+    MenuPalette     menuPalette;
+
+    if (coloursChanged) {
+        std::string offending;
+        if (!Border::openPalette(this, next, framePalette, offending) ||
+            !openMenuColours(next, menuPalette, offending)) {
+            reasonOut = "could not allocate the " + offending + " colour";
+            return false;
+        }
+    }
+
+    // --- Fonts --------------------------------------------------------------
+    //
+    // Also before the store, and for the same reason as the colours: a
+    // fontconfig pattern with no usable face is refused, and a refusal that
+    // had already moved m_config would leave `get tab-font` naming a face
+    // nothing is drawn in.
+    const bool tabFontChanged  = next.tabFont  != previous.tabFont;
+    const bool menuFontChanged = next.menuFont != previous.menuFont;
+
+    // BOTH FACES ARE OPENED BEFORE EITHER IS INSTALLED (CR-04).
+    //
+    // An earlier form called two functions that each opened AND committed, and
+    // argued the ordering was safe because "a `set` names ONE key, so at most
+    // one of these two branches ever runs". The second half of that argument
+    // was false: a RELOAD applies a whole Config from disk, and a file that
+    // changes tab-font and menu-font in the same edit runs both branches. A
+    // tab face that installed followed by a menu face that would not open left
+    // the shared face AND m_tabWidth moved while m_config was never updated --
+    // so `get tab-font` named the old pattern, every frame already open kept
+    // the old width, and every frame opened afterwards got the new one. The
+    // state was sticky, too: setting the old value back computes
+    // tabFontChanged == false and never relayouts, so nothing a client could
+    // send would repair it.
+    //
+    // Opening changes nothing; installing cannot fail. So a refusal below
+    // leaves the window manager exactly on the configuration it already had.
+    Border::TabFace  newTabFace;
+    x11::XftFontPtr  newMenuFace;
+
+    if (tabFontChanged && !Border::openTabFace(this, next.tabFont, newTabFace)) {
+        reasonOut = "no usable face for that tab-font pattern";
+        return false;
+    }
+    if (menuFontChanged && !openMenuFace(next.menuFont, newMenuFace)) {
+        reasonOut = "no usable face for that menu-font pattern";
+        return false;
+    }
+
+    // --- COMMIT: everything that could fail has already succeeded -----------
+    //
+    // ALL OR NOTHING, and the colours are part of "all". An earlier form
+    // installed the two palettes where they were allocated, above the fonts --
+    // so a reload carrying a colour AND an unopenable font returned false with
+    // the palettes already swapped: every frame built afterwards wore colours
+    // `get` denied, and a client could not repair it, because setting the old
+    // colour back computes coloursChanged == false and reloads nothing.
+    if (coloursChanged) {
+        Border::installPalette(this, framePalette);
+        installMenuColours(menuPalette);
+    }
+    if (tabFontChanged)  Border::installTabFace(this, newTabFace);
+    if (menuFontChanged) installMenuFace(std::move(newMenuFace));
+
+    // --- Stored WHOLE, now that nothing left can fail -----------------------
+    //
+    // Whole rather than field by field, so a field a later plan does not yet
+    // apply live is still the value the window manager reports and the value
+    // the next thing to read it sees: a new branch below writes an application,
+    // never an assignment.
+    m_config = next;
+
+    // --- Frame thickness ----------------------------------------------------
+    //
+    // The diff is what makes the idempotency guarantee true: a `set` that names
+    // the value already in force does no work at all, so a client that repeats
+    // itself cannot make the desktop flicker or the frames drift.
+    if (next.frameThickness != previous.frameThickness) {
+        FRAME_WIDTH = next.frameThickness;
+
+        // THE WALK IS THE FONT BRANCH'S WHEN THE FACE MOVED TOO (CodeRabbit
+        // F3). FRAME_WIDTH is set unconditionally, because every later
+        // computation of an indent reads it -- but the re-layout below is
+        // skipped when the tab font changed in the same application, and the
+        // branch after this one does it instead. relayoutFrameForFont() IS
+        // this path plus the label repaint (Border::relayoutForTabFont() calls
+        // relayoutForFrameThickness() and then draws), so the frame is still
+        // re-shaped exactly ONCE and the glyphs are the new face's.
+        //
+        // The old arrangement had it the other way round: this branch walked
+        // both lists and the font branch stood down, which left every frame
+        // wearing the new thickness and the OLD glyphs, because
+        // relayoutForFrameThickness() deliberately does not repaint the label
+        // -- a thickness change does not alter the FACE, so it has nothing to
+        // repaint (Border.cpp).
+        if (!tabFontChanged) {
+            // Both lists. addToHiddenList() MOVES a client out of m_clients
+            // rather than copying it, so walking only m_clients would leave
+            // every hidden window wearing the old thickness the moment it is
+            // unhidden.
+            for (const auto &client : m_clients)       client->relayoutFrame();
+            for (const auto &client : m_hiddenClients) client->relayoutFrame();
+
+            XFlush(display());
+        }
+    }
+
+    // --- Tab font -----------------------------------------------------------
+    //
+    // The face was swapped above; what is left is the geometry it moved. A tab
+    // is as thick as the face's metrics say, so every managed client's frame,
+    // tab, button and shape has to be recomputed -- through the same entry
+    // point a thickness change uses, not a second computation of the same
+    // numbers -- and then the label has to be drawn in the new glyphs.
+    //
+    // NOT CONDITIONED ON THE THICKNESS. This runs whether or not the thickness
+    // moved in the same application: when it did, the branch above set
+    // FRAME_WIDTH and stood its walk down, so this walk is the only one and it
+    // is the one that also repaints. Both lists, for the reason given above.
+    if (tabFontChanged) {
+        for (const auto &client : m_clients)       client->relayoutFrameForFont();
+        for (const auto &client : m_hiddenClients) client->relayoutFrameForFont();
+
+        XFlush(display());
+    }
+
+    // --- Colours ------------------------------------------------------------
+    //
+    // The palette was reloaded above, before m_config moved; what is left is to
+    // make it visible. Both lists again, for the same reason: a hidden window
+    // unhidden later must not come back wearing the old palette.
+    if (coloursChanged) {
+        for (const auto &client : m_clients)       client->repaintForColourChange();
+        for (const auto &client : m_hiddenClients) client->repaintForColourChange();
+
+        XFlush(display());
+    }
+
+    // --- Manual menu entries ------------------------------------------------
+    //
+    // Compared on the RENDERED value rather than field by field: the same
+    // string is what `get` returns and what a `set` carries, so "did this
+    // change?" is asked in exactly the vocabulary the protocol uses and cannot
+    // answer differently from it.
+    if (configMenuEntriesValue(next) != configMenuEntriesValue(previous)) {
+        if (m_menuOpen) {
+            // A modal menu loop is iterating m_appCategories right now and
+            // holds a pointer into one of its entry vectors. Rebuilding under
+            // it is the defect 08-13/08-14 fixed once already, so the new list
+            // is picked up by the NEXT opening instead -- which is also what
+            // "a menu already open is not disturbed" means.
+            m_appCategoriesStale = true;
+        } else {
+            rebuildAppCategoriesFromConfig();
+        }
+    }
+
+    return true;
+}
+
+
+bool WindowManager::applyConfigSet(const std::string &key, const std::string &value,
+                                   std::string &reasonOut)
+{
+    // The manual menu entries, which are NOT a single setting and are handled
+    // before the table is consulted (plan 09-05, D-12). The whole list arrives
+    // as one value in the config file's own key order and REPLACES what was
+    // there; see include/Config.h for the grammar and for why a per-row
+    // protocol would have been the wrong shape. Deliberately not added to
+    // configKeySpecs(): that view is of the single settings the option table
+    // declares, it is asserted equal to configFileManagedKeys(), and the file
+    // writer does not write a `menu-entries=` line -- it writes the three
+    // accumulator keys.
+    if (key == kMenuEntriesKey) {
+        Config next = m_config;
+        if (!parseMenuEntriesValue(value, next.manualMenuEntries, reasonOut)) {
+            return false;
+        }
+
+        // The fail-closed read-back, in the shape the settings path uses but
+        // asked as a ROUND TRIP, because the request's exact bytes are not the
+        // right thing to compare against: a value that omits a category, or
+        // separates command tokens with runs of spaces, is legitimate and is
+        // stored in canonical form. What must hold is that rendering the stored
+        // list and parsing it again produces the same list -- if it does not,
+        // the renderer and the parser have come to disagree, which is a bug and
+        // must be a refusal rather than a silent misapply.
+        const std::string rendered = configMenuEntriesValue(next);
+        std::vector<AppEntry> reparsed;
+        std::string ignored;
+        if (!parseMenuEntriesValue(rendered, reparsed, ignored) ||
+            reparsed.size() != next.manualMenuEntries.size()) {
+            reasonOut = "the configuration parser did not accept this value";
+            return false;
+        }
+        for (std::size_t i = 0; i < reparsed.size(); ++i) {
+            const AppEntry &a = reparsed[i];
+            const AppEntry &b = next.manualMenuEntries[i];
+            if (a.name != b.name || a.category != b.category ||
+                a.execArgv != b.execArgv || a.source != b.source) {
+                reasonOut = "the configuration parser did not accept this value";
+                return false;
+            }
+        }
+
+        return applyConfig(next, reasonOut);
+    }
+
+    const ConfigKeySpec *spec = configKeySpecFor(key);
+    if (!spec) {
+        // Not a single setting. `rule-*` and `menu-entry-*` land here too, and
+        // deliberately: they are ordered repeated groups, and applying one of
+        // them in isolation would mean something different from what the same
+        // line means in a file.
+        reasonOut = "unknown setting";
+        return false;
+    }
+
+    // What will actually be applied. Identical to `value` for a boolean or an
+    // integer -- both are already refused unless the whole string parses -- and
+    // the TRIMMED value for a string, because that is what the config file
+    // would have stored (C3).
+    std::string applied = value;
+
+    // --- Validation, BEFORE the parser sees anything -------------------------
+    //
+    // This is the whole of the prohibition this plan carries. The parser's
+    // answer to a bad value is to CLAMP it and warn on stderr; that is right
+    // for a file read at startup and wrong for a request with a client waiting,
+    // because a clamp would be acknowledged as though it were what was asked
+    // for. So the range and the kind are checked here and the value is refused
+    // -- and then the value that survives is applied through the very same
+    // Config::applyKeyValue(). Stricter than the file path, never looser: no
+    // value reaches state by this route that the file route would have rejected.
+    switch (spec->kind) {
+    case ConfigValueKind::Boolean: {
+        bool parsed = false;
+        if (!parseStrictBool(value, parsed)) {
+            reasonOut = "expected true or false";
+            return false;
+        }
+        break;
+    }
+    case ConfigValueKind::Integer: {
+        int parsed = 0;
+        if (!parseWholeInt(value, parsed)) {
+            reasonOut = "expected a whole number";
+            return false;
+        }
+        if (parsed < spec->minValue || parsed > spec->maxValue) {
+            reasonOut = "value out of range (" + std::to_string(spec->minValue) +
+                        " to " + std::to_string(spec->maxValue) + ")";
+            return false;
+        }
+        break;
+    }
+    case ConfigValueKind::String:
+        // NOT verbatim: exactly as THE FILE takes it, which is a stronger
+        // statement and the one this branch used to get wrong (C3).
+        //
+        // Config::applyFile() trims every value and drops one longer than
+        // kConfigFileMaxValueBytes with a warning, so a value taken verbatim
+        // here could be acknowledged, applied live, saved -- and then read back
+        // as something else, or not read back at all. The client would have
+        // been told yes to a value the file path cannot preserve.
+        //
+        // So the value is trimmed the way the file trims it, and a value the
+        // file would drop is refused with a reason that names the bound. What
+        // is applied, read back and acknowledged is the TRIMMED value; the
+        // `ack` carries only the key, and it is `get` that answers with it.
+        //
+        // Everything past those two rules is still taken as the file takes it:
+        // a colour or a font pattern is validated by the server and by
+        // fontconfig respectively, both of which degrade rather than fail.
+        applied = trimmedLikeConfigFile(value);
+        if (applied.size() > kConfigFileMaxValueBytes) {
+            reasonOut = "value longer than " +
+                        std::to_string(kConfigFileMaxValueBytes) +
+                        " bytes, which the configuration file cannot preserve";
+            return false;
+        }
+        // The third rule of the same class. The wire escapes a newline, so
+        // one can arrive here; the file is one value per line, so it can
+        // hold none, and ConfigFileWriter refuses to write it. A `set` that
+        // took it would be acknowledged live and fail at Save with a message
+        // about a rule the client never saw.
+        if (applied.find('\n') != std::string::npos ||
+            applied.find('\r') != std::string::npos) {
+            reasonOut = "value contains a newline, which the configuration "
+                        "file cannot hold";
+            return false;
+        }
+        break;
+    }
+
+    // --- Application, on a COPY ---------------------------------------------
+    Config next = m_config;
+    next.applyKeyValue(key, applied);
+
+    // And the read-back check: did the parser actually store what was agreed?
+    // A mismatch here means the validation above and Config::applyKeyValue()
+    // have come to disagree -- a bug, not a user error -- so it fails CLOSED,
+    // leaving m_config untouched, rather than applying something nobody
+    // authorised.
+    std::string after;
+    if (!configValueForKey(next, key, after) || after != canonicalValue(*spec, applied)) {
+        reasonOut = "the configuration parser did not accept this value";
+        return false;
+    }
+
+    // The funnel can itself refuse -- a colour the config parser takes verbatim
+    // and the X server then rejects reaches this point looking valid. Its
+    // reason is passed straight through, so the client is told which key and
+    // why rather than being handed a generic failure.
+    return applyConfig(next, reasonOut);
+}
+
+
+bool WindowManager::reloadConfigFromDisk(std::string &reasonOut)
+{
+    // A file that does not exist is not an error -- that is the ordinary state
+    // of a machine with no user configuration, and Config::applyFile() skips it
+    // silently. A file that EXISTS and cannot be read is a different thing
+    // entirely: silently carrying on would report a successful reload that did
+    // not read the user's settings.
+    //
+    // AND "does not exist" IS A CLAIM ABOUT errno, NOT ABOUT access(2)'s
+    // return (X3). The existence check fails for a file that is merely absent
+    // and equally for one that cannot be reached at all -- an unreadable parent
+    // directory answers EACCES, a symlink loop answers ELOOP, a dying disk
+    // answers EIO. Treating those as absence reported a SUCCESSFUL reload that
+    // had quietly dropped the user's whole layer, changing the running desktop
+    // to whatever the layers below say. Only ENOENT and ENOTDIR mean the path
+    // is not there (ENOTDIR is a missing component of it, which is the same
+    // statement); every other errno is refused, naming the file and what the
+    // system said about it.
+    //
+    // AND EVERY LAYER, NOT ONLY THE USER'S (Y2, Codex pass 7). Config::load()
+    // reads the XDG_CONFIG_DIRS files before the user's, and applyFile() skips
+    // an unopenable one just as silently. A system-wide configuration that
+    // contributed at startup and has since become unreachable therefore
+    // produced a SUCCESSFUL reload with that whole layer dropped -- the
+    // running desktop falling back to the defaults while the client is told
+    // the reload worked. The list walked here is the one Config::load() walks,
+    // from configFileLayerPaths(), so the two cannot come to disagree about
+    // which files are the layers.
+    for (const std::string& layer : configFileLayerPaths()) {
+        errno = 0;
+        if (::access(layer.c_str(), F_OK) != 0) {
+            if (errno != ENOENT && errno != ENOTDIR) {
+                reasonOut = "cannot examine " + layer + ": " + std::strerror(errno);
+                return false;
+            }
+        } else if (::access(layer.c_str(), R_OK) != 0) {
+            reasonOut = "cannot read " + layer;
+            return false;
+        }
+    }
+
+    // The WHOLE layered load, command line included, rather than the file
+    // merged onto current state. That is what makes an override given at
+    // startup still win afterwards, and it is also what discards a `set` made
+    // over the socket -- which is correct, because a `set` writes no file
+    // (D-01) and so has nothing on disk to be re-read.
+    std::vector<char *> argv;
+    argv.reserve(m_cliArgs.size() + 1);
+    for (std::string &arg : m_cliArgs) argv.push_back(&arg[0]);
+    argv.push_back(nullptr);
+
+    Config next = Config::load(static_cast<int>(m_cliArgs.size()),
+                               argv.empty() ? nullptr : argv.data());
+
+    // Applied BEFORE the saved snapshot is replaced. A file carrying a colour
+    // the server cannot parse is refused whole -- nothing is applied and the
+    // snapshot still describes what the window manager is actually drawing
+    // with, which is what makes DISC-07's "revert" mean something.
+    if (!applyConfig(next, reasonOut)) return false;
+
+    m_savedConfig = next;
+
+    // D-08: EVERY connected client is told the files were re-read, on its own
+    // connection, so a settings window left open somewhere knows its picture is
+    // stale. Sent only AFTER the reload has succeeded and been applied -- a
+    // notice about a reload that was refused would be worse than none.
+    //
+    // The notice is `reloaded`, which is already one of the eleven types the
+    // version-1 contract froze, so this adds no twelfth. It carries NOTHING
+    // beyond its type: a client that wants a value asks for it (T-9-31), and a
+    // notice that carried values would be a second, drifting copy of the
+    // settings. ConfigSocketServer::broadcast() writes to hello-completed
+    // connections only, so a stranger is told nothing (D-15).
+    //
+    // THE CLIENT THAT ASKED IS ANSWERED, NOT ALSO BROADCAST TO (W-04, W-05).
+    // It receives exactly one `reloaded` -- the reply handleConfigRequest
+    // returns below -- because the two lines are indistinguishable on a frozen
+    // wire that has no correlation field and no twelfth type to add. Sending
+    // both made "is this reloaded mine?" unanswerable for every client:
+    // wm2-config popped its pending entry against the broadcast and then
+    // dropped the `error` that refused its own reload, and `wm2-ctl reload`
+    // broke on a foreign notice and exited 0 for a reload that did not happen.
+    //
+    // servingFd() is -1 when nothing is being served -- a reload from any
+    // future route that is not a socket request -- so the broadcast still
+    // reaches everybody in that case.
+    ConfigMessage notice;
+    notice.type = ConfigMessageType::Reloaded;
+    m_socketServer.broadcastExcept(configProtocolEncode(notice),
+                                   m_socketServer.servingFd());
+    return true;
+}
+
+
+// One frame in, one decision out.
+//
+// D-15 IS ENFORCED HERE AND NOWHERE ELSE: a message arriving before a handshake
+// closes the connection with an error first, and so does a handshake naming a
+// protocol version this build does not speak. The window manager never answers
+// a stranger with anything but a refusal.
+ConfigSocketReply WindowManager::handleConfigRequest(const ConfigSocketRequest &request)
+{
+    ConfigSocketReply out;
+
+    ConfigMessage message;
+    const ConfigDecodeResult result = configProtocolDecode(request.line, message);
+
+    auto refuse = [&out](const char *reason, bool close) {
+        ConfigMessage error;
+        error.type = ConfigMessageType::Error;
+        error.reason = reason;
+        out.line = configProtocolEncode(error);
+        out.closeAfterSend = close;
+    };
+
+    // A refusal that NAMES THE KEY, for get and set. The connection is always
+    // kept open: a client that asked about a key this build does not know is
+    // not a stranger, it is a client that guessed wrong, and it may well have
+    // more to say.
+    auto refuseKey = [&out](const std::string &key, const char *reason) {
+        ConfigMessage error;
+        error.type = ConfigMessageType::Error;
+        error.key = key;
+        error.reason = reason;
+        out.line = configProtocolEncode(error);
+    };
+
+    switch (result) {
+    case ConfigDecodeResult::TooLong:
+        refuse("message too long", true);
+        return out;
+
+    case ConfigDecodeResult::Malformed:
+        refuse("malformed message", true);
+        return out;
+
+    case ConfigDecodeResult::UnknownType:
+        // A type this version does not speak is a NAMED verdict, not a
+        // malformation (DISC-01c): declining it is what lets a later version
+        // add a message additively. Before the handshake it is still a
+        // stranger's first word, so it is refused with the connection.
+        refuse("unsupported message type", !request.helloSeen);
+        return out;
+
+    case ConfigDecodeResult::Ok:
+        break;
+    }
+
+    if (!request.helloSeen && message.type != ConfigMessageType::Hello) {
+        refuse("handshake required", true);
+        return out;
+    }
+
+    switch (message.type) {
+    case ConfigMessageType::Hello: {
+        if (message.protocol != kConfigProtocolVersion) {
+            refuse("unsupported protocol version", true);
+            return out;
+        }
+        ConfigMessage ack;
+        ack.type = ConfigMessageType::HelloAck;
+        ack.program = kConfigProtocolWindowManagerProgram;
+        ack.protocol = kConfigProtocolVersion;
+        out.line = configProtocolEncode(ack);
+        out.helloAccepted = true;
+        return out;
+    }
+
+    case ConfigMessageType::Status:
+        out.line = configProtocolEncode(statusReplyMessage());
+        return out;
+
+    case ConfigMessageType::Get: {
+        // Answered from the EFFECTIVE config, never from the file: the question
+        // a client is asking is "what are you using?", and after a `set` those
+        // two are deliberately different things.
+        std::string value;
+        if (message.key == kMenuEntriesKey) {
+            value = configMenuEntriesValue(m_config);
+        } else if (message.key == kMenuCategoriesKey) {
+            // READ-ONLY by construction: the key is not one configKeySpecs()
+            // names, so the `set` arm below refuses it as an unknown setting
+            // without a special case. Answering it here is a view of what the
+            // next root menu will show (plan 09-07, D-12).
+            value = menuCategoriesValue();
+        } else if (!configValueForKey(m_config, message.key, value)) {
+            refuseKey(message.key, "unknown setting");
+            return out;
+        }
+        ConfigMessage reply;
+        reply.type = ConfigMessageType::Value;
+        reply.key = message.key;
+        reply.value = value;
+        out.line = configProtocolEncode(reply);
+        return out;
+    }
+
+    case ConfigMessageType::Set: {
+        std::string reason;
+        if (!applyConfigSet(message.key, message.value, reason)) {
+            refuseKey(message.key, reason.c_str());
+            return out;
+        }
+        ConfigMessage ack;
+        ack.type = ConfigMessageType::Ack;
+        ack.key = message.key;
+        out.line = configProtocolEncode(ack);
+        return out;
+    }
+
+    case ConfigMessageType::Reload: {
+        std::string reason;
+        if (!reloadConfigFromDisk(reason)) {
+            refuse(reason.c_str(), false);
+            return out;
+        }
+        ConfigMessage reloaded;
+        reloaded.type = ConfigMessageType::Reloaded;
+        out.line = configProtocolEncode(reloaded);
+        return out;
+    }
+
+    case ConfigMessageType::HelloAck:
+    case ConfigMessageType::Value:
+    case ConfigMessageType::Ack:
+    case ConfigMessageType::Error:
+    case ConfigMessageType::Reloaded:
+    case ConfigMessageType::StatusReply:
+        // Replies. A client sending one is confused about which end it is;
+        // named individually rather than left to a default arm so a twelfth
+        // message type is a compile error here instead of silence.
+        refuse("not a request", false);
+        return out;
+
+    case ConfigMessageType::Unknown:
+        // Unreachable: the UnknownType verdict above already returned.
+        refuse("unsupported message type", true);
+        return out;
+    }
+
+    refuse("unsupported message type", true);
+    return out;
+}
+
+
+void WindowManager::unpublishConfigSocketPath()
+{
+    // Guarded on the atom rather than on the socket: this runs on paths where
+    // there is no listener by definition, and it may run before the atoms are
+    // interned if a failure is ever moved earlier than they are.
+    if (Atoms::wm2_configSocket == None) return;
+    XDeleteProperty(display(), m_root, Atoms::wm2_configSocket);
+}
+
+
+void WindowManager::startConfigSocket()
+{
+    // DisplayString() rather than getenv("DISPLAY"): the window manager may
+    // have been given a display by some other route, and the socket has to be
+    // named after the display it is actually managing -- that per-display name
+    // is what lets two window managers on two displays coexist, and what lets
+    // the ctest suite run window-manager fixtures in parallel.
+    m_socketServer.listen(DisplayString(display()));
 }

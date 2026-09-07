@@ -1,0 +1,7 @@
+== keys the binary accepts that docs/RELEASE-NOTES.md does not document ==
+  (none)
+
+== keys docs/RELEASE-NOTES.md presents that the binary does not accept ==
+  (none)
+
+doc-keys OK: 36 accepted keys, every one documented, and docs/RELEASE-NOTES.md presents no key the binary refuses

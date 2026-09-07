@@ -121,7 +121,7 @@ constexpr int kIdleWindowSeconds = 30;
 // from them:
 //
 //   date:   2026-08-29
-//   host:   tomislav-HP-Z440-Workstation, Ubuntu 22.04.5 LTS, Linux 6.8.0-124
+//   host:   <workstation>, Ubuntu 22.04.5 LTS, Linux 6.8.0-124
 //   server: Xvfb 1024x768x24, one WmFixture instance per measurement
 //   binary: build/{debug,asan}/wm2-born-again at commit 0e56fc8
 //
@@ -268,23 +268,13 @@ bool allListed(Display* d, const std::vector<Window>& wins)
 // Process measurement
 // ---------------------------------------------------------------------------
 
-// Resident set size in kilobytes, from /proc/<pid>/statm field 2 (resident
-// pages). Chosen over VmSize because virtual size says nothing about what is
-// actually held -- ASan alone reserves an enormous virtual mapping that no VPS
-// ever commits.
-bool residentKb(pid_t pid, long& out)
-{
-    if (pid <= 0) return false;
-    const std::string path = "/proc/" + std::to_string(pid) + "/statm";
-    FILE* f = std::fopen(path.c_str(), "rb");
-    if (!f) return false;
-    long total = 0, resident = 0;
-    const int n = std::fscanf(f, "%ld %ld", &total, &resident);
-    std::fclose(f);
-    if (n != 2) return false;
-    out = resident * (::sysconf(_SC_PAGESIZE) / 1024);
-    return true;
-}
+// The resident-set reader moved to tests/support/WmFixture.h in plan 09-09,
+// where the settings window's own budget case can reach it. Same function,
+// same field, same units -- shared rather than copied, because the window
+// manager's figure and the GUI's figure are put side by side in the release
+// notes against ONE 512 MB budget, and two readers that disagreed by a page
+// size would make that comparison meaningless. `using namespace wm2test` at
+// the top of this file is what keeps every call site below unchanged.
 
 // ---------------------------------------------------------------------------
 // The measurement ladder
@@ -504,7 +494,7 @@ TEST_CASE("Resident memory with twenty clients mapped stays inside the fixed, "
     // The whole ladder is recorded, but only the twenty-client figure is judged
     // -- that is the working set the 512 MB constraint is stated against.
     std::printf("[wm2 resource]   FIXED budget  %ld kB  (tree=%s, calibrated 2026-08-29 "
-                "on tomislav-HP-Z440-Workstation)\n"
+                "on the calibration workstation)\n"
                 "[wm2 resource]   RESULT        %ld kB\n",
                 kRssBudgetKb, kBudgetTree, l.rss20);
     std::fflush(stdout);

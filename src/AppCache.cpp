@@ -401,8 +401,7 @@ std::vector<AppEntry> mergeEntries(const std::vector<AppEntry>& autoDiscovered,
     return result;
 }
 
-std::vector<AppEntry> loadOrRescan(const std::string& cachePath,
-                                    const std::vector<AppEntry>& manualEntries) {
+std::vector<AppEntry> loadAutoDiscovered(const std::string& cachePath) {
     CacheData cache = read(cachePath);
 
     std::vector<AppEntry> autoDiscovered;
@@ -429,7 +428,12 @@ std::vector<AppEntry> loadOrRescan(const std::string& cachePath,
         write(cachePath, fresh);
     }
 
-    return mergeEntries(autoDiscovered, manualEntries);
+    return autoDiscovered;
+}
+
+std::vector<AppEntry> loadOrRescan(const std::string& cachePath,
+                                    const std::vector<AppEntry>& manualEntries) {
+    return mergeEntries(loadAutoDiscovered(cachePath), manualEntries);
 }
 
 } // namespace AppCache

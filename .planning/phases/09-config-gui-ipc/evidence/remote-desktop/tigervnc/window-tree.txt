@@ -1,0 +1,25 @@
+# window tree -- tigervnc -- :147 -- 2026-09-06T16:17:36Z
+# commit 8f4275b
+
+
+xwininfo: Window id: 0x519 (the root window) (has no name)
+
+  Root window id: 0x519 (the root window) (has no name)
+  Parent window id: 0x0 (none)
+     8 children:
+     0x200023 (has no name): ()  710x699+0+0  +0+0
+        3 children:
+        0x200025 (has no name): ()  17x17+4+4  +4+4
+        0x400007 "wm2-born-again settings": ("wm2-config" "Wm2-config")  676x690+33+8  +33+8
+           2 children:
+           0x200026 (has no name): ()  14x14+662+676  +695+684
+           0x400008 (has no name): ()  1x1+-1+-1  +32+7
+        0x200024 (has no name): ()  709x249+0+0  +0+0
+     0x400003 (has no name): ()  1x1+-1+-1  +-1+-1
+     0x400001 "wm2-config": ("wm2-config" "Wm2-config")  10x10+10+10  +10+10
+     0x20001e (has no name): ()  1x1+0+0  +0+0
+     0x20001d "wm2-born-again": ()  1x1+-1+-1  +-1+-1
+     0x20001c (has no name): ()  1x1+0+0  +0+0
+     0x20001b (has no name): ()  1x1+0+0  +0+0
+     0x20001a (has no name): ()  1x1+0+0  +0+0
+

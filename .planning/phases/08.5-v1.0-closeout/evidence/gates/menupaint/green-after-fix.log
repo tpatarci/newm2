@@ -1,7 +1,7 @@
 GREEN after the fix -- 08.5-13 Task 4
 round base : e835737b2251ec2d7c145d74a153b5181da5f144
 commit     : 00767bbfc5a64e8f3e1054a6261a0cba402c3dfd
-host       : Linux 6.8.0-124-generic x86_64 / tomislav-HP-Z440-Workstation
+host       : Linux 6.8.0-124-generic x86_64 / <workstation>
 captured   : 2026-09-01T07:30:28Z
 command    : ctest --test-dir build/debug --output-on-failure --no-tests=error --timeout 120
 ----------------------------------------------------------------------

@@ -3,14 +3,16 @@
 #include "Manager.h"
 #include <X11/Xft/Xft.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 // Static member definitions (degenerate initializations -- don't change)
 int FRAME_WIDTH = 7;  // Default, overwritten in constructor from config
 int Border::m_tabWidth = -1;
+int Border::m_tabBaseline = -1;
 XftFont *Border::m_tabFont = nullptr;
 Border::TabFontRung Border::m_tabFontRung = Border::TabFontRung::NoFont;
 bool Border::m_staticsInitialised = false;
@@ -165,6 +167,47 @@ Border::~Border()
 
 
 // ---------------------------------------------------------------------------
+// What the rotated tab strip is measured from (quick task 260906-ldw)
+//
+// m_tabWidth is the THICKNESS of the strip and m_tabBaseline is the one column
+// every label's baseline sits on. Both are properties of the FONT, computed
+// once when a face is loaded, never of the title -- a baseline derived from the
+// label's own extents slides sideways every time the title changes, which is
+// what it used to do.
+//
+// So the sample has to bound the across-strip glyph box of any title the WM may
+// be handed, and that is why it is the whole printable-ASCII repertoire rather
+// than a letter or two. MEASURED on this host, rotated face at the shipped
+// pattern, size 12, in pixels above and below the baseline:
+//
+//     "M"                 12 above,  0 below      (no descender at all)
+//     "Mg"                12 above,  3 below
+//     "gjpqy settings"    13 above,  3 below      (the dot of "i" reaches 13)
+//     "Hello"             14 above,  0 below      (the stem of "l" reaches 14)
+//     printable ASCII     14 above,  4 below      ("(" is both extremes)
+//
+// Sizing from "M" is what let every descender run into the frame's black line:
+// the strip was built with no room below the baseline whatsoever. Sizing from
+// "Mg" would have fixed the descenders and still put the "(" of a title like
+// "notes.txt (modified)" hard on the tab's outer edge. The repertoire bounds
+// both edges for every ASCII title, and costs one extents call per font load.
+// ---------------------------------------------------------------------------
+
+// Clear tab either side of the glyph box, in pixels. The frame-side figure is
+// the one the operator asked for after measuring the 09-06 screenshot: five
+// pixels of tab between the letter bottoms and the frame line. The outer figure
+// is the two pixels the label already had on the ascender side.
+static const int kTabOuterClearance = 2;
+static const int kTabFrameClearance = 5;
+
+static const char kTabSample[] =
+    "!\"#$%&'()*+,-./0123456789:;<=>?@"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`"
+    "abcdefghijklmnopqrstuvwxyz{|}~";
+static const int kTabSampleLen = static_cast<int>(sizeof kTabSample - 1);
+
+
+// ---------------------------------------------------------------------------
 // XDIS-04 / XDIS-05: the tab-font degradation ladder
 //
 // No rung here may terminate the process. Before this existed, a failure to
@@ -216,11 +259,21 @@ void Border::loadTabFont()
 
     x11::XftFontPtr font;
 
+    // The PREFERRED pattern, and the only rung the `tab-font` key reaches
+    // (plan 09-01). Its default is the literal this rung used to spell inline,
+    // so a user with no config file lands on exactly the face they landed on
+    // before.
+    //
+    // The rungs BELOW are deliberately left as literals. A fallback the user can
+    // also break is not a fallback: if `tab-font` fed rung 2 or rung 3 as well,
+    // one bad value would take out the preferred face and every net under it at
+    // once, which is the outcome the XDIS-04 ladder exists to prevent.
+    const std::string &preferred = windowManager()->config().tabFont;
+
     // Rung 1 -- the normal path (D-04 rotation, D-02 preferred chain). Silent
     // on success: this is what every healthy display does.
     if (!skipRotatedRungs) {
-        font = x11::make_xft_font_rotated(
-            display(), "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12");
+        font = x11::make_xft_font_rotated(display(), preferred.c_str());
         if (font) m_tabFontRung = TabFontRung::RotatedPreferred;
     }
 
@@ -238,8 +291,7 @@ void Border::loadTabFont()
     // horizontally across the tab instead of running down it: degraded, but
     // present and readable.
     if (!font && !skipEveryRung) {
-        font = x11::make_xft_font_name(
-            display(), "Ubuntu,Noto Sans,DejaVu Sans,Sans:bold:size=12");
+        font = x11::make_xft_font_name(display(), preferred.c_str());
         if (font) {
             m_tabFontRung = TabFontRung::Unrotated;
             std::fprintf(stderr, "wm2: warning: no rotated tab font on this "
@@ -286,10 +338,20 @@ void Border::loadTabFont()
         // exactly why this read survived: it is wrong by one pixel and looks
         // right. Its sibling reads, measuring the whole LABEL on the same wrong
         // axis, were wrong by an order of magnitude.
-        const char* sample = "M";
+        //
+        // BASELINE (quick task 260906-ldw). XGlyphInfo places the ink at
+        // [origin.x - x, origin.x - x + width), so for this rotated face `x` is
+        // the distance from the draw origin to the ASCENDER edge and
+        // `width - x` is the descender depth -- MEASURED, not assumed: "M",
+        // which has no descender, comes back with x == width (12 and 12) while
+        // "g" comes back with x 9 against width 12. The ascender edge faces
+        // away from the frame and the descenders point at it, so the outer
+        // clearance is added on the `x` side and the frame clearance beyond the
+        // far edge. See the sample's own commentary above.
         XftTextExtentsUtf8(display(), m_tabFont,
-            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
-        m_tabWidth = extents.width + 4;
+            reinterpret_cast<const FcChar8*>(kTabSample), kTabSampleLen, &extents);
+        m_tabWidth    = extents.width + kTabOuterClearance + kTabFrameClearance;
+        m_tabBaseline = kTabOuterClearance + extents.x;
     } else {
         // Rung 3: an unrotated face has its advance on the other axis, so
         // measuring a glyph the rotated way would size the tab from the
@@ -312,6 +374,368 @@ void Border::loadTabFont()
     if (m_tabWidth < TAB_TOP_HEIGHT * 2 + 8) {
         m_tabWidth = TAB_TOP_HEIGHT * 2 + 8;
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// Live colour reload (CGUI-04, plan 09-05)
+//
+// ALLOCATE, THEN SWAP -- and the two halves are two FUNCTIONS, which is the
+// whole safety property. Every new value -- five pixels, two Xft colours, two
+// derived bevel shades and three graphics contexts -- is obtained into a
+// staged Palette by openPalette(), and nothing that draws sees any of it until
+// installPalette() takes it. A failure at any point therefore leaves the
+// window manager drawing with exactly the palette it had, which is what threat
+// T-9-26 and this plan's standing prohibition require; freeing first and
+// hoping would leave a frame with no colour at all.
+//
+// The split is not decoration. applyConfig() applies a whole Config, so a
+// reload can carry a colour and a font in one edit, and a palette that
+// installed itself before the font was opened committed half a refused
+// configuration -- see the comment on Border::Palette in include/Border.h.
+//
+// A note on what is NOT released here. The five pixel values come from
+// XAllocNamedColor and are never freed, in this function or anywhere else in
+// this codebase -- see WindowManager::allocateColour(), whose results have the
+// same lifetime. On the TrueColor visuals every target of this project uses
+// (Xvfb, TigerVNC, TightVNC, XRDP and any modern X server) a named-colour
+// allocation consumes no colormap cell at all: the pixel is computed from the
+// visual's masks, so there is nothing to leak. Freeing them would also be
+// wrong as the code stands, because two keys set to the same colour share one
+// allocation and a single free would release it for both.
+// ---------------------------------------------------------------------------
+
+Border::Palette::~Palette()
+{
+    // Only what was never handed over. installPalette() clears the flag as it
+    // takes the two colours, so an installed palette frees nothing here and an
+    // abandoned one frees exactly what it allocated.
+    if (xftHeld && display != nullptr) {
+        XftColorFree(display, visual, colormap, &background);
+        XftColorFree(display, visual, colormap, &foreground);
+    }
+}
+
+
+bool Border::openPalette(WindowManager *wm, const Config &next, Palette &out,
+                         std::string &keyOut)
+{
+    // Before the first frame exists the statics block has not run, and it
+    // reads whatever is in the config when it does. Nothing to allocate
+    // against, and nothing to fail.
+    if (!m_staticsInitialised) {
+        out.nothingToInstall = true;
+        return true;
+    }
+
+    Display *d = wm->display();
+    Visual *visual = DefaultVisual(d, DefaultScreen(d));
+    Colormap cmap  = DefaultColormap(d, DefaultScreen(d));
+
+    // --- allocate: pixels ---------------------------------------------------
+    unsigned long framePixel = 0, buttonPixel = 0, borderPixel = 0;
+    unsigned long fgPixel = 0, bgPixel = 0;
+
+    const struct { const char *key; const std::string *value; unsigned long *out; }
+    wanted[] = {
+        {"frame-background",  &next.frameBackground,  &framePixel},
+        {"button-background", &next.buttonBackground, &buttonPixel},
+        {"borders",           &next.borders,          &borderPixel},
+        {"tab-foreground",    &next.tabForeground,    &fgPixel},
+        {"tab-background",    &next.tabBackground,    &bgPixel},
+    };
+    for (const auto &w : wanted) {
+        if (!wm->tryAllocateColour(w.value->c_str(), *w.out)) {
+            keyOut = w.key;
+            return false;
+        }
+    }
+
+    // --- allocate: the two Xft colours the tab is drawn with -----------------
+    //
+    // Handed to `out` the moment both are allocated, so from here on the
+    // staged palette owns them: every early return below destroys it, and the
+    // destructor frees exactly these two.
+    XftColor newForeground, newBackground;
+    if (!XftColorAllocName(d, visual, cmap, next.tabForeground.c_str(),
+                           &newForeground)) {
+        keyOut = "tab-foreground";
+        return false;
+    }
+    if (!XftColorAllocName(d, visual, cmap, next.tabBackground.c_str(),
+                           &newBackground)) {
+        XftColorFree(d, visual, cmap, &newForeground);
+        keyOut = "tab-background";
+        return false;
+    }
+    out.display    = d;
+    out.visual     = visual;
+    out.colormap   = cmap;
+    out.foreground = newForeground;
+    out.background = newBackground;
+    out.xftHeld    = true;
+
+    // --- allocate: the bevel shades, DERIVED from the new tab background -----
+    //
+    // Re-derived rather than carried over, which is the point of deriving them
+    // at all: a user who sets a dark palette live gets bevels that belong to
+    // it, instead of the previous palette's near-white highlight sitting on the
+    // new body colour and reading as a rendering fault. The two fractions are
+    // the ones the constructor uses, spelled once here and once there because
+    // they are the same design decision seen from two entry points.
+    unsigned long lightPixel = 0, shadowPixel = 0;
+    if (!wm->tryAllocateShadeOf(next.tabBackground.c_str(), 0.76, lightPixel) ||
+        !wm->tryAllocateShadeOf(next.tabBackground.c_str(), -0.315, shadowPixel)) {
+        keyOut = "tab-background";
+        return false;
+    }
+
+    // --- allocate: the graphics contexts ------------------------------------
+    x11::GCPtr newDrawGC, newLightGC, newShadowGC;
+    {
+        XGCValues values;
+        values.foreground = fgPixel;
+        values.background = bgPixel;
+        values.function = GXcopy;
+        values.line_width = 0;
+        values.subwindow_mode = IncludeInferiors;
+        newDrawGC = x11::make_gc(d, wm->root(),
+            GCForeground | GCBackground | GCFunction | GCLineWidth | GCSubwindowMode,
+            &values);
+    }
+    if (!newDrawGC) {
+        keyOut = "tab-foreground";
+        return false;
+    }
+
+    // A zero pixel means the shade would not allocate, which every draw site
+    // already treats as "no bevel". Not an error: decoration must not be able
+    // to refuse a colour change.
+    if (lightPixel != 0) {
+        XGCValues bv;
+        bv.foreground = lightPixel;
+        bv.line_width = 0;
+        bv.function = GXcopy;
+        bv.subwindow_mode = IncludeInferiors;
+        newLightGC = x11::make_gc(d, wm->root(),
+            GCForeground | GCLineWidth | GCFunction | GCSubwindowMode, &bv);
+    }
+    if (shadowPixel != 0) {
+        XGCValues bv;
+        bv.foreground = shadowPixel;
+        bv.line_width = 0;
+        bv.function = GXcopy;
+        bv.subwindow_mode = IncludeInferiors;
+        newShadowGC = x11::make_gc(d, wm->root(),
+            GCForeground | GCLineWidth | GCFunction | GCSubwindowMode, &bv);
+    }
+
+    // --- staged: nothing above installed anything ---------------------------
+    out.framePixel  = framePixel;
+    out.buttonPixel = buttonPixel;
+    out.borderPixel = borderPixel;
+    out.fgPixel     = fgPixel;
+    out.bgPixel     = bgPixel;
+    out.drawGC      = std::move(newDrawGC);
+    out.lightGC     = std::move(newLightGC);
+    out.shadowGC    = std::move(newShadowGC);
+    return true;
+}
+
+
+void Border::installPalette(WindowManager *wm, Palette &palette)
+{
+    if (palette.nothingToInstall || !palette.drawGC) return;
+
+    Display *d = wm->display();
+    Visual *visual = DefaultVisual(d, DefaultScreen(d));
+    Colormap cmap  = DefaultColormap(d, DefaultScreen(d));
+
+    // The swap, and the only place the old values are released. Exactly one
+    // set is freed and exactly one installed, so a repeated reload cannot
+    // accumulate colours (T-9-27's argument, applied to the palette).
+    if (m_xftColorsAllocated) {
+        XftColorFree(d, visual, cmap, &m_xftForeground);
+        XftColorFree(d, visual, cmap, &m_xftBackground);
+    }
+    m_xftForeground = palette.foreground;
+    m_xftBackground = palette.background;
+    m_xftColorsAllocated = true;
+    palette.xftHeld = false;      // handed over; the destructor must not free them
+
+    m_frameBackgroundPixel  = palette.framePixel;
+    m_buttonBackgroundPixel = palette.buttonPixel;
+    m_borderPixel           = palette.borderPixel;
+
+    m_drawGC        = std::move(palette.drawGC);
+    m_bevelLightGC  = std::move(palette.lightGC);
+    m_bevelShadowGC = std::move(palette.shadowGC);
+}
+
+
+void Border::repaintForColourChange()
+{
+    // A client that was never framed, or whose frame is stripped for
+    // fullscreen, has nothing to repaint. Checked rather than assumed, for the
+    // same reason relayoutForFrameThickness() checks it.
+    if (!m_parent || m_parent == root()) return;
+
+    // THE BACKGROUND PIXEL, THEN A CLEAR. Two of the surfaces the palette
+    // governs are painted by the SERVER from the window's background pixel
+    // rather than by any code here -- the frame body and the tab's top band --
+    // so re-running the draw path alone would leave them in the old colour
+    // until something else happened to expose them.
+    //
+    // The BORDER pixel matters too, and is easy to miss because every one of
+    // these windows is created with a border WIDTH of zero: on a SHAPED window
+    // the region between the bounding and the clip shape is painted by the
+    // server from the border pixel, and that region is the black outline the
+    // `borders` key names -- the tab's one-pixel top row and the ring around
+    // the tab button.
+    XSetWindowBackground(display(), m_parent, m_frameBackgroundPixel);
+    XSetWindowBorder(display(), m_parent, m_borderPixel);
+    XClearWindow(display(), m_parent);
+
+    if (!isTransient()) {
+        if (m_tab != None) {
+            XSetWindowBackground(display(), m_tab, m_xftBackground.pixel);
+            XSetWindowBorder(display(), m_tab, m_borderPixel);
+            XClearWindow(display(), m_tab);
+        }
+        if (m_button != None) {
+            XSetWindowBackground(display(), m_button, m_buttonBackgroundPixel);
+            XSetWindowBorder(display(), m_button, m_borderPixel);
+            XClearWindow(display(), m_button);
+        }
+
+        // The EXISTING paint path, not a second one: a frame repainted after a
+        // colour change is byte-identical to one repainted after an Expose.
+        const bool active = m_client->isActive();
+        drawLabel(active);
+        drawButtonBevel(active);
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// Live tab-font reload (CGUI-04, plan 09-05)
+//
+// LOAD BEFORE CLOSE, for the same reason openPalette() allocates before
+// anything is released: the shared face is what every frame measures and draws
+// its label with, and a window manager holding a null one after a failed
+// reload is the outcome XDIS-04's ladder exists to prevent.
+//
+// The ladder here is loadTabFont()'s, walked in the same order and stopping at
+// the same rungs -- but only rungs 1 to 3, because rung 4 is "no face at all",
+// which at STARTUP is a legitimate degradation (the alternative is no window
+// manager) and at RELOAD time is not: there is already a working face, and
+// replacing it with nothing would be a downgrade the user did not ask for. So
+// where loadTabFont() lands on rung 4, this returns false and keeps what it
+// had.
+//
+// WM2_FORCE_TAB_FONT_RELOAD_FAILURE is an internal test lever in exactly the
+// shape of WM2_FORCE_NO_TAB_FONT and WM2_FORCE_NO_ROTATED_TAB_FONT above: read
+// here and nowhere else, never documented for users, no config key and no
+// command-line flag. It exists because fontconfig SUBSTITUTES for a family it
+// does not have rather than failing, so no string a user can type reaches the
+// bottom of this ladder -- which is what makes the refusal path above
+// unreachable, and therefore untestable, without it. A DIFFERENT lever from the
+// two startup ones on purpose: those would leave the process with no face to
+// begin with, and then "the previous face stays loaded" would be a claim about
+// nothing.
+// ---------------------------------------------------------------------------
+
+bool Border::openTabFace(WindowManager *wm, const std::string &pattern,
+                         TabFace &out)
+{
+    out = TabFace();
+
+    // No frame exists yet, so no face has been loaded and the first Border
+    // will read the new value itself. Succeeds with nothing staged.
+    if (!m_staticsInitialised) {
+        out.nothingToInstall = true;
+        return true;
+    }
+
+    Display *d = wm->display();
+
+    const char *forceFailure = std::getenv("WM2_FORCE_TAB_FONT_RELOAD_FAILURE");
+    const bool forced =
+        (forceFailure != nullptr && std::strcmp(forceFailure, "1") == 0);
+
+    x11::XftFontPtr font;
+    TabFontRung rung = TabFontRung::NoFont;
+
+    if (!forced) {
+        font = x11::make_xft_font_rotated(d, pattern.c_str());
+        if (font) rung = TabFontRung::RotatedPreferred;
+
+        if (!font) {
+            font = x11::make_xft_font_rotated(d, "sans-serif:bold:size=12");
+            if (font) rung = TabFontRung::RotatedGeneric;
+        }
+        if (!font) {
+            font = x11::make_xft_font_name(d, pattern.c_str());
+            if (font) rung = TabFontRung::Unrotated;
+        }
+    }
+
+    if (!font) {
+        // Rung 4 territory. Refuse rather than degrade: the previous face is
+        // still open, still measured and still what every tab is drawn with.
+        std::fprintf(stderr, "wm2: warning: no usable tab font for that "
+                             "pattern, keeping the previous one\n");
+        return false;
+    }
+
+    out.font = std::move(font);
+    out.rung = rung;
+    return true;
+}
+
+
+void Border::installTabFace(WindowManager *wm, TabFace &face)
+{
+    if (face.nothingToInstall || !face.font) return;
+
+    Display *d = wm->display();
+
+    // The swap. Exactly one face is closed and exactly one opened, so a
+    // repeated reload cannot accumulate faces (T-9-27).
+    if (m_tabFont) XftFontClose(d, m_tabFont);
+    m_tabFont     = face.font.release();
+    m_tabFontRung = face.rung;
+
+    // Re-measure with the SAME arithmetic loadTabFont() uses. The two axis
+    // reads below are the ones deferred item 11 corrected in plan 08-14, and
+    // they are spelled the same way here on purpose: a second, subtly
+    // different measurement is how a tab reloaded at runtime would end up a
+    // different width from one measured at startup.
+    XGlyphInfo extents;
+    const char *sample = "M";
+    if (tabFontRotated()) {
+        XftTextExtentsUtf8(d, m_tabFont,
+            reinterpret_cast<const FcChar8*>(kTabSample), kTabSampleLen, &extents);
+        m_tabWidth    = extents.width + kTabOuterClearance + kTabFrameClearance;
+        m_tabBaseline = kTabOuterClearance + extents.x;
+    } else {
+        XftTextExtentsUtf8(d, m_tabFont,
+            reinterpret_cast<const FcChar8*>(sample), 1, &extents);
+        m_tabWidth = m_tabFont->ascent + m_tabFont->descent + 4;
+        if (m_tabWidth < extents.height + 4) m_tabWidth = extents.height + 4;
+    }
+    if (m_tabWidth < TAB_TOP_HEIGHT * 2 + 8) {
+        m_tabWidth = TAB_TOP_HEIGHT * 2 + 8;
+    }
+}
+
+
+bool Border::reloadTabFont(WindowManager *wm, const std::string &pattern)
+{
+    TabFace face;
+    if (!openTabFace(wm, pattern, face)) return false;
+    installTabFace(wm, face);
+    return true;
 }
 
 
@@ -586,12 +1010,6 @@ void Border::drawLabel(bool active)
         return;
     }
 
-    // Rotated fonts have zero ascent -- use extent-based measurement for x offset
-    XGlyphInfo extents;
-    XftTextExtentsUtf8(display(), m_tabFont,
-        reinterpret_cast<const FcChar8*>(m_label.c_str()),
-        static_cast<int>(m_label.size()), &extents);
-
     // Draw rotated label text (UTF-8 natively via XftDrawStringUtf8)
     //
     // AXIS (deferred item 11, fixed in plan 08-14). The x offset positions the
@@ -604,9 +1022,18 @@ void Border::drawLabel(bool active)
     // axes are close enough that the label landed inside the tab by luck, which
     // is why only long titles were ever affected -- and why nobody caught it,
     // since a test window is usually called something short.
+    //
+    // BASELINE (quick task 260906-ldw). The x offset is now m_tabBaseline, a
+    // per-FONT column measured in loadTabFont(), and no longer `2 + the width of
+    // this label`. Two things were wrong with reading the label: the strip was
+    // sized from a sample with no descender, so every g, j, p, q, y and the foot
+    // of a t ran off the tab into the frame's black line; and the origin moved
+    // with the title, so two windows whose names differ only in their descenders
+    // drew their letters on different columns. Both are properties of the face,
+    // so both are settled once when the face is loaded.
     XftDrawStringUtf8(m_tabDraw.get(), &m_xftForeground,
                        m_tabFont,
-                       2 + extents.width, m_tabHeight - 1,
+                       m_tabBaseline, m_tabHeight - 1,
                        reinterpret_cast<const FcChar8*>(m_label.c_str()),
                        static_cast<int>(m_label.size()));
 }
@@ -1234,6 +1661,70 @@ void Border::configure(int x, int y, int w, int h,
 
 
 
+void Border::relayoutForFrameThickness(int x, int y, int w, int h)
+{
+    // A client that was never framed (or is fullscreen, its frame stripped) has
+    // nothing here to re-lay out. Checked rather than assumed: configure()
+    // would CREATE the frame windows from this call, which is not what a
+    // thickness change should do.
+    if (!m_parent || m_parent == root()) return;
+
+    // The resize handle is created FRAME_WIDTH*2 square and shaped from the
+    // same number; configure() below only ever moves it. Both have to be
+    // redone or the corner grabber keeps the old thickness's size and its
+    // triangular shape stops matching the frame it sits in.
+    if (m_resize != None) {
+        XResizeWindow(display(), m_resize, FRAME_WIDTH * 2, FRAME_WIDTH * 2);
+        shapeResize();
+    }
+
+    // force = true is load-bearing. w and h have NOT changed -- only the
+    // indents around them have -- and without the force, configure()'s
+    // "did the size change?" test skips the reshape of the frame and the tab,
+    // which are precisely the two windows the thickness governs. The result
+    // would be a frame that moved but kept its old outline.
+    configure(x, y, w, h, CWX | CWY | CWWidth | CWHeight, Above, true);
+
+    // The child moves to the new content offset and keeps its own size, so its
+    // absolute position on screen is unchanged: the frame origin moved by
+    // exactly the amount the indent grew. That is why no synthetic
+    // ConfigureNotify is owed here -- ICCCM reports absolute position and size,
+    // and neither changed.
+    XMoveWindow(display(), m_child, xIndent(), yIndent());
+}
+
+
+void Border::relayoutForTabFont(int x, int y, int w, int h)
+{
+    // The thickness path, not a copy of it. A tab-font change moves
+    // m_tabWidth, xIndent() is m_tabWidth + FRAME_WIDTH + 1, and every window
+    // the frame is made of is positioned from those indents -- which is the
+    // same set of recomputations a thickness change needs, done by the same
+    // code. Two parallel computations of one geometry is how they drift.
+    relayoutForFrameThickness(x, y, w, h);
+
+    // ...and then the label, which the thickness path deliberately does not
+    // redraw because a thickness change does not alter the FACE. Here it does:
+    // the glyphs themselves are different, so the tab has to be repainted in
+    // them rather than left showing the old face until the next Expose.
+    //
+    // WHICH IS WHY THIS IS THE ENTRY POINT WindowManager::applyConfig() USES
+    // FOR EVERY CLIENT WHEN THE FACE MOVED, thickness or no thickness
+    // (CodeRabbit F3). An application carrying BOTH used to take the thickness
+    // branch alone -- the walk above, without this repaint -- and left every
+    // open frame in the new thickness wearing the old glyphs. "Until the next
+    // Expose" is a real reprieve on this project's own target: a VNC server
+    // with backing store restores the tab's old contents instead of asking for
+    // them back, so the stale label can survive the reshape that would
+    // otherwise have hidden the defect.
+    if (!isTransient() && m_parent && m_parent != root()) {
+        const bool active = m_client->isActive();
+        drawLabel(active);
+        drawButtonBevel(active);
+    }
+}
+
+
 void Border::moveTo(int x, int y)
 {
     XWindowChanges wc;
@@ -1337,6 +1828,16 @@ void Border::stripForFullscreen()
 
 void Border::restoreFromFullscreen(int x, int y, int w, int h)
 {
+    // WHAT THIS DOES NOT DO. It re-parents and re-configures at the indents in
+    // force NOW, so a thickness that changed during the fullscreen spell is
+    // honoured for the parent and for where the child sits inside it -- but the
+    // tab, the button and the grabber are merely remapped, keeping the geometry
+    // and the shape they had when stripForFullscreen() unmapped them, and no
+    // window's background pixel is touched. The re-layout and the repaint that
+    // a live change would have performed are replayed by
+    // Client::applyDeferredFrameRefresh(), which setFullscreen(false) calls
+    // straight after this returns.
+
     // Reparent child back into frame
     x11::ServerGrab grab(display());
     XReparentWindow(display(), m_child, m_parent, xIndent(), yIndent());
@@ -1503,6 +2004,20 @@ void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
         if (!found) {
             // Ledger 8: the 50 ms sleep is now a wait that also watches the
             // exit flag and the self-pipe. Interrupted: no action is taken.
+            //
+            // MEASURED, NOT ASSUMED (WR-14). tdiff used to accrue a hard-coded
+            // 50 on every Timeout, on the assumption that modalWait(..., 50)
+            // waited 50 ms. Since the configuration socket joined the poll,
+            // modalWait clamps its timeout with clampPollTimeoutForSocket() --
+            // so a connection within 50 ms of its silence deadline makes the
+            // poll return after a few milliseconds with r == 0, and a full
+            // tick was charged for a fraction of one. tdiff is what escalates
+            // this hold from hide to destroy, so the escalation fired early.
+            // The exposure was one tick per silent connection; the reason to
+            // fix it rather than bound it is that any future hint source makes
+            // it worse, and the clock is right here.
+            const std::chrono::steady_clock::time_point before =
+                std::chrono::steady_clock::now();
             const WindowManager::ModalWait wait = windowManager()->modalWait(
                 ButtonPressMask | ButtonReleaseMask | ButtonMotionMask | ExposureMask,
                 &event, 50);
@@ -1515,7 +2030,13 @@ void Border::runButtonPress(XButtonEvent *e, int startX, int startY)
                 action = 0;
                 break;
             }
-            if (wait == WindowManager::ModalWait::Timeout) { tdiff += 50; continue; }
+            if (wait == WindowManager::ModalWait::Timeout) {
+                const long long waited =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - before).count();
+                tdiff += static_cast<unsigned long>(waited > 0 ? waited : 0);
+                continue;
+            }
         }
 
         switch (event.type) {

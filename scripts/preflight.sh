@@ -74,6 +74,22 @@ for mod in x11 xext xft fontconfig xrandr xrender; do
     fi
 done
 
+# OPTIONAL modules (D-18). A missing one is reported with its CONSEQUENCE and
+# never with fail(): an optional dependency that fails the preflight is not
+# optional, and this script's whole job is to be the named cause a builder can
+# act on -- which includes telling somebody why they got no settings window
+# without telling them their environment is broken.
+#
+# Same `info` line shape as the required loop above when the module is present,
+# so a reader does not have to learn a second format to read one list.
+for mod in gtk+-3.0; do
+    if pkg-config --exists "$mod" 2>/dev/null; then
+        info "  $(printf '%-12s' "$mod") $(pkg-config --modversion "$mod")  (optional: builds wm2-config)"
+    else
+        info "  $(printf '%-12s' "$mod") not found  (optional: without it wm2-config, the settings window, is not built; the window manager and wm2-ctl are unaffected)"
+    fi
+done
+
 # ---------------------------------------------------------------------------
 # 2. Toolchain versions (recorded for signoff evidence) + the CMake floor
 # ---------------------------------------------------------------------------
