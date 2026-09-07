@@ -36,20 +36,29 @@ ConfigLayers configLayersFromDisk()
 {
     ConfigLayers layers;
 
-    // Config::load()'s own order, minus the CLI layer, which a settings window
-    // has no business having an opinion about: a value the user put on the
-    // window manager's command line is not in any file and cannot be edited by
-    // writing one. When connected, the window manager's own reported values
-    // take over from these anyway (D-04), and those DO include its CLI layer.
-    for (const std::string& dir : xdgConfigDirs()) {
-        const std::string path = dir + kConfigLeaf;
-        if (!fileExists(path)) continue;
-        layers.systemFilePaths.push_back(path);
-        layers.belowUser.applyFile(path);
+    // Config::load()'s own list, from Config::load()'s own enumeration, minus
+    // the CLI layer -- which a settings window has no business having an
+    // opinion about: a value the user put on the window manager's command line
+    // is not in any file and cannot be edited by writing one. When connected,
+    // the window manager's own reported values take over from these anyway
+    // (D-04), and those DO include its CLI layer.
+    //
+    // The user's file is the LAST entry, by that function's contract, and the
+    // ones before it are the system layers lowest-precedence first.
+    const std::vector<std::string> paths = configFileLayerPaths();
+    for (std::size_t i = 0; i + 1 < paths.size(); ++i) {
+        if (!fileExists(paths[i])) continue;
+        layers.systemFilePaths.push_back(paths[i]);
+        layers.belowUser.applyFile(paths[i]);
+        // Read a second time for its key NAMES, exactly as the user file is
+        // below and for the same reason: which file SETS a key is a question
+        // about the file, and a comparison of values cannot answer it (Y3, C5).
+        layers.systemFileKeys.push_back(configFileKeysIn(paths[i]));
     }
 
     layers.withUser = layers.belowUser;
-    layers.userFilePath = xdgConfigHome() + kConfigLeaf;
+    layers.userFilePath = paths.empty() ? (xdgConfigHome() + kConfigLeaf)
+                                        : paths.back();
     layers.withUser.applyFile(layers.userFilePath);
     // Read a second time, for its key NAMES rather than for its values. Not a
     // second implementation of the layering: configFileKeysIn() classifies
@@ -68,6 +77,22 @@ bool ConfigLayers::userFileSets(const std::string& key) const
 }
 
 
+std::string ConfigLayers::systemFileSetting(const std::string& key) const
+{
+    // Backwards: the layered apply reads the system files lowest-precedence
+    // first, so the LAST one that names a key is the one whose value is in
+    // force, and that is the file the tooltip has to name (Y3).
+    for (std::size_t i = systemFilePaths.size(); i-- > 0;) {
+        if (i >= systemFileKeys.size()) continue;   // paired by construction
+        const std::vector<std::string>& keys = systemFileKeys[i];
+        if (std::find(keys.begin(), keys.end(), key) != keys.end()) {
+            return systemFilePaths[i];
+        }
+    }
+    return std::string();
+}
+
+
 // =============================================================================
 // The model
 // =============================================================================
@@ -76,14 +101,12 @@ void FormState::seedFromLayers(const ConfigLayers& layers)
 {
     m_fields.clear();
 
-    // The two paths a saved field's tooltip may name, kept for markSaved(),
-    // which runs long after the layered read has gone out of scope (A2). The
-    // LAST system file that set anything wins, and the layered apply walks them
-    // lowest-precedence first, so the innermost is the back one.
+    // The paths a saved field's tooltip may name, kept for markSaved(), which
+    // runs long after the layered read has gone out of scope (A2). The system
+    // side is PER KEY (Y3): with two files under XDG_CONFIG_DIRS, the file that
+    // set one key is not the file that set another.
     m_userFilePath = layers.userFilePath;
-    m_systemFilePath = layers.systemFilePaths.empty()
-                           ? std::string()
-                           : layers.systemFilePaths.back();
+    takeSystemFileAttribution(layers);
 
     // Which layer produced a key's effective value is decided in two different
     // ways, and the split is the point (C5).
@@ -116,10 +139,12 @@ void FormState::seedFromLayers(const ConfigLayers& layers)
             const std::string compiled = formValueForKey(builtIn, key);
             if (field.belowUser != compiled) {
                 field.source = ValueSource::SystemFile;
-                // The LAST system file that set it wins, and the layered apply
-                // walks them lowest-precedence first, so the innermost one
-                // that changed the value is found by walking backwards.
-                field.sourceDetail = m_systemFilePath;
+                // The file that actually NAMES this key, which with more than
+                // one system file is not the same thing as the innermost file
+                // (Y3). Attributing every system-provided value to the last
+                // file that exists sends the user to edit a file that does not
+                // mention the setting.
+                field.sourceDetail = systemFileFor(key);
             } else {
                 field.source = ValueSource::BuiltIn;
                 field.sourceDetail.clear();
@@ -175,9 +200,7 @@ void FormState::refreshLowerLayers(const ConfigLayers& layers)
     // have moved with them. Bookkeeping rather than a field value: no field's
     // source, current value or mark is touched here (A2).
     m_userFilePath = layers.userFilePath;
-    m_systemFilePath = layers.systemFilePaths.empty()
-                           ? std::string()
-                           : layers.systemFilePaths.back();
+    takeSystemFileAttribution(layers);
 
     for (FormField& f : m_fields) {
         const std::string below = formValueForKey(layers.belowUser, f.key);
@@ -212,6 +235,33 @@ const FormField* FormState::field(const std::string& key) const
         if (f.key == key) return &f;
     }
     return nullptr;
+}
+
+
+void FormState::takeSystemFileAttribution(const ConfigLayers& layers)
+{
+    m_systemFilePath = layers.systemFilePaths.empty()
+                           ? std::string()
+                           : layers.systemFilePaths.back();
+
+    m_systemFileForKey.clear();
+    for (const std::string& key : configFileManagedKeys()) {
+        const std::string path = layers.systemFileSetting(key);
+        if (!path.empty()) m_systemFileForKey[key] = path;
+    }
+}
+
+
+std::string FormState::systemFileFor(const std::string& key) const
+{
+    const std::map<std::string, std::string>::const_iterator it =
+        m_systemFileForKey.find(key);
+    if (it != m_systemFileForKey.end()) return it->second;
+    // No system file's key list names it, yet the value comparison says the
+    // system layer changed it. That should not happen; the innermost file is
+    // the previous behaviour, and a stale answer is better here than an empty
+    // tooltip that names no file at all.
+    return m_systemFilePath;
 }
 
 
@@ -338,7 +388,7 @@ void FormState::markSaved()
                 f.sourceDetail.clear();
             } else {
                 f.source = ValueSource::SystemFile;
-                f.sourceDetail = m_systemFilePath;
+                f.sourceDetail = systemFileFor(f.key);
             }
         } else {
             f.effective = f.current;

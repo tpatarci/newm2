@@ -1160,6 +1160,95 @@ TEST_CASE("a saved field's tooltip names the file it is now set in",
     CHECK(toBuiltIn->sourceDetail.empty());
 }
 
+TEST_CASE("with two system files, a field's tooltip names the one that set it",
+          "[wm2_config_smoke]")
+{
+    // Y3 (Codex pass 7, P2). seedFromLayers() recorded ONE system path -- the
+    // last one that exists -- and used it as the `sourceDetail` of every
+    // system-provided field. With two files under XDG_CONFIG_DIRS that names
+    // the wrong file for every key the earlier one set: the DISC-08 tooltip
+    // sends the user to edit a file that does not mention the setting, and the
+    // file that does goes unnamed.
+    //
+    // Which file exists is a question about the FILE, not about the value, so
+    // it is answered the way C5 answered it for the user file: each system
+    // layer's key NAMES are read with the writer's own splitter, and the
+    // highest-precedence file that actually contains the key is the one named.
+    const std::string tree = makeTree("twosystemfiles");
+    const std::string lower = tree + "/system-a/wm2-born-again/config";
+    const std::string upper = tree + "/system-b/wm2-born-again/config";
+
+    // The EARLIER file (lower precedence: Config::load applies the dirs in
+    // XDG_CONFIG_DIRS order, so the last one applied wins) sets the thickness
+    // and nothing else; the later one sets only the menu font. Neither key is
+    // set twice, so there is exactly one right answer for each.
+    writeFile(lower, "frame-thickness=9\n");
+    writeFile(upper, "menu-font=Sans:size=11\n");
+    writeFile(tree + "/user/wm2-born-again/config", "tab-background=#010203\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system-a:" + tree + "/system-b");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+
+    const FormField* thickness = form.field("frame-thickness");
+    REQUIRE(thickness != nullptr);
+    REQUIRE(thickness->effective == "9");
+    CHECK(thickness->source == ValueSource::SystemFile);
+    CHECK(thickness->sourceDetail == lower);
+
+    const FormField* font = form.field("menu-font");
+    REQUIRE(font != nullptr);
+    REQUIRE(font->effective == "Sans:size=11");
+    CHECK(font->source == ValueSource::SystemFile);
+    CHECK(font->sourceDetail == upper);
+
+    // A key nothing below the user file sets is still built-in, with no file
+    // to name -- the attribution did not simply start naming a file for
+    // everything.
+    const FormField* untouched = form.field("menu-highlight");
+    REQUIRE(untouched != nullptr);
+    CHECK(untouched->source == ValueSource::BuiltIn);
+    CHECK(untouched->sourceDetail.empty());
+}
+
+
+TEST_CASE("a reset falls back to the system file that actually sets the key",
+          "[wm2_config_smoke]")
+{
+    // Y3's other half, in markSaved(): a reset removes the key from the user
+    // file, so what is in force afterwards is whatever the layers below say --
+    // and the tooltip has to name the file that says it (A2). Reading the last
+    // system path there named the wrong file for exactly the same reason
+    // seedFromLayers() did.
+    const std::string tree = makeTree("twosystemreset");
+    const std::string lower = tree + "/system-a/wm2-born-again/config";
+    const std::string upper = tree + "/system-b/wm2-born-again/config";
+    const std::string userFile = tree + "/user/wm2-born-again/config";
+
+    writeFile(lower, "frame-thickness=9\n");
+    writeFile(upper, "menu-font=Sans:size=11\n");
+    writeFile(userFile, "frame-thickness=13\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system-a:" + tree + "/system-b");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+
+    const FormField* before = form.field("frame-thickness");
+    REQUIRE(before != nullptr);
+    REQUIRE(before->source == ValueSource::UserFile);
+    REQUIRE(before->sourceDetail == userFile);
+
+    REQUIRE(form.requestReset("frame-thickness"));
+    form.markSaved();
+
+    const FormField* after = form.field("frame-thickness");
+    REQUIRE(after != nullptr);
+    CHECK(after->effective == "9");
+    CHECK(after->source == ValueSource::SystemFile);
+    CHECK(after->sourceDetail == lower);
+}
+
+
 TEST_CASE("revert restores every effective value and forgets every edit",
           "[wm2_config_smoke]")
 {

@@ -44,6 +44,7 @@
 #include "Config.h"
 #include "ConfigFileWriter.h"
 
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -101,8 +102,24 @@ struct ConfigLayers {
 
     std::vector<std::string> systemFilePaths;   // those that exist, lowest first
 
+    // The keys each of those files contains, read the same way and in the same
+    // order as systemFilePaths -- entry i belongs to file i.
+    //
+    // ONE PATH FOR THE WHOLE SYSTEM LAYER WAS NOT ENOUGH (Y3). The tooltip
+    // names the file a value came from, and with two files under
+    // XDG_CONFIG_DIRS the last one that exists is the right answer only for the
+    // keys it actually sets. A key the EARLIER file set was attributed to the
+    // later one, which sends the user to edit a file that does not mention it.
+    std::vector<std::vector<std::string>> systemFileKeys;
+
     // True when the user file names `key` at all.
     bool userFileSets(const std::string& key) const;
+
+    // The highest-precedence system file that NAMES `key`, or "" when no system
+    // file does. Walked backwards, because the layered apply reads them
+    // lowest-precedence first and the last one to set a key is the one in
+    // force.
+    std::string systemFileSetting(const std::string& key) const;
 };
 
 // Perform the layered read. Never writes anything, never touches the user's
@@ -263,6 +280,24 @@ private:
     // disappearing under an open window is exactly what that function is for.
     std::string m_userFilePath;
     std::string m_systemFilePath;   // the innermost system file, "" if there is none
+
+    // Which system file set each key, for the fields whose value comes from
+    // the system layer (Y3). Kept beside m_systemFilePath rather than instead
+    // of it: a key attributed to the system layer BY COMPARISON that no system
+    // file's key list names -- the layered read and the line reader disagreeing
+    // about a file, which should not happen and is not worth a wrong answer if
+    // it does -- falls back to the innermost file, which is the previous
+    // behaviour.
+    std::map<std::string, std::string> m_systemFileForKey;
+
+    // The file to name for `key`, from the map above with m_systemFilePath as
+    // the fallback.
+    std::string systemFileFor(const std::string& key) const;
+
+    // Re-take both of those from a layered read. Called by seedFromLayers() and
+    // by refreshLowerLayers(), so a system file appearing, disappearing or
+    // losing a key under an open window moves the attribution with it.
+    void takeSystemFileAttribution(const ConfigLayers& layers);
 
     std::vector<AppEntry> m_menuEffective;   // what is in force
     std::vector<AppEntry> m_menuBelowUser;   // what removing the lines produces
