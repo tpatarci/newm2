@@ -1693,6 +1693,25 @@ TEST_CASE("the delay controls are built from the parser's own bounds, not from a
     // A fourth hand-written copy of the bound is what this arrangement exists
     // to prevent, so the numbers must not appear in the page at all.
     CHECK(page.find("60000") == std::string::npos);
+
+    // A1 (CodeRabbit, apps chunk). The fallback for a key the table does not
+    // name was lo == 1, hi == 1 -- a spin button whose range holds exactly one
+    // number, so a control the user cannot use at all was the answer to bounds
+    // that were merely unknown. A range widget cannot be driven on a host with
+    // no toolkit, so the guard is on the source, comment-stripped, in the shape
+    // this file already uses for the Appearance page.
+    const std::size_t at = page.find("void BehaviourPage::addDelayRow(");
+    REQUIRE(at != std::string::npos);
+    const std::size_t end = page.find("\n}\n", at);
+    REQUIRE(end != std::string::npos);
+    const std::string body = withoutLineComments(page.substr(at, end - at));
+    INFO("addDelayRow, comments stripped:\n" << body);
+    CHECK(body.find("spec->maxValue : 1") == std::string::npos);
+    CHECK(body.find("->minValue") != std::string::npos);
+    CHECK(body.find("->maxValue") != std::string::npos);
+    // The fallback is read from the same table, not spelled out a second time:
+    // the range the table gives the delay keys this page carries.
+    CHECK(body.find("configKeySpecFor(\"auto-raise-delay\")") != std::string::npos);
 }
 
 

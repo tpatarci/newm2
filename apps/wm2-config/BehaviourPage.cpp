@@ -1,5 +1,7 @@
 #include "BehaviourPage.h"
 
+#include <limits>
+
 #include <cstdlib>
 #include <string>
 
@@ -232,9 +234,25 @@ void BehaviourPage::addDelayRow(GtkWidget* grid, int line,
     // range; a GUI that were the only validator would be a GUI whose bugs
     // became the window manager's. A [wm2_config_smoke] case asserts the
     // refusal independently of this control.
+    // A key the option table does not name cannot reach here in this build --
+    // a [wm2_config_smoke] case asserts that every key this page carries is one
+    // the table declares -- but the fallback still has to be a range somebody
+    // could use. It was lo == 1, hi == 1: a spin button whose range holds
+    // exactly one number, so a control the user cannot use at all was the
+    // answer to bounds that were merely unknown (A1).
+    //
+    // The fallback is the range the table gives the OTHER delay keys on this
+    // page, read from the table rather than spelled out, so it stays the fourth
+    // copy of nothing. Should the table know neither, the range opens as wide
+    // as an int, which is the safe direction here: the clamp is a convenience
+    // and the window manager refuses an out-of-range `set` regardless, so a
+    // range that is too wide costs a refusal the user is told about and a range
+    // that is too narrow costs a value they cannot enter at all.
     const ConfigKeySpec* spec = configKeySpecFor(key);
-    const double lo = spec ? spec->minValue : 1;
-    const double hi = spec ? spec->maxValue : 1;
+    const ConfigKeySpec* range = spec ? spec : configKeySpecFor("auto-raise-delay");
+    const double lo = range ? range->minValue : 1;
+    const double hi = range ? range->maxValue
+                            : static_cast<double>(std::numeric_limits<int>::max());
 
     row->control = gtk_spin_button_new_with_range(lo, hi, 10);
     gtk_spin_button_set_digits(GTK_SPIN_BUTTON(row->control), 0);
