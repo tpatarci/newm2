@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 34
+open_count: 35
 waived_count: 8
 fixed_count: 9
-total_count: 51
-last_updated: 2026-09-07T07:55:24.029Z
+total_count: 52
+last_updated: 2026-09-07T08:27:03.228Z
 ---
 
 # Broken Windows Ledger
@@ -66,6 +66,7 @@ last_updated: 2026-09-07T07:55:24.029Z
 | 49 | 09 | unrun-verify | apps/wm2-config/main.cpp |  | Codex pass-5 X1 (commit 90501ff): a live set the window manager refuses now puts the form back to the value in force (ConfigWindow::restoreRefused), so a refusal can never be saved. The RULE is driven display-free ('[wm2_config_smoke] putting a refused value back leaves nothing for a save to write': the field is dirty and yields one edit, and setting it back to effective empties the edit list). What is NOT driven is the live arm -- a running window manager refusing a set while a real settings window is open, and the field observed snapping back -- because it needs a GTK main loop and widget inspection, the same limit rows 33 and 48 record. The GTK wiring itself is a comment-stripped source guard on applyLive and restoreRefused. | open |  | 2026-09-07T07:55:11.134Z |  |
 | 50 | 09 | unrun-verify | apps/wm2-config/AppearancePage.cpp |  | Codex pass-5 X1 (commit 90501ff): configCanonicalColour converts every accepted colour to the hexadecimal form on the argument that XParseColor always reads it. The conversion is driven against GDK's parser display-free (rgb(200,202,204), #c8cacc, #abc, SteelBlue, gray20, each also a fixed point), but its OUTPUT is never handed to XParseColor on a live server in the same case -- the claim that closes the loop rests on the X11 protocol's definition of the hexadecimal form rather than on a run. The server side is covered separately ('[wm_config_live] a colour the X server cannot parse is refused and the screen is unchanged') and the startup fatal by '[wm_fallbacks] An unparseable colour setting exits non-zero and names the offending setting', but no single case walks a CSS spelling all the way through to an allocated pixel. | open |  | 2026-09-07T07:55:18.749Z |  |
 | 51 | 09 | unrun-verify | src/Manager.cpp |  | Codex pass-5 X3 (commit 081d6a0): reloadConfigFromDisk now refuses when access(F_OK) fails with an errno other than ENOENT or ENOTDIR. The refusing branch IS driven over the socket with EACCES (a config directory chmod'd to 000 after the window manager has read frame-thickness=11 out of it, skipped as root). The other two errnos the fix names are not: ELOOP would need a symlink loop staged at the config path, and EIO a failing disk. One non-ENOENT errno proves the branch, so the residue is the enumeration rather than the behaviour. | open |  | 2026-09-07T07:55:24.029Z |  |
+| 52 | 09 | unrun-verify | apps/wm2-config/main.cpp |  | Codex pass-7 Y1 (commit 27b6967): a Save pressed while a live set is still unanswered is now DEFERRED -- save() returns early on ProtocolClient::pendingRequestCount() != 0 and runQueuedSaveIfIdle() runs it when the last reply lands, from the socket callback and from the state handler. What is driven display-free is the contract the gate rests on ('[wm2_config_smoke] a save is held back while a live set is unanswered, and a refusal puts back the value that was in force when it was sent': the pending count is 1 while the set is unanswered and 0 after the refusal, and the field ends at the pre-set value, not dirty, with an empty edit list) plus a comment-stripped source guard on save(), runQueuedSaveIfIdle() and onSocketReadable(). What is NOT driven is the GTK arm: a real settings window, a user pressing Save during the gap, and the write observed to happen only after the reply -- it needs a GTK main loop and widget inspection, the same limit rows 33, 48 and 49 record. | open |  | 2026-09-07T08:27:03.228Z |  |
 
 ````json
 [
@@ -679,6 +680,18 @@ last_updated: 2026-09-07T07:55:24.029Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-07T07:55:24.029Z",
+    "resolved_at": null
+  },
+  {
+    "id": 52,
+    "kind": "unrun-verify",
+    "phase": "09",
+    "file": "apps/wm2-config/main.cpp",
+    "line": null,
+    "description": "Codex pass-7 Y1 (commit 27b6967): a Save pressed while a live set is still unanswered is now DEFERRED -- save() returns early on ProtocolClient::pendingRequestCount() != 0 and runQueuedSaveIfIdle() runs it when the last reply lands, from the socket callback and from the state handler. What is driven display-free is the contract the gate rests on ('[wm2_config_smoke] a save is held back while a live set is unanswered, and a refusal puts back the value that was in force when it was sent': the pending count is 1 while the set is unanswered and 0 after the refusal, and the field ends at the pre-set value, not dirty, with an empty edit list) plus a comment-stripped source guard on save(), runQueuedSaveIfIdle() and onSocketReadable(). What is NOT driven is the GTK arm: a real settings window, a user pressing Save during the gap, and the write observed to happen only after the reply -- it needs a GTK main loop and widget inspection, the same limit rows 33, 48 and 49 record.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-07T08:27:03.228Z",
     "resolved_at": null
   }
 ]
