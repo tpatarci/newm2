@@ -3481,3 +3481,189 @@ TEST_CASE("a client that was fullscreen while the configuration moved comes back
 
     CHECK(fixture.wmAlive());
 }
+
+
+// -----------------------------------------------------------------------------
+// A THICKNESS AND A TAB FONT IN ONE APPLICATION (CodeRabbit F3, 2026-09-07)
+// -----------------------------------------------------------------------------
+
+TEST_CASE("a thickness and a tab font applied together leave a tab that was "
+          "already open looking like one opened afterwards", "[wm_config_live]")
+{
+    // THE DEFECT. applyConfig() had two branches. The thickness branch walked
+    // both client lists with relayoutFrame(), and the tab-font branch was
+    // SKIPPED whenever the thickness had also moved -- on the reasoning that
+    // the first branch had already re-laid every frame out. But
+    // Border::relayoutForFrameThickness() deliberately does not repaint the
+    // label (a thickness change does not alter the FACE), and only
+    // relayoutForTabFont() adds that repaint. So a reload carrying BOTH gave
+    // every open window the new thickness wearing the OLD glyphs, until
+    // something else happened to expose the tab.
+    //
+    // THE OBSERVABLE IS SELF-CALIBRATING, which is what makes it a claim about
+    // the live path rather than about font metrics this test would otherwise
+    // have to predict. A second window is mapped AFTER the change: it is framed
+    // from scratch, so its tab is what the new configuration is SUPPOSED to
+    // look like. The window that was already open must carry the same amount of
+    // ink -- same title, same size, same face, same tab width. Nothing here
+    // needs to know how wide a glyph is at either size.
+    //
+    // tab-foreground is a colour nothing else in the frame uses, so counting it
+    // counts the LABEL and not the bevel, the border or the background; and it
+    // is held FIXED across the reload, so the colour branch of applyConfig()
+    // does no work and cannot repaint the tab on this case's behalf.
+    const std::string home = makeConfigHome(
+        "frame-thickness=15\n"
+        "tab-font=Sans:bold:size=28\n"
+        "tab-foreground=#ff00ff\n"
+        "tab-background=#c8cacc\n"
+        "frame-background=#dcdee0\n"
+        "button-background=#dcdee0\n"
+        "borders=#ff8000\n");
+    WmFixture fixture(fixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    // A long run of narrow glyphs, for the reason the palette cases give:
+    // Border::drawLabel() draws nothing at all for a window with no name, and
+    // the foreground colour would never reach a pixel.
+    const char* kTitle = "IIIIIIIIIIIIIIIIIIII";
+
+    Window openedBefore = None;
+    Window frameBefore = mapClientAndAwaitFrame(d, 140, 200, 300, 400,
+                                                openedBefore, kTitle);
+    REQUIRE(frameBefore != None);
+    settleWm(d);
+
+    const unsigned long ink = namedPixel(d, "#ff00ff");
+    REQUIRE(ink != ~0UL);
+
+    const int kThickBefore = 15;
+    const int kThickAfter  = 7;
+
+    const Rect fBefore = rectOf(d, frameBefore);
+    const Rect cBefore = rectOf(d, openedBefore);
+    const Histogram beforeHist =
+        captureRoot(d, tabColumnRect(fBefore, cBefore, kThickBefore, cBefore.h));
+    const long inkBefore = countOf(beforeHist, ink);
+
+    // Without this the "it was repainted" assertions could pass on a tab that
+    // never had any ink on it.
+    INFO("tab before: " << describeTop(beforeHist));
+    REQUIRE(inkBefore > 0);
+
+    const int decorationBefore = decorationWidth(d, frameBefore, openedBefore);
+
+    // WHY THIS CASE IS GREEN AT THE ROUND BASE, MEASURED RATHER THAN ASSERTED.
+    // ExposureMask is not an exclusive selection, so the tab the window manager
+    // owns can be watched from here without disturbing it. The reshape that the
+    // thickness path performs moves the stair-stepped diagonal of the tab's
+    // clip region, which puts regions of the tab back inside it -- and every
+    // one of those is an Expose the window manager answers with
+    // Border::expose() -> drawLabel(), in the NEW face. So on this X server the
+    // missing repaint is painted over by the server's own accounting within a
+    // single turn of the event loop, and no capture taken after a settle can
+    // see the stale label. The count is printed on failure so a reader can tell
+    // that is still what is happening.
+    //
+    // The defect is therefore guarded in TWO places: here, behaviourally, that
+    // the combined application produces a correct tab at all; and in
+    // tests/test_wm_socket.cpp, at the source, that the label repaint is
+    // performed by the window manager rather than left to an Expose it does not
+    // control. The second is the one that was red. A VNC server with backing
+    // store -- this project's stated deployment -- restores a shrinking window's
+    // contents instead of asking for them back, and generates no Expose to be
+    // rescued by.
+    const Window probeTab = findFrameChild(d, frameBefore, openedBefore, false);
+    REQUIRE(probeTab != None);
+    XSelectInput(d, probeTab, ExposureMask | StructureNotifyMask);
+    XSync(d, False);
+    int exposeCount = 0, configureCount = 0;
+
+    // --- BOTH KEYS, ONE APPLICATION -----------------------------------------
+    //
+    // A reload rather than two `set` messages, because two `set`s are two
+    // applyConfig() calls and each would take its own branch: the defect is
+    // reachable only when both diffs are true at the SAME time.
+    writeConfigFile(home,
+        "frame-thickness=7\n"
+        "tab-font=Sans:bold:size=10\n"
+        "tab-foreground=#ff00ff\n"
+        "tab-background=#c8cacc\n"
+        "frame-background=#dcdee0\n"
+        "button-background=#dcdee0\n"
+        "borders=#ff8000\n");
+    CtlResult reloaded = ctl(fixture, {"reload"});
+
+    // The geometry moved, so the reload really was applied to the open window.
+    int decorationAfter = decorationBefore;
+    WmFixture::pollUntil([&] {
+        pumpWm(d);
+        decorationAfter = decorationWidth(d, frameBefore, openedBefore);
+        return decorationAfter != decorationBefore;
+    }, 8000);
+    settleWm(d);
+    {
+        XEvent pev;
+        while (XCheckWindowEvent(d, probeTab, ExposureMask | StructureNotifyMask, &pev)) {
+            if (pev.type == Expose) ++exposeCount;
+            if (pev.type == ConfigureNotify) ++configureCount;
+        }
+    }
+
+    // --- THE REFERENCE, framed from scratch under the new configuration -----
+    Window openedAfter = None;
+    Window frameAfter = mapClientAndAwaitFrame(d, 600, 200, 300, 400,
+                                               openedAfter, kTitle);
+    REQUIRE(frameAfter != None);
+    settleWm(d);
+
+    const Rect fOld = rectOf(d, frameBefore);
+    const Rect cOld = rectOf(d, openedBefore);
+    const Rect fNew = rectOf(d, frameAfter);
+    const Rect cNew = rectOf(d, openedAfter);
+
+    const Rect oldColumn = tabColumnRect(fOld, cOld, kThickAfter, cOld.h);
+    const Rect newColumn = tabColumnRect(fNew, cNew, kThickAfter, cNew.h);
+
+    const Histogram oldHist = captureRoot(d, oldColumn);
+    const Histogram newHist = captureRoot(d, newColumn);
+    const long inkOld = countOf(oldHist, ink);
+    const long inkNew = countOf(newHist, ink);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO(reloaded.describe());
+    INFO("decoration " << decorationBefore << " -> " << decorationAfter);
+    INFO("old column " << describe(oldColumn) << " new column " << describe(newColumn));
+    INFO("ink: before " << inkBefore << ", already-open " << inkOld
+         << ", opened-afterwards " << inkNew);
+    INFO("tab Expose events " << exposeCount << ", ConfigureNotify " << configureCount);
+    INFO("already-open tab: " << describeTop(oldHist));
+    INFO("opened-after tab: " << describeTop(newHist));
+
+    CHECK(reloaded.exitCode == 0);
+    CHECK(ctlGet(fixture, "frame-thickness") == "7");
+    CHECK(ctlGet(fixture, "tab-font") == "Sans:bold:size=10");
+
+    // The two columns are the same rectangle, so the comparison below is
+    // between like and like rather than between two different amounts of tab.
+    CHECK(oldColumn.w == newColumn.w);
+    CHECK(oldColumn.h == newColumn.h);
+
+    // The reference really has a label on it.
+    CHECK(inkNew > 0);
+
+    // THE CLAIM. The window that was already open wears the new face, so it
+    // carries the same ink as the one framed from scratch under it.
+    CHECK(inkOld == inkNew);
+
+    // ...and it is no longer wearing the old one. Stated separately so a
+    // failure says WHICH way it went: a stale 28-point label leaves more ink
+    // behind than a fresh 10-point one puts down.
+    CHECK(inkOld < inkBefore);
+
+    CHECK(fixture.wmAlive());
+}

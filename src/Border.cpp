@@ -1707,6 +1707,16 @@ void Border::relayoutForTabFont(int x, int y, int w, int h)
     // redraw because a thickness change does not alter the FACE. Here it does:
     // the glyphs themselves are different, so the tab has to be repainted in
     // them rather than left showing the old face until the next Expose.
+    //
+    // WHICH IS WHY THIS IS THE ENTRY POINT WindowManager::applyConfig() USES
+    // FOR EVERY CLIENT WHEN THE FACE MOVED, thickness or no thickness
+    // (CodeRabbit F3). An application carrying BOTH used to take the thickness
+    // branch alone -- the walk above, without this repaint -- and left every
+    // open frame in the new thickness wearing the old glyphs. "Until the next
+    // Expose" is a real reprieve on this project's own target: a VNC server
+    // with backing store restores the tab's old contents instead of asking for
+    // them back, so the stale label can survive the reshape that would
+    // otherwise have hidden the defect.
     if (!isTransient() && m_parent && m_parent != root()) {
         const bool active = m_client->isActive();
         drawLabel(active);

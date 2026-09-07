@@ -2211,13 +2211,31 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
     if (next.frameThickness != previous.frameThickness) {
         FRAME_WIDTH = next.frameThickness;
 
-        // Both lists. addToHiddenList() MOVES a client out of m_clients rather
-        // than copying it, so walking only m_clients would leave every hidden
-        // window wearing the old thickness the moment it is unhidden.
-        for (const auto &client : m_clients)       client->relayoutFrame();
-        for (const auto &client : m_hiddenClients) client->relayoutFrame();
+        // THE WALK IS THE FONT BRANCH'S WHEN THE FACE MOVED TOO (CodeRabbit
+        // F3). FRAME_WIDTH is set unconditionally, because every later
+        // computation of an indent reads it -- but the re-layout below is
+        // skipped when the tab font changed in the same application, and the
+        // branch after this one does it instead. relayoutFrameForFont() IS
+        // this path plus the label repaint (Border::relayoutForTabFont() calls
+        // relayoutForFrameThickness() and then draws), so the frame is still
+        // re-shaped exactly ONCE and the glyphs are the new face's.
+        //
+        // The old arrangement had it the other way round: this branch walked
+        // both lists and the font branch stood down, which left every frame
+        // wearing the new thickness and the OLD glyphs, because
+        // relayoutForFrameThickness() deliberately does not repaint the label
+        // -- a thickness change does not alter the FACE, so it has nothing to
+        // repaint (Border.cpp).
+        if (!tabFontChanged) {
+            // Both lists. addToHiddenList() MOVES a client out of m_clients
+            // rather than copying it, so walking only m_clients would leave
+            // every hidden window wearing the old thickness the moment it is
+            // unhidden.
+            for (const auto &client : m_clients)       client->relayoutFrame();
+            for (const auto &client : m_hiddenClients) client->relayoutFrame();
 
-        XFlush(display());
+            XFlush(display());
+        }
     }
 
     // --- Tab font -----------------------------------------------------------
@@ -2226,13 +2244,13 @@ bool WindowManager::applyConfig(const Config &next, std::string &reasonOut)
     // is as thick as the face's metrics say, so every managed client's frame,
     // tab, button and shape has to be recomputed -- through the same entry
     // point a thickness change uses, not a second computation of the same
-    // numbers.
+    // numbers -- and then the label has to be drawn in the new glyphs.
     //
-    // Skipped when the thickness ALSO changed in the same application, because
-    // that branch has just walked both lists and re-laid every frame out with
-    // the new tab width already in force; running both would re-shape every
-    // frame twice for one message.
-    if (tabFontChanged && next.frameThickness == previous.frameThickness) {
+    // NOT CONDITIONED ON THE THICKNESS. This runs whether or not the thickness
+    // moved in the same application: when it did, the branch above set
+    // FRAME_WIDTH and stood its walk down, so this walk is the only one and it
+    // is the one that also repaints. Both lists, for the reason given above.
+    if (tabFontChanged) {
         for (const auto &client : m_clients)       client->relayoutFrameForFont();
         for (const auto &client : m_hiddenClients) client->relayoutFrameForFont();
 

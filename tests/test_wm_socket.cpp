@@ -1696,6 +1696,80 @@ TEST_CASE("modalWait reports Timeout from its deadline check and nowhere else",
     CHECK(region.find("bounded && r == 0") == std::string::npos);
 }
 
+
+TEST_CASE("applying a thickness and a tab font together walks the frames once, "
+          "through the path that repaints the label", "[wm_socket][source]")
+{
+    // A LIVE-APPLY CLAIM IN THE SOCKET FILE, deliberately: this is where this
+    // suite's source-level guards live, this is the binary that already reads
+    // src/Manager.cpp, and the alternative was handing WM2_SOURCE_DIR to a
+    // second target to say the same thing.
+    //
+    // THE DEFECT (CodeRabbit F3). applyConfig() had two branches. The thickness
+    // branch walked both client lists with relayoutFrame(); the tab-font branch
+    // was skipped whenever the thickness had ALSO moved, on the reasoning that
+    // the first branch had already re-laid every frame out. But
+    // Border::relayoutForFrameThickness() deliberately does not repaint the
+    // label -- a thickness change does not alter the FACE -- and only
+    // relayoutForTabFont() adds that repaint. A reload carrying both therefore
+    // left every open frame in the new thickness wearing the OLD glyphs, with
+    // nothing in the window manager to put them right.
+    //
+    // WHY THIS IS GUARDED AT THE SOURCE. The behavioural case in
+    // tests/test_wm_config_live.cpp is green at the round base and says so: the
+    // reshape the thickness path performs moves the tab's clip region, the
+    // server sends Expose for what comes back into it, and the window manager
+    // repaints the label answering THAT. The defect is real and the rescue is
+    // incidental -- a server with backing store, which is what a VNC session
+    // usually is, does not send those Exposes. So what is asserted here is the
+    // shape of the decision: exactly one walk, and it is the one that repaints.
+    const std::string source = readWholeFile(std::string(WM2_SOURCE_DIR) + "/src/Manager.cpp");
+    REQUIRE_FALSE(source.empty());
+
+    const std::string marker = "bool WindowManager::applyConfig(const Config &next";
+    const std::size_t start = source.find(marker);
+    REQUIRE(start != std::string::npos);
+
+    const std::size_t end = source.find("\n}\n", start);
+    REQUIRE(end != std::string::npos);
+
+    const std::string region = source.substr(start, end - start);
+    INFO("applyConfig region:\n" << region);
+
+    // The region really is the one that re-lays frames out.
+    REQUIRE(region.find("tabFontChanged") != std::string::npos);
+    REQUIRE(region.find("FRAME_WIDTH = next.frameThickness") != std::string::npos);
+
+    auto occurrences = [&region](const std::string& needle) {
+        int n = 0;
+        for (std::size_t at = region.find(needle); at != std::string::npos;
+             at = region.find(needle, at + needle.size())) {
+            ++n;
+        }
+        return n;
+    };
+
+    // ONE WALK OF EACH KIND, two lines each -- the managed list and the hidden
+    // one. A third line of either would be a frame re-shaped twice. Counted
+    // through the receiver, so a prose mention of either name in a comment is
+    // not mistaken for a call.
+    const std::string thicknessCall = "client->relayoutFrame()";
+    const std::string fontCall      = "client->relayoutFrameForFont()";
+    INFO(thicknessCall << " lines: " << occurrences(thicknessCall));
+    INFO(fontCall      << " lines: " << occurrences(fontCall));
+    CHECK(occurrences(thicknessCall) == 2);
+    CHECK(occurrences(fontCall)      == 2);
+
+    // THE DEFECT, in the one spelling that carried it: the font walk must not
+    // be conditioned on the thickness having stayed put, or an application
+    // carrying both takes the branch that does not repaint.
+    CHECK(region.find("next.frameThickness == previous.frameThickness") == std::string::npos);
+
+    // ...and the thickness walk is the one that stands down instead, so the
+    // frames are still re-laid out exactly once.
+    CHECK(region.find("if (!tabFontChanged)") != std::string::npos);
+}
+
 TEST_CASE("a bounded modal wait that crosses a silent connection's deadline still "
           "takes its full delay", "[wm_socket][modalwait]")
 {
