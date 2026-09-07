@@ -8,6 +8,7 @@
 #include "ConfigFileWriter.h"  // kConfigFileMaxValueBytes -- the file bound a `set` must respect
 #include <string>
 #include <cstring>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <unistd.h>
@@ -2477,9 +2478,25 @@ bool WindowManager::reloadConfigFromDisk(std::string &reasonOut)
     // silently. A file that EXISTS and cannot be read is a different thing
     // entirely: silently carrying on would report a successful reload that did
     // not read the user's settings.
+    //
+    // AND "does not exist" IS A CLAIM ABOUT errno, NOT ABOUT access(2)'s
+    // return (X3). The existence check fails for a file that is merely absent
+    // and equally for one that cannot be reached at all -- an unreadable parent
+    // directory answers EACCES, a symlink loop answers ELOOP, a dying disk
+    // answers EIO. Treating those as absence reported a SUCCESSFUL reload that
+    // had quietly dropped the user's whole layer, changing the running desktop
+    // to whatever the layers below say. Only ENOENT and ENOTDIR mean the path
+    // is not there (ENOTDIR is a missing component of it, which is the same
+    // statement); every other errno is refused, naming the file and what the
+    // system said about it.
     const std::string userFile = xdgConfigHome() + "/wm2-born-again/config";
-    if (::access(userFile.c_str(), F_OK) == 0 &&
-        ::access(userFile.c_str(), R_OK) != 0) {
+    errno = 0;
+    if (::access(userFile.c_str(), F_OK) != 0) {
+        if (errno != ENOENT && errno != ENOTDIR) {
+            reasonOut = "cannot examine " + userFile + ": " + std::strerror(errno);
+            return false;
+        }
+    } else if (::access(userFile.c_str(), R_OK) != 0) {
         reasonOut = "cannot read " + userFile;
         return false;
     }

@@ -2366,3 +2366,107 @@ TEST_CASE("a string a config file could not preserve is refused rather than ackn
 
     CHECK(stillFraming(fixture, d, "after-string-bounds"));
 }
+
+
+TEST_CASE("a user config that cannot be EXAMINED refuses the reload rather than "
+          "silently dropping the layer",
+          "[wm_socket]")
+{
+    // X3 (Codex pass 5). reloadConfigFromDisk() asked `access(userFile, F_OK)`
+    // and treated ANY failure as "there is no user file" -- which is right for
+    // ENOENT and wrong for everything else. An unreadable parent directory
+    // (EACCES), a symlink loop (ELOOP) or an I/O error therefore produced a
+    // SUCCESSFUL reload with the user layer missing: the running desktop
+    // silently falls back to the layers below, and the client is told the
+    // reload worked.
+    //
+    // Staged with the cheapest of those three: a config directory whose mode
+    // bits are taken away AFTER the window manager has read it, so "the value
+    // from before" is a value that was really in force rather than a default
+    // that happened to match.
+    if (::geteuid() == 0) {
+        SKIP("running as root: mode bits do not stop root from traversing a "
+             "directory, so a config file that cannot be examined cannot be "
+             "staged in this process");
+    }
+
+    const int configured = 11;   // not kBaselineThickness, so a fallback shows
+    const std::string home =
+        makeSocketConfigHome("frame-thickness=" + std::to_string(configured) + "\n");
+    const std::string dir = home + "/wm2-born-again";
+
+    // The mode is put back whatever this case does, so the temp tree can be
+    // removed afterwards by whatever removes it.
+    struct ModeRestore {
+        std::string path;
+        ~ModeRestore() { ::chmod(path.c_str(), 0700); }
+    } modeRestore{dir};
+
+    WmFixture fixture(socketFixtureWithConfigHome(home));
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    const std::string path = awaitPublishedSocketPath(d);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(path.empty());
+    }
+
+    Conn c(path);
+    REQUIRE(c.connected());
+    std::string program;
+    int protocol = 0;
+    REQUIRE(shakeHands(c, program, protocol));
+
+    // The user layer really is in force, so what follows is a comparison
+    // against something rather than against a default.
+    ConfigMessage before;
+    std::string rawBefore;
+    REQUIRE(requestGet(c, "frame-thickness", before, rawBefore));
+    REQUIRE(before.type == ConfigMessageType::Value);
+    REQUIRE(before.value == std::to_string(configured));
+
+    // Now the file cannot be examined at all: the directory holding it loses
+    // every mode bit, so access(2) on the file inside answers EACCES rather
+    // than ENOENT.
+    REQUIRE(::chmod(dir.c_str(), 0000) == 0);
+
+    ConfigMessage reload;
+    reload.type = ConfigMessageType::Reload;
+    REQUIRE(c.send(reload));
+
+    ConfigMessage reply;
+    ConfigDecodeResult replyResult = ConfigDecodeResult::Malformed;
+    const bool replyRead = c.receive(reply, replyResult);
+
+    // Put the directory back BEFORE asking again, so the `get` below is
+    // answering from the window manager's memory rather than from a tree the
+    // test is still holding hostage.
+    REQUIRE(::chmod(dir.c_str(), 0700) == 0);
+
+    ConfigMessage after;
+    std::string rawAfter;
+    const bool afterRead = requestGet(c, "frame-thickness", after, rawAfter);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO("reload reply: " << rawBefore << " -> type=" << static_cast<int>(reply.type)
+         << " reason='" << reply.reason << "'");
+    INFO("frame-thickness after the reload: '" << after.value << "'");
+
+    // THE REFUSAL, with a reason that names the file the window manager could
+    // not look at -- a client told only "reload failed" cannot act on it.
+    CHECK(replyRead);
+    CHECK(replyResult == ConfigDecodeResult::Ok);
+    CHECK(reply.type == ConfigMessageType::Error);
+    CHECK(reply.reason.find(dir + "/config") != std::string::npos);
+
+    // ...and the desktop did not move underneath the refusal.
+    CHECK(afterRead);
+    CHECK(after.type == ConfigMessageType::Value);
+    CHECK(after.value == std::to_string(configured));
+
+    CHECK(stillFraming(fixture, d, "after-unexaminable-config"));
+}
