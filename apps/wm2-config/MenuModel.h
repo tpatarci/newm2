@@ -181,6 +181,40 @@ inline bool menuEntryEqual(const AppEntry& a, const AppEntry& b)
 }
 
 
+// Which row an edit that began on `capturedIndex` should replace, or
+// rows.size() when that row is not in the list any more.
+//
+// TWO RULES, IN THIS ORDER, AND BOTH ARE NEEDED.
+//
+//  1. If the row still sitting at the captured index IS the row the edit began
+//     on, that is the row. Menu order is significant -- it is the order the
+//     root menu shows -- and two rows may be equal field for field, so an
+//     identity search from the beginning rewrote the FIRST of a pair of twins
+//     whichever one the user had selected (C4).
+//
+//  2. Otherwise fall back to identity. gtk_dialog_run() spins a nested main
+//     loop, so the socket source keeps firing while the dialog is open and a
+//     reload notice can move the list underneath it; after that the captured
+//     index names a different entry, or none. The row is then found by what it
+//     IS rather than by where it was.
+//
+// A caller that gets rows.size() back has had the row removed under it
+// entirely, which is a third outcome and not a replacement at all.
+inline std::size_t menuEntryReplacementIndex(const std::vector<AppEntry>& rows,
+                                             const AppEntry& original,
+                                             std::size_t capturedIndex)
+{
+    if (capturedIndex < rows.size() &&
+        menuEntryEqual(rows[capturedIndex], original)) {
+        return capturedIndex;
+    }
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (menuEntryEqual(rows[i], original)) return i;
+    }
+    return rows.size();
+}
+
+
 // The categories a list of entries between them uses, in the ROOT MENU'S OWN
 // ORDER -- alphabetical with "Custom" last -- and always including "Custom",
 // which is the default a row with no category takes.

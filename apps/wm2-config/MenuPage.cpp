@@ -420,27 +420,28 @@ void MenuPage::edit()
     const int row = selectedRow();
     if (row < 0 || row >= static_cast<int>(rows().size())) return;
 
-    // The row is captured BY VALUE before the dialog runs. gtk_dialog_run()
-    // spins a nested main loop, so the socket source keeps firing and a reload
-    // notice can move the list underneath -- after which `row` is an index into
-    // a list that no longer exists. The entry is found again by identity below.
+    // The row is captured BY VALUE, AND BY INDEX, before the dialog runs.
+    //
+    // By value because gtk_dialog_run() spins a nested main loop, so the socket
+    // source keeps firing and a reload notice can move the list underneath --
+    // after which `row` is an index into a list that no longer exists.
+    //
+    // By index because two rows may be equal field for field, and menu order is
+    // significant: an identity search from the beginning rewrote the FIRST of a
+    // pair of twins whichever one the user had selected (C4).
+    //
+    // menuEntryReplacementIndex() holds both rules, and holds them somewhere a
+    // display-free case can reach.
     const AppEntry original = rows()[row];
 
     MenuEntryDraft draft = MenuEntryDraft::fromEntry(original);
     if (!runEntryDialog("Edit a menu entry", draft)) return;
 
     std::vector<AppEntry> next = rows();
-    bool replaced = false;
-    for (AppEntry& candidate : next) {
-        if (candidate.name != original.name ||
-            candidate.category != original.category ||
-            candidate.execArgv != original.execArgv) {
-            continue;
-        }
-        candidate = draft.toEntry();
-        replaced = true;
-        break;
-    }
+    const std::size_t at =
+        menuEntryReplacementIndex(next, original, static_cast<std::size_t>(row));
+    const bool replaced = (at < next.size());
+    if (replaced) next[at] = draft.toEntry();
     if (!replaced) {
         // The row this edit began on is gone -- a reload replaced the list
         // while the dialog was open. Appending is the only honest outcome:

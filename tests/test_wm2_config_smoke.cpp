@@ -2075,6 +2075,75 @@ TEST_CASE("removing a row and then reverting brings it back, which is why Remove
     CHECK_FALSE(form.dirty());
 }
 
+TEST_CASE("editing the second of two identical rows replaces the second, not the first",
+          "[wm2_config_smoke]")
+{
+    // C4 (Codex pass 4). The edit path found the row it started on by an
+    // IDENTITY SEARCH FROM THE BEGINNING, so with two rows that are equal
+    // field for field, editing the second always rewrote the first. Menu order
+    // is significant -- it is the order the root menu shows -- so that is the
+    // wrong row.
+    //
+    // The captured INDEX is consulted first and the identity search kept as the
+    // fallback, because the index alone is not safe either: gtk_dialog_run()
+    // spins a nested main loop, the socket source keeps firing, and a reload
+    // notice can move the list underneath the open dialog.
+    const auto row = [](const std::string& name, const std::string& command,
+                        const std::string& category) {
+        MenuEntryDraft draft;
+        draft.name = name;
+        draft.command = command;
+        draft.category = category;
+        return draft.toEntry();
+    };
+
+    const AppEntry twin = row("Terminal", "/usr/bin/xterm", "Custom");
+
+    SECTION("the selected occurrence wins over an earlier identical row") {
+        const std::vector<AppEntry> rows = {twin, twin, row("Mail", "mutt", "Custom")};
+        CHECK(menuEntryReplacementIndex(rows, twin, 1) == 1u);
+        // ...and the first occurrence is still found when that is the one the
+        // edit began on, so this is not merely "always return the index".
+        CHECK(menuEntryReplacementIndex(rows, twin, 0) == 0u);
+    }
+
+    SECTION("a list that moved under the dialog falls back to identity") {
+        // A reload inserted a row above the one being edited, so the captured
+        // index now names a different entry entirely.
+        const std::vector<AppEntry> reloaded = {row("Mail", "mutt", "Custom"), twin};
+        CHECK(menuEntryReplacementIndex(reloaded, twin, 0) == 1u);
+    }
+
+    SECTION("a row the reload removed is reported as gone") {
+        const std::vector<AppEntry> reloaded = {row("Mail", "mutt", "Custom")};
+        CHECK(menuEntryReplacementIndex(reloaded, twin, 0) == reloaded.size());
+        CHECK(menuEntryReplacementIndex({}, twin, 3) == 0u);
+    }
+
+    SECTION("an index past the end is not read") {
+        const std::vector<AppEntry> rows = {twin};
+        CHECK(menuEntryReplacementIndex(rows, twin, 99) == 0u);
+    }
+}
+
+TEST_CASE("the Menu page's edit path finds its row through the shared rule",
+          "[wm2_config_smoke]")
+{
+    // The wiring, where a display-free case can reach it: the pure function can
+    // be right and the page still search from the beginning.
+    const std::string page = sourceOf("apps/wm2-config/MenuPage.cpp");
+    REQUIRE_FALSE(page.empty());
+    const std::size_t at = page.find("void MenuPage::edit()");
+    REQUIRE(at != std::string::npos);
+    const std::size_t end = page.find("\n}\n", at);
+    REQUIRE(end != std::string::npos);
+    const std::string body = withoutLineComments(page.substr(at, end - at));
+    INFO("MenuPage::edit(), comments stripped:\n" << body);
+    CHECK(body.find("menuEntryReplacementIndex") != std::string::npos);
+    // The captured index is carried into it rather than discarded.
+    CHECK(body.find("row") != std::string::npos);
+}
+
 TEST_CASE("the Menu page asks the window manager for its categories rather than listing any",
           "[wm2_config_smoke]")
 {
