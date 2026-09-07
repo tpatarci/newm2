@@ -172,6 +172,19 @@ struct Config {
 std::string xdgConfigHome();
 std::vector<std::string> xdgConfigDirs();
 
+// EVERY configuration FILE Config::load() reads, in the order it reads them:
+// the XDG_CONFIG_DIRS files lowest-precedence first, then the user's own file
+// last. The CLI layer is not a file and so is not here.
+//
+// WHY THIS IS A FUNCTION RATHER THAN A LOOP IN load(). A reload must refuse
+// when a file that EXISTS cannot be read, or Config::applyFile() skips it in
+// silence and the window manager reports a successful reload that quietly
+// dropped a whole layer. That check and the load itself have to walk the same
+// list, and a second hand-written copy of "which files are the layers" is
+// exactly how the two come to disagree -- one file added to load() and not to
+// the preflight is a layer nothing checks again (Codex pass 7, P2).
+std::vector<std::string> configFileLayerPaths();
+
 
 // -----------------------------------------------------------------------------
 // The settable surface, described rather than re-listed (plan 09-04)

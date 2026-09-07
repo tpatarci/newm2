@@ -2489,16 +2489,27 @@ bool WindowManager::reloadConfigFromDisk(std::string &reasonOut)
     // is not there (ENOTDIR is a missing component of it, which is the same
     // statement); every other errno is refused, naming the file and what the
     // system said about it.
-    const std::string userFile = xdgConfigHome() + "/wm2-born-again/config";
-    errno = 0;
-    if (::access(userFile.c_str(), F_OK) != 0) {
-        if (errno != ENOENT && errno != ENOTDIR) {
-            reasonOut = "cannot examine " + userFile + ": " + std::strerror(errno);
+    //
+    // AND EVERY LAYER, NOT ONLY THE USER'S (Y2, Codex pass 7). Config::load()
+    // reads the XDG_CONFIG_DIRS files before the user's, and applyFile() skips
+    // an unopenable one just as silently. A system-wide configuration that
+    // contributed at startup and has since become unreachable therefore
+    // produced a SUCCESSFUL reload with that whole layer dropped -- the
+    // running desktop falling back to the defaults while the client is told
+    // the reload worked. The list walked here is the one Config::load() walks,
+    // from configFileLayerPaths(), so the two cannot come to disagree about
+    // which files are the layers.
+    for (const std::string& layer : configFileLayerPaths()) {
+        errno = 0;
+        if (::access(layer.c_str(), F_OK) != 0) {
+            if (errno != ENOENT && errno != ENOTDIR) {
+                reasonOut = "cannot examine " + layer + ": " + std::strerror(errno);
+                return false;
+            }
+        } else if (::access(layer.c_str(), R_OK) != 0) {
+            reasonOut = "cannot read " + layer;
             return false;
         }
-    } else if (::access(userFile.c_str(), R_OK) != 0) {
-        reasonOut = "cannot read " + userFile;
-        return false;
     }
 
     // The WHOLE layered load, command line included, rather than the file

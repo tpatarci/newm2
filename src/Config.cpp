@@ -527,16 +527,30 @@ void Config::applyKeyValue(const std::string& key, const std::string& value,
 // Config::load - Load config from all sources in precedence order
 // =============================================================================
 
+std::vector<std::string> configFileLayerPaths() {
+    std::vector<std::string> paths;
+
+    // Layer 1: system config files, lowest precedence first
+    for (const auto& dir : xdgConfigDirs()) {
+        paths.push_back(dir + "/wm2-born-again/config");
+    }
+
+    // Layer 2: the user's own file, on top of them
+    paths.push_back(xdgConfigHome() + "/wm2-born-again/config");
+
+    return paths;
+}
+
 Config Config::load(int argc, char** argv) {
     Config cfg;  // Start with built-in defaults
 
-    // Layer 1: System config files (lowest precedence)
-    for (const auto& dir : xdgConfigDirs()) {
-        cfg.applyFile(dir + "/wm2-born-again/config");
+    // Layers 1 and 2: the files, in precedence order. Enumerated by
+    // configFileLayerPaths() rather than here, so the reload preflight in
+    // src/Manager.cpp cannot come to check a different set of files from the
+    // one this loop reads.
+    for (const std::string& path : configFileLayerPaths()) {
+        cfg.applyFile(path);
     }
-
-    // Layer 2: User config file
-    cfg.applyFile(xdgConfigHome() + "/wm2-born-again/config");
 
     // Layer 3: CLI overrides (highest precedence)
     cfg.applyCliArgs(argc, argv);
