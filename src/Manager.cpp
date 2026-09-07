@@ -1308,12 +1308,26 @@ void WindowManager::installColormap(Colormap cmap)
 
 void WindowManager::updateClientList()
 {
+    // WITHDRAWN CLIENTS ARE NOT MANAGED WINDOWS AND ARE NOT PUBLISHED.
+    //
+    // A Client exists for every non-override-redirect top-level window from
+    // CreateNotify onwards, which is long before -- and possibly instead of --
+    // a map: a window created and never mapped, or one that has just been
+    // withdrawn, is held here with state Withdrawn, no frame and no manage()
+    // behind it. _NET_CLIENT_LIST is the list of windows the window manager
+    // MANAGES, so publishing those made every panel and pager offer a button
+    // for a window the user can neither see nor raise.
+    //
+    // Iconic clients stay: they are managed, they are in m_hiddenClients, and
+    // a taskbar showing them is the whole point of the list.
     std::vector<Window> windows;
     windows.reserve(m_clients.size() + m_hiddenClients.size());
     for (const auto& c : m_clients) {
+        if (c->isWithdrawn()) continue;
         windows.push_back(c->window());
     }
     for (const auto& c : m_hiddenClients) {
+        if (c->isWithdrawn()) continue;
         windows.push_back(c->window());
     }
     XChangeProperty(display(), m_root, Atoms::net_clientList,

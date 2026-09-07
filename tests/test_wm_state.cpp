@@ -844,6 +844,45 @@ TEST_CASE("A state message with the wrong format is ignored", "[wm_state]")
     CHECK(joined(xProtocolErrorsExceptBadWindow(fixture.wmStderr())).empty());
 }
 
+TEST_CASE("A window that exists but was never mapped is not published as a managed client",
+          "[wm_state]")
+{
+    // _NET_CLIENT_LIST is the list of windows the window manager MANAGES, and
+    // a window that has never been mapped is not one of them: it has no frame,
+    // manage() has not run, and its WM_STATE is Withdrawn. Panels and pagers
+    // read this property to decide what to draw a button for, so a window
+    // published here is a button for a window the user cannot see or raise.
+    //
+    // The window manager builds a Client at CreateNotify time, long before a
+    // map, and updateClientList() published every Client it held. Found as a
+    // race in the case below, which asked the same question a few
+    // microseconds after creating the window and got the honest answer only
+    // when the window manager had not read its socket yet.
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    Window created = createClient(d, 10, 10, 50, 50);
+    REQUIRE(created != None);
+
+    // Not a poll for absence -- that would pass before the window manager had
+    // looked at the window at all. settleWm() is fifteen spaced nudges, so by
+    // the time it returns the CreateNotify has certainly been processed.
+    settleWm(d);
+
+    std::string ids;
+    for (Window w : clientList(d)) {
+        if (!ids.empty()) ids += " ";
+        ids += std::to_string(w);
+    }
+    INFO("created=" << created << " client list=[" << ids << "]");
+    INFO("wm stderr:\n" << fixture.wmStderr());
+    CHECK_FALSE(listed(d, created));
+}
+
+
 TEST_CASE("A state message naming an unmanaged window is ignored and does not crash",
           "[wm_state]")
 {
@@ -883,7 +922,16 @@ TEST_CASE("A state message naming an unmanaged window is ignored and does not cr
     // actually notice when it finally maps.
     Window unmanaged = createClient(d, 10, 10, 50, 50);
     REQUIRE(unmanaged != None);
-    REQUIRE_FALSE(listed(d, unmanaged));
+    {
+        std::string ids;
+        for (Window w : clientList(d)) {
+            if (!ids.empty()) ids += " ";
+            ids += std::to_string(w);
+        }
+        INFO("unmanaged=" << unmanaged << " bystander=" << bystander
+             << " client list=[" << ids << "]");
+        REQUIRE_FALSE(listed(d, unmanaged));
+    }
     const Rect unmanagedBefore = rectOf(d, unmanaged);
     REQUIRE(unmanagedBefore.w == 50);
     sendStateMessage(d, unmanaged, kStateAdd, fs, None);

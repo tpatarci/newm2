@@ -1094,6 +1094,14 @@ void Client::setState(ClientState state)
     }
     m_state = state;
 
+    // THE PUBLISHED LIST FOLLOWS THE STATE, because it is the state that
+    // decides membership: updateClientList() skips a Withdrawn client, and a
+    // Client exists from CreateNotify onwards, so a window becomes a managed
+    // window HERE and nowhere else. Published from the two places that change
+    // the client set (add and hide) only, the list was written once while the
+    // window was still Withdrawn and never corrected.
+    windowManager()->updateClientList();
+
     long data[2];
     data[0] = static_cast<long>(state);
     data[1] = static_cast<long>(None);
