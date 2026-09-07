@@ -22,7 +22,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 7: Root Menu + Application Discovery** - XDG .desktop parsing, heuristic-based binary scan, cached results, category-organized root menu (completed 2026-07-08)
 - [~] **Phase 8: Xrandr + VNC Compatibility + Focus/Rules** - Display config, extension fallbacks, VNC compatibility, focus stealing prevention, window rules. **All 14 plans complete; 5 of 7 success criteria verified.** Two remain unmet and are declared, not stubbed: four-target remote-desktop coverage (2 of 4 exercised — XDIS-05) and WM_NAME matching (RULES-01). See VERIFICATION.md.
 - [ ] **Phase 8.5: v1.0 Closeout** *(INSERTED 2026-08-30)* - Finish the three requirements Phase 8 left Pending: title matching for window rules plus the config key rename (RULES-01), the two remaining remote-desktop targets (XDIS-05), and the interaction checklist as a per-item table (TEST-08). Inserted **before** Phase 9 because RULES-01 changes the config surface the GUI will expose.
-- [ ] **Phase 9: Config GUI + IPC** - GTK3 config tool, Unix domain socket IPC, live configuration changes, optional dependency
+- [x] **Phase 9: Config GUI + IPC** - GTK3 config tool, Unix domain socket IPC, live configuration changes, optional dependency
 - [ ] **Phase 10: Native X11 Configuration Tool** *(added 2026-09-06, last in line)* - A second `wm2-config` front end written against plain Xlib (Xft when present), no toolkit, core protocol only; same socket, same file writer, same pages as the GTK tool
 
 ## Phase Details
