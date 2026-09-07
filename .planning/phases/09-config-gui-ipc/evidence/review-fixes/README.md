@@ -16,8 +16,11 @@ the phase directory itself.
 | 4 | bcbc5f2 | 4 P2, 1 P3 | fixed: user-layer entries only are written (e4c5307); the entry list is bounded to one reply (01fe14c); socket strings follow the file's rules (b82308b, e66e612 for the newline); the selected duplicate row is edited (1a8d3d2); provenance by presence (ccc9f8e) |
 | 5 | e66e612 | 1 P1, 2 P2 | fixed: colours canonicalised to the X11 spelling before the form holds them, and a refused live set is put back (90501ff); wire menu entries follow the file's size and newline rules (3a44168); a reload refuses when the user file cannot be examined (081d6a0) |
 
+| 6 | 40a73fd | 1 P2 | fixed: the window's own reload request refreshes the window (5469149) |
+| 7 | 5469149 | 1 P1, 2 P2 | fixed in the 09-codex7 commits: Save waits for pending live sets; every layer is preflighted before a reload; the system file that set a key is the one named |
+
 Stopping rule, set before pass 3: stop when a pass yields only naming or
-exactness findings. Pass 6 is the check that the rule is met.
+exactness findings.
 
 ## CodeRabbit CLI (`cr review --agent -t committed --base-commit 0fec5db`)
 
