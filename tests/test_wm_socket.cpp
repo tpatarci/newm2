@@ -2299,6 +2299,21 @@ TEST_CASE("a string a config file could not preserve is refused rather than ackn
     const bool afterRefusalRead =
         requestGet(c, "new-window-command", afterRefusal, rawAfterRefusal);
 
+    // --- INTERIOR NEWLINE: the wire escapes it, the file has no way to hold
+    // it, and ConfigFileWriter refuses to write it -- so a `set` that took it
+    // would be acknowledged live and then fail at Save with a message about a
+    // rule the client never saw. Same class as the two rules above.
+    REQUIRE(sendSet(c, "new-window-command", "xterm\n-ls"));
+
+    ConfigMessage newlineRefusal;
+    ConfigDecodeResult newlineResult = ConfigDecodeResult::Malformed;
+    const bool newlineRefusalRead = c.receive(newlineRefusal, newlineResult);
+
+    ConfigMessage afterNewline;
+    std::string rawAfterNewline;
+    const bool afterNewlineRead =
+        requestGet(c, "new-window-command", afterNewline, rawAfterNewline);
+
     // --- SURROUNDING SPACE: accepted, and stored the way the file stores it --
     REQUIRE(sendSet(c, "new-window-command", "   xterm -ls   "));
 
@@ -2328,6 +2343,17 @@ TEST_CASE("a string a config file could not preserve is refused rather than ackn
     // ...and nothing moved.
     CHECK(afterRefusalRead);
     CHECK(afterRefusal.value == before.value);
+
+    // The newline is refused the same way, with a reason that names it...
+    CHECK(newlineRefusalRead);
+    CHECK(newlineResult == ConfigDecodeResult::Ok);
+    CHECK(newlineRefusal.type == ConfigMessageType::Error);
+    CHECK(newlineRefusal.key == "new-window-command");
+    CHECK(newlineRefusal.reason.find("newline") != std::string::npos);
+
+    // ...and nothing moved then either.
+    CHECK(afterNewlineRead);
+    CHECK(afterNewline.value == before.value);
 
     // THE TRIM: acknowledged, and what `get` answers is what the file would
     // read back, not the bytes that were sent.

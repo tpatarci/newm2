@@ -661,8 +661,10 @@ The same applies to the text settings. The config file trims the spaces off both
 ends of a value and drops one longer than 256 characters, so `wm2-ctl set` does
 the same: a value with surrounding spaces is accepted and stored trimmed —
 `wm2-ctl get` afterwards shows you what a file would have read back, not the
-bytes you sent — and a value over the limit is refused, naming it. Nothing
-reaches the running desktop by this route that a file could not have carried.
+bytes you sent — and a value over the limit is refused, naming it, as is one
+with a newline inside it, which a file of one value per line has no way to
+hold. Nothing reaches the running desktop by this route that a file could not
+have carried.
 
 Exit codes, so a shell script can tell the cases apart:
 

@@ -2433,6 +2433,17 @@ bool WindowManager::applyConfigSet(const std::string &key, const std::string &va
                         " bytes, which the configuration file cannot preserve";
             return false;
         }
+        // The third rule of the same class. The wire escapes a newline, so
+        // one can arrive here; the file is one value per line, so it can
+        // hold none, and ConfigFileWriter refuses to write it. A `set` that
+        // took it would be acknowledged live and fail at Save with a message
+        // about a rule the client never saw.
+        if (applied.find('\n') != std::string::npos ||
+            applied.find('\r') != std::string::npos) {
+            reasonOut = "value contains a newline, which the configuration "
+                        "file cannot hold";
+            return false;
+        }
         break;
     }
 
