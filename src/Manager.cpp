@@ -5,6 +5,7 @@
 #include "TimestampWait.h"
 #include "DesktopEntry.h"  // findOnPath -- D-11's startup probe for the settings window
 #include "RootMenuModel.h" // kRootMenuConfigureBinary -- the name that probe asks about
+#include "ConfigFileWriter.h"  // kConfigFileMaxValueBytes -- the file bound a `set` must respect
 #include <string>
 #include <cstring>
 #include <cstdio>
@@ -1911,6 +1912,26 @@ bool parseStrictBool(const std::string& text, bool& out)
     return false;
 }
 
+// applyFile()'s own trim, applied to a value that arrived over the socket.
+//
+// C3. The FILE path trims " \t" off the front and " \t\r\n" off the back of
+// every value before Config::applyKeyValue() sees it (src/Config.cpp,
+// applyFile). The socket path did not, so `set new-window-command "  xterm  "`
+// was acknowledged and applied with its spaces, saved into the file with them,
+// and read back WITHOUT them -- `get` then disagreeing with what the window
+// manager held a moment before. Spelled here rather than shared with
+// src/Config.cpp's file-local static, following this project's
+// per-translation-unit convention for small helpers; the character sets are
+// copied deliberately and are asserted equal by the round-trip case in
+// tests/test_wm_socket.cpp.
+std::string trimmedLikeConfigFile(const std::string& text)
+{
+    const std::size_t a = text.find_first_not_of(" \t");
+    if (a == std::string::npos) return std::string();
+    const std::size_t b = text.find_last_not_of(" \t\r\n");
+    return text.substr(a, b - a + 1);
+}
+
 // How the accepted value will read back out of the Config once the parser has
 // stored it. Compared against the real read-back below, so a future divergence
 // between this file's pre-validation and Config::applyKeyValue() is caught by
@@ -2349,6 +2370,12 @@ bool WindowManager::applyConfigSet(const std::string &key, const std::string &va
         return false;
     }
 
+    // What will actually be applied. Identical to `value` for a boolean or an
+    // integer -- both are already refused unless the whole string parses -- and
+    // the TRIMMED value for a string, because that is what the config file
+    // would have stored (C3).
+    std::string applied = value;
+
     // --- Validation, BEFORE the parser sees anything -------------------------
     //
     // This is the whole of the prohibition this plan carries. The parser's
@@ -2382,16 +2409,36 @@ bool WindowManager::applyConfigSet(const std::string &key, const std::string &va
         break;
     }
     case ConfigValueKind::String:
-        // Taken verbatim, exactly as the file takes it. A colour or a font
-        // pattern is validated by the server and by fontconfig respectively,
-        // both of which degrade rather than fail -- the same treatment a value
-        // in the file gets.
+        // NOT verbatim: exactly as THE FILE takes it, which is a stronger
+        // statement and the one this branch used to get wrong (C3).
+        //
+        // Config::applyFile() trims every value and drops one longer than
+        // kConfigFileMaxValueBytes with a warning, so a value taken verbatim
+        // here could be acknowledged, applied live, saved -- and then read back
+        // as something else, or not read back at all. The client would have
+        // been told yes to a value the file path cannot preserve.
+        //
+        // So the value is trimmed the way the file trims it, and a value the
+        // file would drop is refused with a reason that names the bound. What
+        // is applied, read back and acknowledged is the TRIMMED value; the
+        // `ack` carries only the key, and it is `get` that answers with it.
+        //
+        // Everything past those two rules is still taken as the file takes it:
+        // a colour or a font pattern is validated by the server and by
+        // fontconfig respectively, both of which degrade rather than fail.
+        applied = trimmedLikeConfigFile(value);
+        if (applied.size() > kConfigFileMaxValueBytes) {
+            reasonOut = "value longer than " +
+                        std::to_string(kConfigFileMaxValueBytes) +
+                        " bytes, which the configuration file cannot preserve";
+            return false;
+        }
         break;
     }
 
     // --- Application, on a COPY ---------------------------------------------
     Config next = m_config;
-    next.applyKeyValue(key, value);
+    next.applyKeyValue(key, applied);
 
     // And the read-back check: did the parser actually store what was agreed?
     // A mismatch here means the validation above and Config::applyKeyValue()
@@ -2399,7 +2446,7 @@ bool WindowManager::applyConfigSet(const std::string &key, const std::string &va
     // leaving m_config untouched, rather than applying something nobody
     // authorised.
     std::string after;
-    if (!configValueForKey(next, key, after) || after != canonicalValue(*spec, value)) {
+    if (!configValueForKey(next, key, after) || after != canonicalValue(*spec, applied)) {
         reasonOut = "the configuration parser did not accept this value";
         return false;
     }

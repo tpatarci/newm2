@@ -34,6 +34,7 @@
 #include "support/WmFixture.h"
 #include "support/XTestDriver.h"
 
+#include "ConfigFileWriter.h"   // kConfigFileMaxValueBytes -- the file bound a `set` must respect
 #include "ConfigProtocol.h"
 #include "SocketServer.h"
 
@@ -2247,4 +2248,95 @@ TEST_CASE("Two overlapping sets are applied in arrival order", "[wm_socket]")
     // second run starts from the same baseline as the first and neither value
     // is already in force.
     runOverlappingSets(21, 11);
+}
+
+
+TEST_CASE("a string a config file could not preserve is refused rather than acknowledged",
+          "[wm_socket]")
+{
+    // C3 (Codex pass 4). Config::applyFile() TRIMS every value it reads and
+    // DROPS one longer than kConfigFileMaxValueBytes with a warning. The
+    // socket's String branch took the value verbatim, so a raw client could be
+    // handed an `ack` for a `new-window-command` the file path can neither
+    // preserve nor reload -- the two halves of one validation disagreeing about
+    // what a value means.
+    WmFixture fixture;
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+
+    const std::string path = awaitPublishedSocketPath(d);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(path.empty());
+    }
+
+    Conn c(path);
+    REQUIRE(c.connected());
+    std::string program;
+    int protocol = 0;
+    REQUIRE(shakeHands(c, program, protocol));
+
+    // What it holds before anything is asked of it, so "did not move" is a
+    // comparison rather than an assumption.
+    ConfigMessage before;
+    std::string rawBefore;
+    REQUIRE(requestGet(c, "new-window-command", before, rawBefore));
+    REQUIRE(before.type == ConfigMessageType::Value);
+
+    // --- TOO LONG: 300 bytes, over the file's 256-byte per-value guard -------
+    const std::string tooLong(300, 'x');
+    REQUIRE(tooLong.size() > kConfigFileMaxValueBytes);
+    REQUIRE(sendSet(c, "new-window-command", tooLong));
+
+    ConfigMessage refusal;
+    ConfigDecodeResult refusalResult = ConfigDecodeResult::Malformed;
+    const bool refusalRead = c.receive(refusal, refusalResult);
+
+    ConfigMessage afterRefusal;
+    std::string rawAfterRefusal;
+    const bool afterRefusalRead =
+        requestGet(c, "new-window-command", afterRefusal, rawAfterRefusal);
+
+    // --- SURROUNDING SPACE: accepted, and stored the way the file stores it --
+    REQUIRE(sendSet(c, "new-window-command", "   xterm -ls   "));
+
+    ConfigMessage ack;
+    ConfigDecodeResult ackResult = ConfigDecodeResult::Malformed;
+    const bool ackRead = c.receive(ack, ackResult);
+
+    ConfigMessage afterAck;
+    std::string rawAfterAck;
+    const bool afterAckRead = requestGet(c, "new-window-command", afterAck, rawAfterAck);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO("refusal reason: " << refusal.reason);
+    INFO("value after the refusal: '" << afterRefusal.value << "'");
+    INFO("value after the ack: '" << afterAck.value << "'");
+
+    // THE REFUSAL, with a reason that names the limit rather than a generic
+    // failure the user cannot act on.
+    CHECK(refusalRead);
+    CHECK(refusalResult == ConfigDecodeResult::Ok);
+    CHECK(refusal.type == ConfigMessageType::Error);
+    CHECK(refusal.key == "new-window-command");
+    CHECK(refusal.reason.find(std::to_string(kConfigFileMaxValueBytes)) !=
+          std::string::npos);
+
+    // ...and nothing moved.
+    CHECK(afterRefusalRead);
+    CHECK(afterRefusal.value == before.value);
+
+    // THE TRIM: acknowledged, and what `get` answers is what the file would
+    // read back, not the bytes that were sent.
+    CHECK(ackRead);
+    CHECK(ackResult == ConfigDecodeResult::Ok);
+    CHECK(ack.type == ConfigMessageType::Ack);
+    CHECK(ack.key == "new-window-command");
+    CHECK(afterAckRead);
+    CHECK(afterAck.value == "xterm -ls");
+
+    CHECK(stillFraming(fixture, d, "after-string-bounds"));
 }
