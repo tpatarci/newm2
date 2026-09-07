@@ -574,6 +574,23 @@ appears twice on the menu afterwards. Resetting the page removes your entries
 and leaves the system-wide ones showing through, which is what resetting means
 everywhere else in this window.
 
+**A colour you type is stored in the spelling the X server reads.** The colour
+fields accept more spellings than the window manager can use — the toolkit
+behind them understands the CSS forms a web page uses, and the X server
+understands none of them — so whatever you type is converted to the plain
+hexadecimal form before it goes anywhere: type `rgb(200,202,204)`, or
+`SteelBlue`, or `#c8cacc`, and what the form holds, what the desktop applies and
+what a save writes is `#C8CACC`. It is the same colour either way. The
+conversion matters because a colour the X server cannot parse is fatal to the
+window manager at *startup*, so a spelling that survived a save could stop your
+desktop from coming up the next time.
+
+**A change the window manager refuses is taken back out of the form.** If the
+running desktop rejects something you set — a colour the X server will not
+allocate, a value outside its range — the field goes back to the value actually
+in force rather than sitting there looking accepted, so a save can never write a
+setting the desktop has already turned down.
+
 **A setting's tooltip names the file it is set in, not the file whose value it
 happens to match.** A key you set in your own file to the same value the
 system-wide file already gave it is still *your* setting, and says so; after a
@@ -713,6 +730,16 @@ without a face by mistyping one. A file that changes *two* fonts and gets one of
 them wrong is refused whole: neither face is swapped, so `wm2-ctl get tab-font`
 never names a face that is not what you are looking at.
 
+**A reload that cannot look at your configuration file is refused.** A file that
+is simply not there is the ordinary state of a machine nobody has configured,
+and a reload on such a machine loads the system-wide settings and succeeds. A
+file that cannot be *examined* is a different thing: a directory above it whose
+permissions were changed, a symbolic link pointing round in a circle, a disk
+going bad. Rather than read that as "there is no file here" — which would apply
+the layers below and report success, silently dropping every setting you own —
+the reload is refused, naming the file and what the system said about it, and
+the desktop keeps what it had.
+
 **Three settings say "not now" while a menu is open or a window is being
 dragged.** `tab-font`, `menu-font` and `frame-thickness` move geometry that an
 open root menu or a move/resize drag has already measured — the menu's row
@@ -761,6 +788,15 @@ what makes the round trip safe — the list `wm2-ctl get menu-entries` prints is
 always a list `wm2-ctl set menu-entries` will take back unchanged. If a program
 you want on the menu needs a `;` on its command line, put the command in a shell
 script and name the script here.
+
+**A menu entry the configuration file could not hold is refused on the socket
+too.** The file stores one value per line and drops a value longer than 256
+characters, so a name, a command or a category that breaks either rule is
+refused where it arrives rather than accepted live and then lost at the next
+reload — or refused later by a settings window's save, citing a rule you were
+never shown. The refusal names which of the two rules it was. This is the same
+principle the single-value settings follow above: nothing reaches the running
+desktop by the socket that a file could not have carried.
 
 **The whole list has to fit in one message.** Because it travels as a single
 value, there is a limit on the total — a few dozen entries with ordinary names
