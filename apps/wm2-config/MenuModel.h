@@ -166,6 +166,21 @@ struct MenuEntryDraft {
 };
 
 
+// Are these the same row?
+//
+// Compared field by field rather than through the rendered value, because two
+// entries that render alike (a command with runs of spaces in it, say) ARE the
+// same entry and a rendered comparison would be the weaker of the two.
+//
+// The one spelling of it. FormState's menuEntriesEqual() is this function over
+// two lists, and MenuPage's edit path finds the row it started on with it, so
+// "the same entry" cannot come to mean two things in one program.
+inline bool menuEntryEqual(const AppEntry& a, const AppEntry& b)
+{
+    return a.name == b.name && a.category == b.category && a.execArgv == b.execArgv;
+}
+
+
 // The categories a list of entries between them uses, in the ROOT MENU'S OWN
 // ORDER -- alphabetical with "Custom" last -- and always including "Custom",
 // which is the default a row with no category takes.

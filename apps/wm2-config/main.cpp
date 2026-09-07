@@ -466,8 +466,15 @@ private:
         // Passing true unconditionally would rewrite those lines on every save,
         // which for a file the user hand-wrote them into is a change they did
         // not ask for (D-02).
+        // The USER LAYER'S entries, not the merged list the page shows: the
+        // file parser appends menu entries across layers, so writing what the
+        // page shows would copy the system file's entries into the user's and
+        // the next layered load would read them twice (C1). A Reset therefore
+        // writes an empty block, which is what removing the user's own entries
+        // means.
         const ConfigWriteResult result =
-            configFileWrite(m_layers.userFilePath, edits, m_form.menuEntries(),
+            configFileWrite(m_layers.userFilePath, edits,
+                            m_form.userMenuEntries(),
                             m_form.menuEntriesChanged(), error);
         if (result != ConfigWriteResult::Ok) {
             status("Could not save: " + error);

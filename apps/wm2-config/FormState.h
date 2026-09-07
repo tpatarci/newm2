@@ -195,8 +195,20 @@ public:
     // divergentKeys() answer for that key even though the form does not
     // "manage" it in configFileManagedKeys()'s sense.
 
-    // What the page is showing right now.
+    // What the page is showing right now: EVERY layer's entries, in file
+    // order, because that is what the running window manager holds and what
+    // `set menu-entries` has to carry.
     const std::vector<AppEntry>& menuEntries() const { return m_menuCurrent; }
+
+    // The entries the USER FILE owns, which is what a save may write and all
+    // that a save may write (C1).
+    //
+    // Config::applyFile() APPENDS menu entries across layers -- the accumulator
+    // is deliberately never cleared per file -- so the shown list is the system
+    // layers' entries followed by the user's. Handing that merged list to
+    // configFileWrite() as the user file's block copies the inherited entries
+    // into the user file, where the next layered load reads them a second time.
+    std::vector<AppEntry> userMenuEntries() const;
 
     // Replace the whole list -- what Add, Edit and Remove each do, because the
     // protocol replaces wholesale and a per-row protocol would need a row

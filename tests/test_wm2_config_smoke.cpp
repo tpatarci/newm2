@@ -1957,6 +1957,93 @@ TEST_CASE("the Menu page's rows survive a save and come back as the same list",
     CHECK(written.find("borders=#00FF00") != std::string::npos);
 }
 
+TEST_CASE("the writer is handed the user file's own menu entries, never the system's",
+          "[wm2_config_smoke]")
+{
+    // C1 (Codex pass 4). Config::applyFile() APPENDS menu entries across
+    // layers -- the accumulator is never cleared per file -- so the list the
+    // form shows is the system file's entries FOLLOWED BY the user file's.
+    // Handing that merged list to configFileWrite() as the user file's block
+    // copies the system entries into the user file, and the very next layered
+    // load reads them twice. Reset had the same shape: it wrote the inherited
+    // entries back out instead of removing the block.
+    const std::string tree = makeTree("menulayers");
+    const std::string systemFile = tree + "/system/wm2-born-again/config";
+    const std::string userFile   = tree + "/user/wm2-born-again/config";
+    writeFile(systemFile,
+              "menu-entry-name=SystemMail\n"
+              "menu-entry-command=/usr/bin/mutt\n"
+              "menu-entry-category=Internet\n");
+    writeFile(userFile,
+              "menu-entry-name=UserEditor\n"
+              "menu-entry-command=/usr/bin/vim\n"
+              "menu-entry-category=Development\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    const ConfigLayers layers = configLayersFromDisk();
+    form.seedFromLayers(layers);
+
+    // What the page SHOWS is both layers, in file order, because that is what
+    // the running window manager holds and what `set menu-entries` must carry.
+    REQUIRE(form.menuEntries().size() == 2);
+    CHECK(form.menuEntries()[0].name == "SystemMail");
+    CHECK(form.menuEntries()[1].name == "UserEditor");
+
+    // What the WRITER is handed is the user layer alone.
+    REQUIRE(form.userMenuEntries().size() == 1);
+    CHECK(form.userMenuEntries()[0].name == "UserEditor");
+
+    // The end of the argument, through the real writer and the real parser: a
+    // save of an unchanged Menu page leaves the layered read saying two, not
+    // three.
+    std::string error;
+    REQUIRE(configFileWrite(layers.userFilePath, form.edits(),
+                            form.userMenuEntries(), true, error) ==
+            ConfigWriteResult::Ok);
+    Config userOnly;
+    userOnly.applyFile(userFile);
+    INFO("user file after the save:\n" << readFileOrEmpty(userFile));
+    REQUIRE(userOnly.manualMenuEntries.size() == 1);
+    CHECK(userOnly.manualMenuEntries[0].name == "UserEditor");
+    CHECK(configLayersFromDisk().withUser.manualMenuEntries.size() == 2);
+
+    // And a Reset writes an EMPTY block, so the inherited entry shows through
+    // rather than being copied into the file that was meant to stop naming it.
+    form.requestMenuReset();
+    CHECK(form.menuEntries().size() == 1);          // what removal will produce
+    CHECK(form.userMenuEntries().empty());          // what the writer will write
+
+    REQUIRE(configFileWrite(layers.userFilePath, form.edits(),
+                            form.userMenuEntries(), true, error) ==
+            ConfigWriteResult::Ok);
+    Config afterReset;
+    afterReset.applyFile(userFile);
+    INFO("user file after the reset:\n" << readFileOrEmpty(userFile));
+    CHECK(afterReset.manualMenuEntries.empty());
+    CHECK(configLayersFromDisk().withUser.manualMenuEntries.size() == 1);
+}
+
+TEST_CASE("the window's save hands the writer the user layer's entries",
+          "[wm2_config_smoke]")
+{
+    // The wiring, where a display-free case can reach it: the model can be
+    // right and the window still pass the merged list, which is the shape the
+    // defect had.
+    const std::string windowSource = sourceOf("apps/wm2-config/main.cpp");
+    REQUIRE_FALSE(windowSource.empty());
+    const std::size_t at = windowSource.find("void save()");
+    REQUIRE(at != std::string::npos);
+    const std::size_t end = windowSource.find("\n    }\n", at);
+    REQUIRE(end != std::string::npos);
+    const std::string body = withoutLineComments(windowSource.substr(at, end - at));
+    INFO("save(), comments stripped:\n" << body);
+    CHECK(body.find("m_form.userMenuEntries()") != std::string::npos);
+    // ...and NOT the merged list, named explicitly so the loser is part of the
+    // assertion rather than merely absent from it.
+    CHECK(body.find("m_form.menuEntries()") == std::string::npos);
+}
+
 TEST_CASE("removing a row and then reverting brings it back, which is why Remove asks nothing",
           "[wm2_config_smoke]")
 {

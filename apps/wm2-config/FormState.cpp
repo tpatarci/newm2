@@ -1,5 +1,7 @@
 #include "FormState.h"
 
+#include "MenuModel.h"   // menuEntryEqual -- the one spelling of "the same row"
+
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -362,9 +364,7 @@ bool menuEntriesEqual(const std::vector<AppEntry>& a,
 {
     if (a.size() != b.size()) return false;
     for (std::size_t i = 0; i < a.size(); ++i) {
-        if (a[i].name != b[i].name) return false;
-        if (a[i].category != b[i].category) return false;
-        if (a[i].execArgv != b[i].execArgv) return false;
+        if (!menuEntryEqual(a[i], b[i])) return false;
     }
     return true;
 }
@@ -384,6 +384,38 @@ bool FormState::setMenuEntries(const std::vector<AppEntry>& entries)
     m_menuCurrent = entries;
     m_menuDirty = !menuEntriesEqual(m_menuCurrent, m_menuEffective);
     return true;
+}
+
+
+std::vector<AppEntry> FormState::userMenuEntries() const
+{
+    // The user layer is the SUFFIX of the shown list that follows the entries
+    // the layers below contribute, because Config::applyFile() appends across
+    // layers in file order and the lower layers are read first.
+    //
+    // The prefix is CHECKED rather than assumed. When it does not match, the
+    // shown list did not come from stacking the user file on top of the layers
+    // this process just read -- a running window manager reporting entries from
+    // a system file that has since changed under it is the ordinary way that
+    // happens -- and there is then no honest way to say which rows the user
+    // file owns. The whole list is treated as user-owned in that case, which is
+    // the previous behaviour and errs towards keeping rows the user can see
+    // rather than towards silently dropping them from their own file.
+    if (m_menuBelowUser.size() <= m_menuCurrent.size()) {
+        bool below = true;
+        for (std::size_t i = 0; i < m_menuBelowUser.size(); ++i) {
+            if (menuEntryEqual(m_menuBelowUser[i], m_menuCurrent[i])) continue;
+            below = false;
+            break;
+        }
+        if (below) {
+            return std::vector<AppEntry>(
+                m_menuCurrent.begin() +
+                    static_cast<std::ptrdiff_t>(m_menuBelowUser.size()),
+                m_menuCurrent.end());
+        }
+    }
+    return m_menuCurrent;
 }
 
 
