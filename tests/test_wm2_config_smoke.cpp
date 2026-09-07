@@ -1522,8 +1522,13 @@ TEST_CASE("a colour reaches the form canonicalised, and a refused one is put bac
 
     CHECK(applyBody.find("restoreRefused(") != std::string::npos);
 
-    // ...and what "put back" means is the value in force, through the model's
-    // own setValue, which clears `dirty` exactly when current == effective.
+    // ...and what "put back" means is the value that was IN FORCE WHEN THE SET
+    // WAS SENT, captured here and carried to the handler (Y1). Reading
+    // `effective` inside the handler instead was the defect: a Save landing
+    // while the request was outstanding makes `effective` the refused value.
+    CHECK(applyBody.find("->effective") != std::string::npos);
+    CHECK(applyBody.find("restoreRefused(k, inForceAtSend)") != std::string::npos);
+
     const std::size_t restoreAt = window.find("void restoreRefused(");
     REQUIRE(restoreAt != std::string::npos);
     const std::size_t restoreEnd = window.find("\n    }\n", restoreAt);
@@ -1532,7 +1537,11 @@ TEST_CASE("a colour reaches the form canonicalised, and a refused one is put bac
         withoutLineComments(window.substr(restoreAt, restoreEnd - restoreAt));
     INFO("restoreRefused, comments stripped:\n" << restoreBody);
 
-    CHECK(restoreBody.find("->effective") != std::string::npos);
+    // The value comes from the caller, and the loser is named explicitly so it
+    // is part of the assertion rather than merely absent from it: reading the
+    // field's `effective` here is exactly what restored a refused colour.
+    CHECK(restoreBody.find("inForceAtSend") != std::string::npos);
+    CHECK(restoreBody.find("->effective") == std::string::npos);
     CHECK(restoreBody.find("refreshPages()") != std::string::npos);
 }
 
@@ -3552,6 +3561,149 @@ TEST_CASE("An error answers whichever request is at the head",
 
     CHECK(client.pumpUntil([&]() { return answered; }, 5000));
     CHECK(reason == "the X server cannot parse that colour");
+}
+
+
+TEST_CASE("a save is held back while a live set is unanswered, and a refusal "
+          "puts back the value that was in force when it was sent",
+          "[wm2_config_smoke][protocol][notice]")
+{
+    // Y1 (Codex pass 7, P1). applyLive() sends its `set` and returns; the
+    // refusal comes back later, on a turn of the main loop. A Save pressed in
+    // that gap has already written the typed value and markSaved() has made it
+    // the field's `effective` -- so a restore that puts the field back to
+    // `effective` puts back the very value the window manager refused, and the
+    // user's file keeps it. For a tab colour that is not a file disagreeing
+    // with a desktop: the window manager refuses a colour the X server cannot
+    // allocate, Border::allocateXftColors() calls fatal() on the same colour at
+    // the next startup, and the desktop does not come up.
+    //
+    // Two halves, both driven here. The window has something to ASK before it
+    // saves -- whether anything it sent is still unanswered -- and the value a
+    // refusal restores is the one captured when the request was SENT rather
+    // than whatever `effective` has become since.
+    const std::string tree = makeTree("pendingsave");
+    writeFile(tree + "/user/wm2-born-again/config", "tab-background=#111111\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+    REQUIRE(form.value("tab-background") == "#111111");
+
+    ScriptedPeer peer(shortSocketPath("y1pending"));
+    REQUIRE(peer.listening());
+
+    ProtocolClient client;
+    REQUIRE(client.connect(peer.path()));
+    const int fd = peer.connection(5000);
+    REQUIRE(fd >= 0);
+
+    // The user types a colour. The form shows it, and the window sends it live
+    // -- capturing, at that moment, the value in force. That capture is the
+    // fix: the handler closes over the value rather than over the field.
+    REQUIRE(form.setValue("tab-background", "#010203"));
+    const std::string inForceAtSend = form.field("tab-background")->effective;
+    REQUIRE(inForceAtSend == "#111111");
+
+    bool answered = false;
+    REQUIRE(client.sendSet("tab-background", "#010203",
+                           [&](const ConfigMessage& reply) {
+                               if (reply.type == ConfigMessageType::Error) {
+                                   form.setValue("tab-background", inForceAtSend);
+                               }
+                               answered = true;
+                           }));
+    REQUIRE_FALSE(ScriptedPeer::readLine(fd, 2000).empty());
+
+    // THE SAVE GATE, asked of the client exactly as the window's save() asks
+    // it: the window manager has not answered, so there is something
+    // outstanding and the save must not reach markSaved().
+    CHECK(client.pendingRequestCount() == 1);
+
+    // ...and this is what a save let through in that gap does, shown on a copy
+    // so the case can state the reason the gate exists without leaving the
+    // model in that state: markSaved() makes the TYPED value the effective one,
+    // so `effective` is then the value that is about to be refused, and a
+    // restore that reads it restores the refusal.
+    {
+        FormState raced = form;
+        raced.markSaved();
+        CHECK(raced.field("tab-background")->effective == "#010203");
+    }
+
+    // The refusal arrives.
+    ConfigMessage error;
+    error.type = ConfigMessageType::Error;
+    error.key = "tab-background";
+    error.reason = "the X server cannot parse that colour";
+    REQUIRE(ScriptedPeer::writeLine(fd, error));
+    CHECK(client.pumpUntil([&]() { return answered; }, 5000));
+
+    // The field is back at the value that was in force before the set, there is
+    // nothing left for a save to write, and the client has nothing outstanding
+    // -- which is what releases the save the window held back.
+    CHECK(form.value("tab-background") == "#111111");
+    REQUIRE(form.field("tab-background") != nullptr);
+    CHECK_FALSE(form.field("tab-background")->dirty);
+    CHECK(form.edits().empty());
+    CHECK(client.pendingRequestCount() == 0);
+}
+
+
+TEST_CASE("the window holds a save back while a live set is outstanding",
+          "[wm2_config_smoke]")
+{
+    // Y1's GTK half, which is wiring rather than a value, guarded on the source
+    // in the shape this file already uses for applyLive and the thickness
+    // tooltip. Comment-stripped, so this is about what the code does rather
+    // than about what its author wrote beside it (D-33).
+    const std::string window = sourceOf("apps/wm2-config/main.cpp");
+    REQUIRE_FALSE(window.empty());
+
+    const std::size_t saveAt = window.find("void save()");
+    REQUIRE(saveAt != std::string::npos);
+    const std::size_t saveEnd = window.find("\n    }\n", saveAt);
+    REQUIRE(saveEnd != std::string::npos);
+    const std::string saveBody =
+        withoutLineComments(window.substr(saveAt, saveEnd - saveAt));
+    INFO("save, comments stripped:\n" << saveBody);
+
+    // The gate is there...
+    const std::size_t gateAt = saveBody.find("pendingRequestCount()");
+    CHECK(gateAt != std::string::npos);
+    // ...and it is BEFORE the write and before markSaved(), which is the whole
+    // of it: a gate after either one has already let the refusal into the file.
+    const std::size_t writeAt = saveBody.find("configFileWrite(");
+    const std::size_t markAt = saveBody.find("markSaved()");
+    REQUIRE(writeAt != std::string::npos);
+    REQUIRE(markAt != std::string::npos);
+    CHECK(gateAt < writeAt);
+    CHECK(gateAt < markAt);
+
+    // A save the window swallowed would be worse than one it refused, so the
+    // deferred save is remembered and run when the last reply lands.
+    CHECK(saveBody.find("m_saveWhenIdle = true") != std::string::npos);
+
+    const std::size_t queuedAt = window.find("void runQueuedSaveIfIdle()");
+    REQUIRE(queuedAt != std::string::npos);
+    const std::size_t queuedEnd = window.find("\n    }\n", queuedAt);
+    REQUIRE(queuedEnd != std::string::npos);
+    const std::string queuedBody =
+        withoutLineComments(window.substr(queuedAt, queuedEnd - queuedAt));
+    INFO("runQueuedSaveIfIdle, comments stripped:\n" << queuedBody);
+    CHECK(queuedBody.find("pendingRequestCount() != 0") != std::string::npos);
+    CHECK(queuedBody.find("save()") != std::string::npos);
+
+    // ...and it is reached from the socket callback, which is the only place a
+    // reply can arrive.
+    const std::size_t readableAt = window.find("static gboolean onSocketReadable(");
+    REQUIRE(readableAt != std::string::npos);
+    const std::size_t readableEnd = window.find("\n    }\n", readableAt);
+    REQUIRE(readableEnd != std::string::npos);
+    const std::string readableBody =
+        withoutLineComments(window.substr(readableAt, readableEnd - readableAt));
+    INFO("onSocketReadable, comments stripped:\n" << readableBody);
+    CHECK(readableBody.find("runQueuedSaveIfIdle()") != std::string::npos);
 }
 
 

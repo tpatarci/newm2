@@ -130,6 +130,19 @@ public:
     // For a GLib socket source. -1 when there is no connection.
     int fileDescriptor() const { return m_fd; }
 
+    // How many requests this client has sent and not yet had answered.
+    //
+    // ASKED BY THE WINDOW BEFORE IT SAVES (Y1). A live `set` is sent and
+    // answered on a later turn of the main loop, so a Save pressed in between
+    // writes a value the window manager has not yet accepted -- and if it then
+    // refuses it, the refused value is already in the user's file and is now
+    // the form's own baseline. Zero here is the window's licence to write.
+    //
+    // Every request is answered exactly once, including on a lost connection
+    // (disconnect() runs every outstanding handler with an `error`), so this
+    // count always returns to zero.
+    std::size_t pendingRequestCount() const { return m_pending.size(); }
+
     // Drain everything readable and dispatch it. Called by the socket source,
     // and by pumpUntil().
     void onReadable();

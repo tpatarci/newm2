@@ -249,6 +249,11 @@ private:
                 }
             }
             render();
+            // A lost connection answers every outstanding request with an
+            // error before it gets here, so a Save deferred behind them is now
+            // free to run -- and it must, or a connection that dropped between
+            // the click and the reply would swallow the save entirely (Y1).
+            runQueuedSaveIfIdle();
         });
         m_client.setNoticeHandler([this]() { onReloadNotice(); });
 
@@ -312,6 +317,11 @@ private:
         self->m_inSocketCallback = true;
         self->m_client.onReadable();
         self->m_inSocketCallback = false;
+        // A reply may have been the last one a deferred Save was waiting for
+        // (Y1). Run it here rather than from inside the client's dispatch: the
+        // form has taken every restore the batch carried by now, so the save
+        // writes what the desktop actually accepted.
+        self->runQueuedSaveIfIdle();
         if (!self->m_client.connected()) {
             // The state handler has already cleared m_socketSource and set the
             // connection state; the return value is what removes the source.
@@ -436,10 +446,26 @@ private:
         // D-05: instantly on commit, and nothing touches a file.
         if (!m_client.connected()) return;
         const std::string k = key;
-        m_client.sendSet(k, value, [this, k](const ConfigMessage& reply) {
+
+        // THE VALUE IN FORCE, CAPTURED NOW (Y1). The refusal comes back on a
+        // later turn of the main loop, and by then the field's `effective` may
+        // no longer be what this `set` is proposing to replace: a Save that
+        // slipped through in between made the TYPED value effective, so a
+        // handler reading `effective` would put the refused value back rather
+        // than take it away. save() holds itself back while anything is
+        // outstanding, and this capture is the second half of the same fix --
+        // the two together mean no refused value can survive in the form.
+        //
+        // Empty for a key the form does not manage (the menu-entry block
+        // travels under its own key and is not a FormField), which
+        // restoreRefused() then declines to act on, exactly as before.
+        const FormField* field = m_form.field(k);
+        const std::string inForceAtSend = field ? field->effective : std::string();
+
+        m_client.sendSet(k, value, [this, k, inForceAtSend](const ConfigMessage& reply) {
             if (reply.type == ConfigMessageType::Error) {
                 status("The window manager refused " + k + ": " + reply.reason);
-                restoreRefused(k);
+                restoreRefused(k, inForceAtSend);
             }
         });
     }
@@ -456,16 +482,16 @@ private:
     // startup -- so a value refused here, and saved anyway, is a desktop that
     // will not come up.
     //
-    // "Put back" means the value in force, through the model's own setValue,
-    // which clears `dirty` exactly when current == effective. Applied to every
-    // managed key rather than to colours alone: nothing the desktop has
-    // rejected should survive into a Save, and setValue answers false for a key
-    // the form does not manage, which leaves the Menu page's block alone.
-    void restoreRefused(const std::string& key)
+    // "Put back" means the value that was in force WHEN THE SET WAS SENT --
+    // captured by applyLive() and handed here (Y1) -- through the model's own
+    // setValue, which clears `dirty` exactly when current == effective. Applied
+    // to every managed key rather than to colours alone: nothing the desktop
+    // has rejected should survive into a Save, and setValue answers false for a
+    // key the form does not manage, which leaves the Menu page's block alone.
+    void restoreRefused(const std::string& key, const std::string& inForceAtSend)
     {
-        const FormField* f = m_form.field(key);
-        if (!f) return;
-        if (!m_form.setValue(key, f->effective)) return;
+        if (!m_form.manages(key)) return;
+        if (!m_form.setValue(key, inForceAtSend)) return;
         refreshPages();
     }
 
@@ -473,6 +499,28 @@ private:
 
     void save()
     {
+        // NOTHING IS WRITTEN WHILE THE DESKTOP STILL OWES AN ANSWER (Y1).
+        //
+        // A live `set` is sent and answered on a later turn of the main loop.
+        // A Save pressed in that gap writes a value the window manager has not
+        // accepted yet -- and when it then refuses it, the refused value is
+        // already in the user's file and markSaved() has made it the form's own
+        // baseline, so there is nothing left to put back to. For a tab colour
+        // that is a desktop which will not start: the window manager refuses a
+        // colour the X server cannot allocate, and the next startup calls
+        // fatal() on the same colour.
+        //
+        // DEFERRED, NOT REFUSED. A Save that silently did nothing is worse than
+        // one that waits: the flag is remembered and runQueuedSaveIfIdle() runs
+        // it as soon as the last reply lands, which is a turn of the loop away.
+        if (m_client.pendingRequestCount() != 0) {
+            m_saveWhenIdle = true;
+            status("Waiting for the window manager to answer the last change; "
+                   "the save will run as soon as it does.");
+            return;
+        }
+        m_saveWhenIdle = false;
+
         const std::vector<ConfigEdit> edits = m_form.edits();
         // Asked of the MODEL, not of the edit list: the menu-entry block is
         // dirty without producing a single ConfigEdit, because the writer
@@ -526,6 +574,19 @@ private:
         discard();
         status(hadChanges ? "Reverted to the last saved settings."
                           : "There was nothing to revert.");
+    }
+
+    // The other end of save()'s deferral (Y1): every reply this window was
+    // waiting for has landed, so the Save the user pressed can run now. Called
+    // wherever the pending queue can drain -- the socket callback, and the
+    // state handler, since disconnect() answers every outstanding request
+    // before it announces the new state.
+    void runQueuedSaveIfIdle()
+    {
+        if (!m_saveWhenIdle) return;
+        if (m_client.pendingRequestCount() != 0) return;
+        m_saveWhenIdle = false;
+        save();
     }
 
     void reloadWindowManager()
@@ -732,6 +793,12 @@ private:
     ConfigLayers     m_layers;
     FormState        m_form;
     ProtocolClient   m_client;
+
+    // A Save pressed while a live `set` was still unanswered, waiting for the
+    // last reply to land (Y1). Cleared by runQueuedSaveIfIdle() and by save()
+    // itself, so a save that runs for any reason cancels the queued one rather
+    // than leaving it to fire a second time.
+    bool             m_saveWhenIdle = false;
     ConnectionState  m_state = ConnectionState::FileOnlyNoSocket;
     guint            m_socketSource = 0;
     // True only while onSocketReadable() is running, so detachSocketSource()
