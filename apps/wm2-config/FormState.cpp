@@ -51,8 +51,20 @@ ConfigLayers configLayersFromDisk()
     layers.withUser = layers.belowUser;
     layers.userFilePath = xdgConfigHome() + kConfigLeaf;
     layers.withUser.applyFile(layers.userFilePath);
+    // Read a second time, for its key NAMES rather than for its values. Not a
+    // second implementation of the layering: configFileKeysIn() classifies
+    // lines with the writer's own splitter, which is already required to
+    // classify them exactly as Config::applyFile() does.
+    layers.userFileKeys = configFileKeysIn(layers.userFilePath);
 
     return layers;
+}
+
+
+bool ConfigLayers::userFileSets(const std::string& key) const
+{
+    return std::find(userFileKeys.begin(), userFileKeys.end(), key) !=
+           userFileKeys.end();
 }
 
 
@@ -64,13 +76,22 @@ void FormState::seedFromLayers(const ConfigLayers& layers)
 {
     m_fields.clear();
 
-    // Which layer produced a key's effective value is decided by COMPARISON,
-    // not by re-parsing the files a second time: if the value with the user
-    // file differs from the value without it, the user file set it; otherwise
-    // the deepest system file that changed it did, and if none did, nothing
-    // did and the value is the built-in default. Re-parsing to find out would
-    // mean a second implementation of the layering, which is the one thing
-    // this function exists to avoid having.
+    // Which layer produced a key's effective value is decided in two different
+    // ways, and the split is the point (C5).
+    //
+    // THE USER FILE IS DECIDED BY PRESENCE. Whether the user's own file sets a
+    // key is a question about the FILE, and comparison cannot answer it: a file
+    // that explicitly sets a key to the value the layer below already produced
+    // is still setting it, and reporting that as built-in or system-provided
+    // names the wrong source in the tooltip -- and makes the override baffling
+    // the day the system layer moves. configLayersFromDisk() reads the user
+    // file's key names with the parser's own line rules for exactly this.
+    //
+    // THE SYSTEM/BUILT-IN SPLIT IS DECIDED BY COMPARISON, as it always was. No
+    // file below the user's may be written, so all the form needs of them is
+    // whether one of them changed the value, and re-parsing every system file
+    // to find out would mean a second implementation of the layering -- which
+    // is the one thing this function exists to avoid having.
     for (const std::string& key : configFileManagedKeys()) {
         FormField field;
         field.key = key;
@@ -78,7 +99,7 @@ void FormState::seedFromLayers(const ConfigLayers& layers)
         field.belowUser = formValueForKey(layers.belowUser, key);
         field.current = field.effective;
 
-        if (field.effective != field.belowUser) {
+        if (layers.userFileSets(key)) {
             field.source = ValueSource::UserFile;
             field.sourceDetail = layers.userFilePath;
         } else {

@@ -122,6 +122,27 @@ const std::vector<std::string>& configFileManagedKeys();
 bool configFileKeyIsManaged(const std::string& key);
 
 
+// The names of the keys the file at `path` actually SETS, in file order, read
+// with exactly the line rules Config::applyFile() uses: a line over 4096 bytes
+// is skipped, a blank line and a '#' comment set nothing, a line with no '='
+// sets nothing, and the key is what is left of the first '=' with the
+// whitespace trimmed off both ends. Duplicates are kept, because a file that
+// names a key twice has named it twice.
+//
+// Empty for a file that is not there, which is the ordinary state of a machine
+// with no user configuration, and empty for one that cannot be read.
+//
+// WHY THIS EXISTS. The settings window decides which layer a value came from,
+// and it used to decide by COMPARING the value with the user file against the
+// value without it -- so a user file that explicitly set a key to the value the
+// layer below already produced was reported as built-in or system-provided
+// (C5). Whether a file contains a key is a question about the FILE, and this is
+// how it is asked. Answered here rather than in a second parser because this
+// file already classifies lines the way Config::applyFile() does, and that
+// agreement is the whole reason the surgical writer is safe.
+std::vector<std::string> configFileKeysIn(const std::string& path);
+
+
 // Saves `edits` into the file at `path`.
 //
 // Behaviour, in one paragraph: every line of the existing file is emitted

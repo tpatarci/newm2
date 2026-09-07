@@ -897,6 +897,91 @@ TEST_CASE("a value set only in the system layer is shown as effective and names 
     CHECK(field->sourceDetail == tree + "/system/wm2-born-again/config");
 }
 
+TEST_CASE("a key the user file sets is shown as coming from the user file, whatever its value",
+          "[wm2_config_smoke]")
+{
+    // C5 (Codex pass 4). Provenance was decided by COMPARING the value with the
+    // user layer against the value without it, so a user file that explicitly
+    // set a key to the value the layer below already produced was classified as
+    // built-in or system-provided. The tooltip then named the wrong source, and
+    // a later change to the system layer would have made that explicit override
+    // baffling. Whether a file CONTAINS a key is a question about the file, not
+    // about its value.
+    const std::string tree = makeTree("userprovenance");
+    const std::string systemFile = tree + "/system/wm2-born-again/config";
+    const std::string userFile   = tree + "/user/wm2-born-again/config";
+
+    const Config builtIn;
+    writeFile(systemFile, "tab-background=#123456\n");
+    writeFile(userFile,
+              // ...the same value the system layer already produces...
+              "tab-background = #123456\n"
+              // ...and the built-in default, spelled out.
+              "frame-thickness=" + std::to_string(builtIn.frameThickness) + "\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    const ConfigLayers layers = configLayersFromDisk();
+    form.seedFromLayers(layers);
+
+    const FormField* shadowed = form.field("tab-background");
+    REQUIRE(shadowed != nullptr);
+    CHECK(shadowed->effective == "#123456");
+    CHECK(shadowed->source == ValueSource::UserFile);
+    CHECK(shadowed->sourceDetail == userFile);
+
+    const FormField* defaulted = form.field("frame-thickness");
+    REQUIRE(defaulted != nullptr);
+    CHECK(defaulted->effective == std::to_string(builtIn.frameThickness));
+    CHECK(defaulted->source == ValueSource::UserFile);
+    CHECK(defaulted->sourceDetail == userFile);
+
+    // The layered read is what knows this, and it knows it by reading the
+    // file's key NAMES with the parser's own line rules -- not by re-deriving
+    // it from a value.
+    CHECK(std::find(layers.userFileKeys.begin(), layers.userFileKeys.end(),
+                    "tab-background") != layers.userFileKeys.end());
+    CHECK(std::find(layers.userFileKeys.begin(), layers.userFileKeys.end(),
+                    "menu-background") == layers.userFileKeys.end());
+
+    // ...and the other two verdicts are untouched: a key only the system file
+    // sets still names the system file, and a key nobody sets is still
+    // built-in.
+    const FormField* systemOnly = form.field("menu-background");
+    REQUIRE(systemOnly != nullptr);
+    CHECK(systemOnly->source == ValueSource::BuiltIn);
+    CHECK(systemOnly->sourceDetail.empty());
+}
+
+TEST_CASE("the user file's key names are read with the config parser's own line rules",
+          "[wm2_config_smoke]")
+{
+    // The helper the layered read leans on, exercised where its edge cases are
+    // visible: a comment, a blank line, a line with no '=', and the whitespace
+    // the parser trims off a key.
+    const std::string tree = makeTree("userkeys");
+    const std::string userFile = tree + "/user/wm2-born-again/config";
+    writeFile(userFile,
+              "# tab-foreground=#FFFFFF\n"
+              "\n"
+              "   \t  borders   =   #00FF00\n"
+              "this line has no equals sign\n"
+              "menu-entry-name=Mail\n");
+
+    const std::vector<std::string> keys = configFileKeysIn(userFile);
+    INFO("keys: " << keys.size());
+    CHECK(std::find(keys.begin(), keys.end(), "borders") != keys.end());
+    CHECK(std::find(keys.begin(), keys.end(), "menu-entry-name") != keys.end());
+    // The commented-out key is not set by this file...
+    CHECK(std::find(keys.begin(), keys.end(), "tab-foreground") == keys.end());
+    // ...and neither the blank line nor the '='-less one contributed anything.
+    CHECK(keys.size() == 2u);
+
+    // A file that is not there sets nothing, which is the ordinary state of a
+    // machine with no user configuration.
+    CHECK(configFileKeysIn(tree + "/user/wm2-born-again/absent").empty());
+}
+
 TEST_CASE("an edit produces one edit and leaves every other key out of the file",
           "[wm2_config_smoke]")
 {

@@ -415,6 +415,29 @@ bool configFileKeyIsManaged(const std::string& key) {
     return false;
 }
 
+std::vector<std::string> configFileKeysIn(const std::string& path) {
+    std::vector<std::string> keys;
+
+    std::vector<std::string> lines;
+    bool endedWithNewline = true;
+    bool exists = false;
+    // A read that FAILED and a file that is not THERE both answer "this file
+    // sets nothing", and deliberately: the caller is asking which keys the user
+    // file overrides, and a file it cannot read overrides nothing it can act
+    // on. Distinguishing the two here would put a second error path into a
+    // question that has no second answer.
+    if (!readLines(path, lines, endedWithNewline, exists) || !exists) return keys;
+
+    for (const std::string& line : lines) {
+        // Config::applyFile()'s own first guard, before anything is split.
+        if (line.size() > 4096) continue;
+        const LineSplit split = splitLine(line);
+        if (!split.isPair) continue;
+        keys.push_back(split.key);
+    }
+    return keys;
+}
+
 // =============================================================================
 // configFileWrite
 // =============================================================================

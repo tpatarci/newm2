@@ -92,7 +92,17 @@ struct ConfigLayers {
     Config       withUser;      // system layers, then the user file on top
     Config       belowUser;     // system layers only
     std::string  userFilePath;  // the one path a save may write
+
+    // The keys the USER FILE actually contains, read with the parser's own
+    // line rules. Provenance is a question about the file, not about the value
+    // (C5): a user file that sets a key to the value the layer below already
+    // produced is still setting it, and a comparison cannot see that.
+    std::vector<std::string> userFileKeys;
+
     std::vector<std::string> systemFilePaths;   // those that exist, lowest first
+
+    // True when the user file names `key` at all.
+    bool userFileSets(const std::string& key) const;
 };
 
 // Perform the layered read. Never writes anything, never touches the user's
