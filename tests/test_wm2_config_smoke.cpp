@@ -1611,12 +1611,13 @@ TEST_CASE("a colour reaches the form canonicalised, and a refused one is put bac
 
     CHECK(applyBody.find("restoreRefused(") != std::string::npos);
 
-    // ...and what "put back" means is the value that was IN FORCE WHEN THE SET
-    // WAS SENT, captured here and carried to the handler (Y1). Reading
+    // ...and what "put back" means is the value the desktop holds, captured
+    // here BEFORE the send and carried to the handler (Y1). Reading
     // `effective` inside the handler instead was the defect: a Save landing
     // while the request was outstanding makes `effective` the refused value.
-    CHECK(applyBody.find("->effective") != std::string::npos);
-    CHECK(applyBody.find("restoreRefused(k, inForceAtSend)") != std::string::npos);
+    // The capture itself lives in liveBaseline(), which the case below pins.
+    CHECK(applyBody.find("liveBaseline(k)") != std::string::npos);
+    CHECK(applyBody.find("restoreRefused(k, baseline)") != std::string::npos);
 
     const std::size_t restoreAt = window.find("void restoreRefused(");
     REQUIRE(restoreAt != std::string::npos);
@@ -1909,6 +1910,47 @@ TEST_CASE("a peer that accepts the connection and says nothing is a stranger, no
     CHECK_FALSE(client.reason().empty());
     CHECK(client.fileDescriptor() < 0);   // nothing was sent, and nothing will be
 }
+
+TEST_CASE("a refusal puts back the last value the desktop ACCEPTED rather than the value before every change",
+          "[wm2_config_smoke]")
+{
+    // A field's `effective` follows the FILE (markSaved makes the typed value
+    // effective), not the desktop. So "the value in force when the set was
+    // sent" read off `effective` is wrong as soon as one live change has been
+    // accepted and not yet saved: A -> B accepted, B -> C refused, and the
+    // restore put A back on a desktop still showing B (CodeRabbit, major).
+    // The window keeps a per-key live baseline instead: seeded from
+    // `effective`, advanced by every ack, restored by every refusal, and
+    // dropped when the desktop re-reads its files.
+    const std::string window = sourceOf("apps/wm2-config/main.cpp");
+    REQUIRE_FALSE(window.empty());
+
+    const std::size_t applyAt = window.find("void applyLive(");
+    REQUIRE(applyAt != std::string::npos);
+    const std::size_t applyEnd = window.find("\n    }\n", applyAt);
+    REQUIRE(applyEnd != std::string::npos);
+    const std::string applyBody =
+        withoutLineComments(window.substr(applyAt, applyEnd - applyAt));
+    INFO("applyLive, comments stripped:\n" << applyBody);
+
+    // The baseline is read from the window's own record, not from `effective`
+    // alone...
+    CHECK(applyBody.find("liveBaseline(k)") != std::string::npos);
+    // ...an ack advances it to the value the desktop now holds...
+    CHECK(applyBody.find("m_liveBaseline[k] = value") != std::string::npos);
+    // ...and a refusal restores it.
+    CHECK(applyBody.find("restoreRefused(k, baseline)") != std::string::npos);
+
+    // A re-read by the desktop invalidates every baseline.
+    const std::size_t noticeAt = window.find("void onReloadNotice(");
+    REQUIRE(noticeAt != std::string::npos);
+    const std::size_t noticeEnd = window.find("\n    }\n", noticeAt);
+    REQUIRE(noticeEnd != std::string::npos);
+    const std::string noticeBody =
+        withoutLineComments(window.substr(noticeAt, noticeEnd - noticeAt));
+    CHECK(noticeBody.find("m_liveBaseline.clear()") != std::string::npos);
+}
+
 
 TEST_CASE("a peer speaking a protocol version this build does not is refused by name",
           "[wm2_config_smoke]")

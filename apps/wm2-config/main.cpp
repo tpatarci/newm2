@@ -56,6 +56,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -425,6 +426,9 @@ private:
 
     void onReloadNotice()
     {
+        // Every baseline was a claim about a desktop that has just re-read
+        // its files; the fresh effective values below are the new ones.
+        m_liveBaseline.clear();
         readMenuCategoriesFromWindowManager();
         // D-08: the window manager re-read its files, so every effective value
         // may have moved under this window. Unsaved edits are KEPT and stay
@@ -459,14 +463,20 @@ private:
         // Empty for a key the form does not manage (the menu-entry block
         // travels under its own key and is not a FormField), which
         // restoreRefused() then declines to act on, exactly as before.
-        const FormField* field = m_form.field(k);
-        const std::string inForceAtSend = field ? field->effective : std::string();
+        const std::string baseline = liveBaseline(k);
 
-        m_client.sendSet(k, value, [this, k, inForceAtSend](const ConfigMessage& reply) {
+        m_client.sendSet(k, value, [this, k, value, baseline](const ConfigMessage& reply) {
             if (reply.type == ConfigMessageType::Error) {
                 status("The window manager refused " + k + ": " + reply.reason);
-                restoreRefused(k, inForceAtSend);
+                m_liveBaseline[k] = baseline;
+                restoreRefused(k, baseline);
+                return;
             }
+            // Accepted: this is what the desktop holds now, and what the NEXT
+            // refusal must put back. Reading `effective` here instead would
+            // restore the value before every change, on a desktop still
+            // showing the one it accepted.
+            m_liveBaseline[k] = value;
         });
     }
 
@@ -488,6 +498,17 @@ private:
     // to every managed key rather than to colours alone: nothing the desktop
     // has rejected should survive into a Save, and setValue answers false for a
     // key the form does not manage, which leaves the Menu page's block alone.
+    // The desktop's current value for a managed key, as far as this window
+    // knows: the last accepted live set, or the field's effective value when
+    // nothing has been sent since the last read. Empty for an unmanaged key.
+    std::string liveBaseline(const std::string& key) const
+    {
+        const auto it = m_liveBaseline.find(key);
+        if (it != m_liveBaseline.end()) return it->second;
+        const FormField* field = m_form.field(key);
+        return field ? field->effective : std::string();
+    }
+
     void restoreRefused(const std::string& key, const std::string& inForceAtSend)
     {
         if (!m_form.manages(key)) return;
@@ -792,6 +813,11 @@ private:
     std::string      m_socketOverride;
     ConfigLayers     m_layers;
     FormState        m_form;
+    // The last value the DESKTOP accepted for each key, seeded from the
+    // field's effective value: what a refusal puts back (CodeRabbit, major).
+    // `effective` follows the file, not the desktop, so it is the wrong
+    // baseline once one live change has been accepted and not yet saved.
+    std::map<std::string, std::string> m_liveBaseline;
     ProtocolClient   m_client;
 
     // A Save pressed while a live `set` was still unanswered, waiting for the
