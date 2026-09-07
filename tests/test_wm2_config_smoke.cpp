@@ -1048,6 +1048,65 @@ TEST_CASE("typing a value after a reset cancels the reset", "[wm2_config_smoke]"
     CHECK(edits[0].value == "9");
 }
 
+TEST_CASE("a saved field's tooltip names the file it is now set in",
+          "[wm2_config_smoke]")
+{
+    // A2 (CodeRabbit, apps chunk). markSaved() reassigned each saved field's
+    // `source` -- UserFile after an edit, BuiltIn or SystemFile after a reset --
+    // and left `sourceDetail` exactly as it was. So the DISC-08 tooltip read
+    // "Set in your own configuration file, ." with an empty path after the
+    // first save of a fresh edit, and went on naming the USER file after a
+    // reset that had just removed the key from it.
+    const std::string tree = makeTree("savedorigin");
+    const std::string systemFile = tree + "/system/wm2-born-again/config";
+    const std::string userFile   = tree + "/user/wm2-born-again/config";
+
+    const Config builtIn;
+    writeFile(systemFile, "tab-background=#123456\n");
+    writeFile(userFile,
+              "tab-background=#ABCDEF\n"
+              "borders=#00FF00\n");
+    ScopedXdg xdg(tree + "/user", tree + "/system");
+
+    FormState form;
+    form.seedFromLayers(configLayersFromDisk());
+
+    // A FRESH EDIT of a key nothing sets: BuiltIn with no detail before, and
+    // the user file with its path after.
+    const FormField* fresh = form.field("menu-highlight");
+    REQUIRE(fresh != nullptr);
+    REQUIRE(fresh->source == ValueSource::BuiltIn);
+    REQUIRE(fresh->sourceDetail.empty());
+    REQUIRE(form.setValue("menu-highlight", "#010203"));
+
+    // A RESET of a key the system layer also sets: the system file shows
+    // through, so the tooltip must name the system file.
+    REQUIRE(form.requestReset("tab-background"));
+
+    // A RESET of a key only the user file sets: the built-in default shows
+    // through, and nothing sets it any more.
+    REQUIRE(form.requestReset("borders"));
+
+    form.markSaved();
+
+    const FormField* edited = form.field("menu-highlight");
+    REQUIRE(edited != nullptr);
+    CHECK(edited->source == ValueSource::UserFile);
+    CHECK(edited->sourceDetail == userFile);
+
+    const FormField* toSystem = form.field("tab-background");
+    REQUIRE(toSystem != nullptr);
+    CHECK(toSystem->effective == "#123456");
+    CHECK(toSystem->source == ValueSource::SystemFile);
+    CHECK(toSystem->sourceDetail == systemFile);
+
+    const FormField* toBuiltIn = form.field("borders");
+    REQUIRE(toBuiltIn != nullptr);
+    CHECK(toBuiltIn->effective == builtIn.borders);
+    CHECK(toBuiltIn->source == ValueSource::BuiltIn);
+    CHECK(toBuiltIn->sourceDetail.empty());
+}
+
 TEST_CASE("revert restores every effective value and forgets every edit",
           "[wm2_config_smoke]")
 {

@@ -76,6 +76,15 @@ void FormState::seedFromLayers(const ConfigLayers& layers)
 {
     m_fields.clear();
 
+    // The two paths a saved field's tooltip may name, kept for markSaved(),
+    // which runs long after the layered read has gone out of scope (A2). The
+    // LAST system file that set anything wins, and the layered apply walks them
+    // lowest-precedence first, so the innermost is the back one.
+    m_userFilePath = layers.userFilePath;
+    m_systemFilePath = layers.systemFilePaths.empty()
+                           ? std::string()
+                           : layers.systemFilePaths.back();
+
     // Which layer produced a key's effective value is decided in two different
     // ways, and the split is the point (C5).
     //
@@ -110,9 +119,7 @@ void FormState::seedFromLayers(const ConfigLayers& layers)
                 // The LAST system file that set it wins, and the layered apply
                 // walks them lowest-precedence first, so the innermost one
                 // that changed the value is found by walking backwards.
-                field.sourceDetail = layers.systemFilePaths.empty()
-                                         ? std::string()
-                                         : layers.systemFilePaths.back();
+                field.sourceDetail = m_systemFilePath;
             } else {
                 field.source = ValueSource::BuiltIn;
                 field.sourceDetail.clear();
@@ -164,6 +171,14 @@ void FormState::adoptEffective(const std::string& key, const std::string& value,
 
 void FormState::refreshLowerLayers(const ConfigLayers& layers)
 {
+    // The lower layers moved, so which system file a later save should NAME may
+    // have moved with them. Bookkeeping rather than a field value: no field's
+    // source, current value or mark is touched here (A2).
+    m_userFilePath = layers.userFilePath;
+    m_systemFilePath = layers.systemFilePaths.empty()
+                           ? std::string()
+                           : layers.systemFilePaths.back();
+
     for (FormField& f : m_fields) {
         const std::string below = formValueForKey(layers.belowUser, f.key);
         if (below == f.belowUser) continue;
@@ -313,15 +328,25 @@ void FormState::markSaved()
         if (!f.dirty) continue;
         if (f.resetRequested) {
             // The key is gone from the user file, so what is in force now is
-            // whatever the layers below produce.
+            // whatever the layers below produce -- and the tooltip has to name
+            // THAT file rather than go on naming the one the key was just
+            // removed from (A2).
             f.effective = f.belowUser;
             f.current = f.belowUser;
-            f.source = (f.belowUser == formValueForKey(Config(), f.key))
-                           ? ValueSource::BuiltIn
-                           : ValueSource::SystemFile;
+            if (f.belowUser == formValueForKey(Config(), f.key)) {
+                f.source = ValueSource::BuiltIn;
+                f.sourceDetail.clear();
+            } else {
+                f.source = ValueSource::SystemFile;
+                f.sourceDetail = m_systemFilePath;
+            }
         } else {
             f.effective = f.current;
             f.source = ValueSource::UserFile;
+            // ...and the user file is where it now IS. Left as it was, a field
+            // saved from a built-in default read "Set in your own configuration
+            // file, ." with an empty path.
+            f.sourceDetail = m_userFilePath;
         }
         f.dirty = false;
         f.resetRequested = false;

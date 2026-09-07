@@ -255,6 +255,15 @@ private:
 
     std::vector<FormField> m_fields;
 
+    // Which file a saved field's tooltip should name (A2). markSaved() has to
+    // rewrite `sourceDetail` beside `source` -- an edit is now set in the user
+    // file, a reset is now whatever the layer below says -- and the layered
+    // read is long gone by then, so the two paths it can name are kept here.
+    // Retaken by refreshLowerLayers(), because a system file appearing or
+    // disappearing under an open window is exactly what that function is for.
+    std::string m_userFilePath;
+    std::string m_systemFilePath;   // the innermost system file, "" if there is none
+
     std::vector<AppEntry> m_menuEffective;   // what is in force
     std::vector<AppEntry> m_menuBelowUser;   // what removing the lines produces
     std::vector<AppEntry> m_menuCurrent;     // what the page is showing
