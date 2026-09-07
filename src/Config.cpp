@@ -4,6 +4,7 @@
 
 #include "Config.h"
 #include "ConfigProtocol.h"   // the one-line bound the accumulated entry list has to fit inside
+#include "ConfigFileWriter.h" // kConfigFileMaxValueBytes -- the per-value bound the wire must respect too
 
 #include <getopt.h>
 #include <cstdlib>
@@ -944,6 +945,37 @@ bool parseMenuEntriesValue(const std::string& value,
                  val.back()  == ' ' || val.back()  == '\t')) {
                 reasonOut = "'" + key + "' begins or ends with a space, which "
                             "the configuration file cannot preserve";
+                return false;
+            }
+            // THE OTHER TWO RULES OF THE SAME CLASS (X2). The trim rule above
+            // was the only one this parser had, and the file imposes three.
+            //
+            // Config::applyFile() SKIPS a line whose value is longer than
+            // kConfigFileMaxValueBytes, and configFileWrite() refuses to write
+            // one; the file is one value per line, so it can hold no line break
+            // at all, and the writer refuses that too. Without these, `set
+            // menu-entries` acknowledged a list the file can neither preserve
+            // nor reproduce -- applied live, then lost at the next reload or
+            // refused at Save with a message about a rule the client never saw.
+            //
+            // BOTH APPLY TO ALL THREE KEYS, menu-entry-command included. The
+            // command is exempt from the trim rule for a reason that does not
+            // extend to these: applyKeyValue() tokenises it on whitespace, so
+            // its outer spaces survive nothing on either route. A line break in
+            // it is one more token separator on the wire and the END OF THE
+            // LINE in the file, which are not the same entry -- and the writer,
+            // in menuEntriesAreAcceptable(), already measures and scans the
+            // rendered command exactly as it measures and scans the name.
+            if (val.size() > kConfigFileMaxValueBytes) {
+                reasonOut = "'" + key + "' is longer than " +
+                            std::to_string(kConfigFileMaxValueBytes) +
+                            " bytes, which the configuration file cannot preserve";
+                return false;
+            }
+            if (val.find('\n') != std::string::npos ||
+                val.find('\r') != std::string::npos) {
+                reasonOut = "'" + key + "' contains a newline, which the "
+                            "configuration file cannot hold";
                 return false;
             }
             scratch.applyKeyValue(key, val);

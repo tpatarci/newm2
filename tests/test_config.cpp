@@ -3,6 +3,7 @@
 
 #include "Config.h"
 #include "ConfigProtocol.h"
+#include "ConfigFileWriter.h"   // kConfigFileMaxValueBytes -- the per-value bound the wire must respect too
 
 #include <cstdlib>
 #include <cstdio>
@@ -1445,4 +1446,101 @@ TEST_CASE("a menu-entry list that fits in one reply is loaded whole and silently
     CHECK(cfg.manualMenuEntries.size() == fits);
     CHECK(menuEntriesReplyLine(cfg).size() <= kConfigProtocolMaxLine);
     CHECK(warnings.empty());
+}
+
+// Test 43: the wire parser enforces the same PER-VALUE rules the config file
+// does -- the 256-byte bound and the ban on line breaks (X2, Codex pass 5)
+TEST_CASE("a menu-entry value the configuration file could not hold is refused on the wire",
+          "[config]") {
+    // X2. parseMenuEntriesValue() checked each `val` for leading and trailing
+    // space -- because applyFile() trims and the wire does not -- and stopped
+    // there. Two rules of exactly the same class were missing:
+    //
+    //   * Config::applyFile() SKIPS a value longer than
+    //     kConfigFileMaxValueBytes with a warning to a stderr nobody reads, and
+    //     configFileWrite() refuses to write one;
+    //   * the file is one value per line, so it can hold no line break at all,
+    //     and configFileWrite() refuses that too. The wire's JSON escaping is
+    //     what lets a '\n' arrive here in the first place.
+    //
+    // So `set menu-entries` was ACKNOWLEDGED for a list the file can neither
+    // preserve nor reproduce: applied live, and then either lost at the next
+    // reload or refused at Save with a message about a rule the client was
+    // never told.
+    //
+    // The reasons are in the shape src/Manager.cpp's socket String branch uses
+    // for the same two rules on a plain string key: name the bound, name the
+    // newline.
+
+    SECTION("a name over the file's per-value bound is refused, and the reason names it") {
+        const std::string tooLong(300, 'x');
+        REQUIRE(tooLong.size() > kConfigFileMaxValueBytes);
+
+        std::vector<AppEntry> out;
+        std::string reason;
+        const bool accepted = parseMenuEntriesValue(
+            "menu-entry-name=" + tooLong + ";menu-entry-command=mutt", out, reason);
+
+        INFO("refusal: " << reason);
+        CHECK_FALSE(accepted);
+        CHECK(reason.find(std::to_string(kConfigFileMaxValueBytes)) != std::string::npos);
+    }
+
+    SECTION("a name with a line break in it is refused, and the reason names it") {
+        std::vector<AppEntry> out;
+        std::string reason;
+        const bool accepted = parseMenuEntriesValue(
+            "menu-entry-name=Ma\nil;menu-entry-command=mutt", out, reason);
+
+        INFO("refusal: " << reason);
+        CHECK_FALSE(accepted);
+        CHECK(reason.find("newline") != std::string::npos);
+    }
+
+    SECTION("a COMMAND with a line break in it is refused too") {
+        // The command is exempt from the trim rule, because applyKeyValue()
+        // tokenises it on whitespace and its outer spaces survive nothing on
+        // either route. A LINE BREAK is a different thing: on the wire it is
+        // one more token separator, and in the file it ends the line -- so the
+        // entry the file reads back is not the entry that was acknowledged.
+        std::vector<AppEntry> out;
+        std::string reason;
+        const bool accepted = parseMenuEntriesValue(
+            "menu-entry-name=Mail;menu-entry-command=mutt\n-f inbox", out, reason);
+
+        INFO("refusal: " << reason);
+        CHECK_FALSE(accepted);
+        CHECK(reason.find("newline") != std::string::npos);
+    }
+
+    SECTION("a carriage return is refused on the same grounds") {
+        std::vector<AppEntry> out;
+        std::string reason;
+        const bool accepted = parseMenuEntriesValue(
+            "menu-entry-name=Mail;menu-entry-category=Inter\rnet", out, reason);
+
+        INFO("refusal: " << reason);
+        CHECK_FALSE(accepted);
+        CHECK(reason.find("newline") != std::string::npos);
+    }
+
+    SECTION("an ordinary value is still accepted, so the guards refuse something rather than everything") {
+        // Including a name of EXACTLY the bound, so the comparison is proved to
+        // be "longer than" rather than "as long as".
+        const std::string atTheBound(kConfigFileMaxValueBytes, 'x');
+
+        std::vector<AppEntry> out;
+        std::string reason;
+        const bool accepted = parseMenuEntriesValue(
+            "menu-entry-name=" + atTheBound +
+            ";menu-entry-command=mutt -f inbox;menu-entry-category=Internet",
+            out, reason);
+
+        INFO("refusal: " << reason);
+        REQUIRE(accepted);
+        REQUIRE(out.size() == 1);
+        CHECK(out[0].name == atTheBound);
+        CHECK(out[0].execArgv == (std::vector<std::string>{"mutt", "-f", "inbox"}));
+        CHECK(out[0].category == "Internet");
+    }
 }
