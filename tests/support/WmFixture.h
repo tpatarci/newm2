@@ -993,7 +993,10 @@ inline bool residentKb(pid_t pid, long& out)
     // against a live process. A silently-zero reading is worse than a false.
     const long page = ::sysconf(_SC_PAGESIZE);
     if (page <= 0) return false;
-    out = resident * (page / 1024);
+    // Multiply first, in 64 bits: `page / 1024` would discard the fraction of
+    // a page a size below 1024 leaves, and `resident * page` in a 32-bit long
+    // overflows past two million pages.
+    out = static_cast<long>((static_cast<long long>(resident) * page) / 1024);
     return true;
 }
 
