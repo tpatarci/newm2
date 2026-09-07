@@ -1613,6 +1613,226 @@ TEST_CASE("The status assembly does not reach any per-window identity",
 
 
 // -----------------------------------------------------------------------------
+// A BOUNDED modalWait() MUST NOT REPORT Timeout BEFORE ITS BOUND
+// (CodeRabbit F2, 2026-09-07)
+// -----------------------------------------------------------------------------
+//
+// THE DEFECT. modalWait() clamps its poll timeout with
+// clampPollTimeoutForSocket(), which shortens it to the configuration socket's
+// timeout hint -- the time left on a connection that has not sent its hello, or
+// on an accept stall. When poll() then returned 0 at the HINT rather than at
+// the caller's deadline, the old
+//
+//     if (r == 0 && bounded) return ModalWait::Timeout;
+//
+// reported Timeout with the caller's deadline still in the future. The hint is
+// a reason to WAKE UP and service the socket, never a reason to tell the caller
+// its time is up.
+//
+// WHY THE FIRST CASE BELOW IS A SOURCE-LEVEL GUARD, and what it is not. This
+// file already carries one such guard, for D-14's ceiling, and the reason is
+// the same here: the defect has NO externally observable consequence in this
+// build, so no behavioural case can be red at the round base. Every bounded
+// caller of modalWait() today either measures the time it actually waited
+// (Border.cpp's tab-button hold, which was fixed at the CONSUMER by WR-14) or
+// simply loops on Timeout (Client.cpp's move and resize drags), and the two
+// remaining callers pass -1. The finding is a contract violation whose only
+// victim is the next caller written against the contract -- so it is guarded
+// where it can be: modalWait() must report Timeout from exactly ONE place, the
+// deadline check at the head of its loop.
+//
+// The behavioural case that follows it is the other half, and it is honestly
+// green at the round base: it drives a bounded wait ACROSS the moment a silent
+// connection's hello deadline expires -- the exact moment the clamp bites --
+// and proves the escalation that counts those waits still happens, and still
+// takes at least its configured delay. That is the guard against this fix
+// turning a bounded wait into one that never returns Timeout at all.
+
+TEST_CASE("modalWait reports Timeout from its deadline check and nowhere else",
+          "[wm_socket][source][modalwait]")
+{
+    const std::string source = readWholeFile(std::string(WM2_SOURCE_DIR) + "/src/Events.cpp");
+    REQUIRE_FALSE(source.empty());
+
+    const std::string marker = "WindowManager::ModalWait WindowManager::modalWait(";
+    const std::size_t start = source.find(marker);
+    REQUIRE(start != std::string::npos);
+
+    // The body ends at the first closing brace in column zero, the same way the
+    // status-assembly guard above selects its region.
+    const std::size_t end = source.find("\n}\n", start);
+    REQUIRE(end != std::string::npos);
+
+    const std::string region = source.substr(start, end - start);
+    INFO("modalWait region:\n" << region);
+
+    // The region really is the one that clamps -- otherwise this guard could be
+    // watching a function that never had the defect.
+    REQUIRE(region.find("clampPollTimeoutForSocket") != std::string::npos);
+
+    // THE CONTRACT. Exactly one place returns Timeout.
+    const std::string ret = "return ModalWait::Timeout;";
+    int returns = 0;
+    for (std::size_t at = region.find(ret); at != std::string::npos;
+         at = region.find(ret, at + ret.size())) {
+        ++returns;
+    }
+    INFO("Timeout returns found in modalWait: " << returns);
+    CHECK(returns == 1);
+
+    // ...and it is the DEADLINE check, not the poll's return value. The two
+    // spellings are asserted separately so a failure names which half broke.
+    const std::size_t only = region.find(ret);
+    REQUIRE(only != std::string::npos);
+    const std::size_t deadline = region.find("left <= clock::duration::zero()");
+    INFO("deadline check at " << deadline << ", Timeout return at " << only);
+    CHECK(deadline != std::string::npos);
+    CHECK(deadline < only);
+    CHECK(only - deadline < 80);   // the same statement, not merely earlier
+
+    // And the poll's zero return is not a Timeout by any spelling: the caller's
+    // deadline is the only thing that ends a bounded wait.
+    CHECK(region.find("r == 0 && bounded") == std::string::npos);
+    CHECK(region.find("bounded && r == 0") == std::string::npos);
+}
+
+TEST_CASE("a bounded modal wait that crosses a silent connection's deadline still "
+          "takes its full delay", "[wm_socket][modalwait]")
+{
+    // THE MOMENT THE CLAMP BITES, arranged rather than hoped for. A connection
+    // that never sends hello is closed kConfigSocketHelloDeadlineMs after it
+    // connects, and timeoutHintMs() reports the time left on it. While that
+    // remainder is larger than the 50 ms bound of the tab-button hold's wait,
+    // the clamp changes nothing; it is only in the last 50 ms before the
+    // deadline that the hint is the shorter of the two and the poll returns
+    // early. So the press is started so that the deadline falls INSIDE the
+    // hold, and the escalation from "hide" to "delete" -- which is driven
+    // entirely by accumulated bounded waits -- has to survive it.
+    //
+    // GREEN AT THE ROUND BASE, and said so deliberately: Border.cpp measures
+    // each wait rather than assuming it lasted its bound (WR-14), so an early
+    // Timeout is already absorbed there. This case is the guard on the OTHER
+    // side of the fix -- a modalWait() that stopped timing out would hang this
+    // hold until the button came up, and the delete would never be sent.
+    constexpr int kDelayMs = 250;
+
+    WmFixtureOptions options;
+    options.wmArgs = { "--destroy-window-delay=" + std::to_string(kDelayMs) };
+    WmFixture fixture(options);
+
+    x11::DisplayPtr dp = fixture.openDisplay();
+    REQUIRE(dp != nullptr);
+    Display* d = dp.get();
+    parkPointer(d);
+
+    const std::string path = awaitPublishedSocketPath(d);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE_FALSE(path.empty());
+    }
+
+    // THE SILENT CONNECTION. Connected and then never spoken through, so it is
+    // exactly what timeoutHintMs() reports a deadline for. The clock starts
+    // here.
+    const std::chrono::steady_clock::time_point connectedAt =
+        std::chrono::steady_clock::now();
+    Conn silent(path);
+    REQUIRE(silent.connected());
+
+    XTestDriver driver(fixture.display());
+    driver.moveTo(kParkX, kParkY);
+
+    Window win = None;
+    Window frame = None;
+    {
+        win = createClient(d, 200, 150, 260, 190, "deadlinecross");
+        announceDeleteProtocol(d, win);
+        XMapWindow(d, win);
+        XSync(d, False);
+        frame = awaitFrameFor(d, win);
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE(frame != None);
+    }
+    settleWm(d);
+
+    const Rect clientRect = rectOf(d, win);
+    driver.moveTo(clientRect.x + clientRect.w / 2, clientRect.y + clientRect.h / 2);
+    XSync(d, False);
+    REQUIRE(WmFixture::pollUntil([&] {
+        pumpWm(d);
+        return activeWindow(d) == win;
+    }, 8000));
+
+    Window button = findTabButton(d, frame, win);
+    {
+        const std::string stderrText = fixture.wmStderr();
+        INFO("wm stderr:\n" << stderrText);
+        REQUIRE(button != None);
+    }
+    const Rect b = rectOf(d, button);
+    REQUIRE(b.w > 0);
+
+    driver.moveTo(b.x + b.w / 2, b.y + b.h / 2);
+    XSync(d, False);
+
+    // Hold for three times the delay, starting a little before the deadline, so
+    // the deadline is crossed while the hold's bounded waits are running and
+    // there is still more than the delay's worth of hold left afterwards.
+    const int holdMs = kDelayMs * 3;
+    const int startBeforeDeadlineMs = kDelayMs;
+    const long long sinceConnect =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - connectedAt).count();
+    const long long waitBeforePress =
+        kConfigSocketHelloDeadlineMs - startBeforeDeadlineMs - sinceConnect;
+    INFO("setup took " << sinceConnect << " ms; sleeping "
+         << waitBeforePress << " ms before the press");
+    if (waitBeforePress > 0) holdFor(static_cast<int>(waitBeforePress));
+
+    const std::chrono::steady_clock::time_point pressedAt =
+        std::chrono::steady_clock::now();
+    driver.press(Button1);
+    holdFor(holdMs);
+    driver.release(Button1);
+    XSync(d, False);
+
+    static Atom protocols = XInternAtom(d, "WM_PROTOCOLS", False);
+    static Atom del = XInternAtom(d, "WM_DELETE_WINDOW", False);
+    long long deletedAfterMs = -1;
+    const bool deleted = WmFixture::pollUntil([&] {
+        pumpWm(d);
+        XEvent ev;
+        while (XCheckTypedWindowEvent(d, win, ClientMessage, &ev)) {
+            if (ev.xclient.message_type == protocols &&
+                static_cast<Atom>(ev.xclient.data.l[0]) == del) {
+                deletedAfterMs =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - pressedAt).count();
+                return true;
+            }
+        }
+        return false;
+    }, 15000);
+
+    const std::string stderrText = fixture.wmStderr();
+    INFO("wm stderr:\n" << stderrText);
+    INFO("delete observed " << deletedAfterMs << " ms after the press");
+
+    // The bounded wait still expires, so the hold still escalates.
+    CHECK(deleted);
+
+    // ...and it did not escalate before the delay it was given. No upper bound
+    // is asserted: this runs under a sanitizer in one tree and on a shared
+    // display in every tree, and an upper bound would be a flake, not a claim.
+    CHECK(deletedAfterMs >= kDelayMs);
+
+    CHECK(fixture.wmAlive());
+}
+
+
+// -----------------------------------------------------------------------------
 // TWO OVERLAPPING `set` MESSAGES (09-04 truth 7, 09-VERIFICATION item 5)
 // -----------------------------------------------------------------------------
 //

@@ -423,8 +423,26 @@ WindowManager::ModalWait WindowManager::modalWait(long mask, XEvent *out,
 
         if (fds[kPollFdPipe].revents & POLLIN) return ModalWait::Interrupted;
         if (fds[kPollFdX].revents & eventPumpFailedRevents()) return ModalWait::Interrupted;
-        if (r == 0 && bounded) return ModalWait::Timeout;
-        // X readable, a serviced socket, or a non-matching event: go round, let
+
+        // A ZERO RETURN FROM poll() IS NOT THE CALLER'S DEADLINE (CodeRabbit
+        // F2). `wait` was clamped by clampPollTimeoutForSocket() a few lines
+        // up, so whenever the socket has a timeout hint -- a connection that
+        // has not sent its hello yet, or an accept stall -- the poll expires at
+        // the HINT, which is SHORTER than the time the caller asked for. The
+        // old code reported the caller's time up on that zero return, so every
+        // bounded modal wait -- the tab-button hold, the move and resize drags
+        // -- could be told it had timed out while its deadline was still in the
+        // future, for as long as a pre-hello client was connected.
+        //
+        // So nothing is returned here. The hint is a reason to WAKE UP and
+        // service the socket, never a reason to end the caller's wait: going
+        // round the loop lets the deadline check at the head -- `left <= 0` --
+        // be the ONE place a bounded wait reports Timeout, and it reports it
+        // when the deadline has actually elapsed. An unbounded wait is
+        // untouched: it never had a deadline to report and still loops.
+        //
+        // The remaining cases go round for the reasons they always did: X
+        // readable, a serviced socket, or a non-matching event -- let
         // XCheckMaskEvent pull it in. A non-matching event stays queued for the
         // main loop.
     }
