@@ -1,7 +1,7 @@
 MIT License
 
 Copyright (c) 1997 Chris Cannam (original wm2)
-Copyright (c) 2026 Tomislav Patarcic (newm2)
+Copyright (c) 2026 Tomislav Patarcic (wm2-born-again)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -27,5 +27,18 @@ This software is derived from wm2 by Chris Cannam (cannam@all-day-breakfast.com)
 originally released in March 1997. The original wm2 source code is included in
 the upstream-wm2/ directory for reference.
 
-wm2 itself incorporates code from "9wm" by David Hogan and the "xvertext" font
-rotation library version 2.0 by Alan Richardson.
+The original wm2 carried no formal licence file. The terms Chris Cannam gave in
+its README were:
+
+    "If you want to hack the code into something else for your own amusement,
+    please go ahead.  Feel free to modify and redistribute, as long as you
+    retain the original copyrights as appropriate."
+
+That condition is met by retaining his copyright above, and the MIT licence
+imposes the same requirement on this work.
+
+wm2 itself began as a derivative of "9wm" by David Hogan, and used the
+"xvertext" font rotation library version 2.0 by Alan Richardson. The sideways
+tabs were Andy Green's idea. This version no longer uses xvertext: the rotated
+tab label is drawn by Xft with a rotation matrix, so that credit is historical
+rather than a dependency of the compiled program.
