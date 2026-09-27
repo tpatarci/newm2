@@ -155,6 +155,7 @@ WM_EXPECTED=$(printf '%s\n' \
     "bin/wm2-born-again" \
     "bin/wm2-ctl" \
     "share/doc/wm2-born-again/LICENSE" \
+    "share/doc/wm2-born-again/NOTICE" \
     "share/doc/wm2-born-again/RELEASE-NOTES.md" \
     "share/xsessions/wm2-born-again.desktop" | sort)
 
