@@ -4,7 +4,12 @@ A modernised resurrection of Chris Cannam's wm2 (1997), adapted for VPS droplets
 reached over VNC or RDP. The sideways-tab look is unchanged and deliberately so;
 the internals underneath it are not.
 
-These notes cover **Phase 8**, which is the release that makes the window manager
+**Version 1.0.0** is the first released version. It covers everything below: the
+appearance and focus work, window rules, the fallback paths for servers missing
+an extension, the configuration file, `wm2-ctl`, and the settings window. See
+[README.md](../README.md) for what the project is and who it is owed to.
+
+These notes cover the behaviour that makes the window manager
 honest about the servers it runs on: what it does when an X extension is missing,
 which windows are allowed to steal your focus, how to write a rule that moves a
 window where you want it, and — the part most likely to surprise you — how it
