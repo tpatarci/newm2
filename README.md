@@ -144,10 +144,11 @@ tests do *not* cover, under `.planning/`.
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE), and [NOTICE](NOTICE) for the derivation and the
+upstream terms.
 
 The original wm2 carried no formal licence text. Chris Cannam's terms, in his own
 README, were: *"If you want to hack the code into something else for your own
 amusement, please go ahead. Feel free to modify and redistribute, as long as you
-retain the original copyrights as appropriate."* Those copyrights are retained,
-here and in `LICENSE`, and MIT keeps the same requirement.
+retain the original copyrights as appropriate."* Those copyrights are retained in
+`LICENSE`, and MIT keeps the same requirement.

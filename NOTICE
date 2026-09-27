@@ -1,0 +1,25 @@
+wm2-born-again -- attribution and upstream terms
+=================================================
+
+This file records where this program comes from. The licence itself is in
+LICENSE, and is the MIT licence.
+
+This software is derived from wm2 by Chris Cannam (cannam@all-day-breakfast.com),
+originally released in March 1997. The original wm2 source code is included in
+the upstream-wm2/ directory for reference.
+
+The original wm2 carried no formal licence file. The terms Chris Cannam gave in
+its README were:
+
+    "If you want to hack the code into something else for your own amusement,
+    please go ahead.  Feel free to modify and redistribute, as long as you
+    retain the original copyrights as appropriate."
+
+That condition is met by retaining his copyright above, and the MIT licence
+imposes the same requirement on this work.
+
+wm2 itself began as a derivative of "9wm" by David Hogan, and used the
+"xvertext" font rotation library version 2.0 by Alan Richardson. The sideways
+tabs were Andy Green's idea. This version no longer uses xvertext: the rotated
+tab label is drawn by Xft with a rotation matrix, so that credit is historical
+rather than a dependency of the compiled program.

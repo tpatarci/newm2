@@ -233,6 +233,12 @@ install(FILES ${CMAKE_SOURCE_DIR}/packaging/wm2-born-again.desktop
 install(FILES
         ${CMAKE_SOURCE_DIR}/docs/RELEASE-NOTES.md
         ${CMAKE_SOURCE_DIR}/LICENSE
+        # Shipped beside LICENSE rather than inside it: the attribution and the
+        # upstream terms used to be appended to the MIT text, which made GitHub
+        # report the licence as "Other" instead of MIT. LICENSE is now the
+        # canonical MIT text and nothing else, so it is recognised, and the
+        # derivation it must not lose is stated here.
+        ${CMAKE_SOURCE_DIR}/NOTICE
     DESTINATION ${CMAKE_INSTALL_DOCDIR}
     COMPONENT wm
 )
